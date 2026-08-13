@@ -96,5 +96,5 @@ what your custody allows:
 3. **Uncommitted local soul**: nothing to commit. Your edits to the soul ARE the
    delivery; they take effect for the next instance immediately.
 
-Then `oas retire <your-instance> --self` from your home. Do not linger — where
+Then `oats retire <your-instance> --self` from your home. Do not linger — where
 you are attached, the tree belongs to its owner.

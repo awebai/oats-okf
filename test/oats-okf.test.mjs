@@ -6,8 +6,8 @@ import { join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-const ROOT = resolve(fileURLToPath(new URL("../oas-package", import.meta.url)));
-const CLI = join(ROOT, "capabilities", "oas-okf", "bin", "oas-okf.mjs");
+const ROOT = resolve(fileURLToPath(new URL("../oats-package", import.meta.url)));
+const CLI = join(ROOT, "capabilities", "oats-okf", "bin", "oats-okf.mjs");
 
 function run(args = [], env = {}, cwd = ROOT) {
   return new Promise((done) => {
@@ -25,27 +25,27 @@ function run(args = [], env = {}, cwd = ROOT) {
 }
 
 function tempDir(t) {
-  const dir = mkdtempSync(join(tmpdir(), "oas-okf-test-"));
+  const dir = mkdtempSync(join(tmpdir(), "oats-okf-test-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   return dir;
 }
 
-function fakeOasPath(t) {
+function fakeOatsPath(t) {
   const bin = join(tempDir(t), "bin");
   mkdirSync(bin);
-  const script = join(bin, "oas");
+  const script = join(bin, "oats");
   writeFileSync(script, `#!/usr/bin/env node
 const fs = require("node:fs");
 const args = process.argv.slice(2);
 const taskFile = args[args.indexOf("--task-file") + 1];
-fs.writeFileSync(process.env.OAS_TEST_RECORD, JSON.stringify({
+fs.writeFileSync(process.env.OATS_TEST_RECORD, JSON.stringify({
   args,
   taskFile,
   task: fs.readFileSync(taskFile, "utf8"),
   taskMode: fs.statSync(taskFile).mode & 0o777,
 }));
-if (process.env.OAS_TEST_ERROR_CODE) {
-  console.log(JSON.stringify({ schemaVersion: 1, ok: false, error: { code: process.env.OAS_TEST_ERROR_CODE, message: "synthetic spawn failure" } }));
+if (process.env.OATS_TEST_ERROR_CODE) {
+  console.log(JSON.stringify({ schemaVersion: 1, ok: false, error: { code: process.env.OATS_TEST_ERROR_CODE, message: "synthetic spawn failure" } }));
   process.exit(1);
 }
 const purpose = args[args.indexOf("--purpose") + 1];
@@ -88,19 +88,19 @@ function harvestFixture(t, mode, { model, errorCode } = {}) {
     soul,
     record,
     env: {
-      OAS_EVENT: "harvest",
-      OAS_HOME: home,
-      OAS_ROOT: root,
-      OAS_INSTANCE: "source-instance-1",
-      OAS_AGENT: "source",
-      OAS_SOUL: soul,
-      OAS_CONTEXT: context,
-      OAS_KIND: mode === "local" ? "local" : "persistent",
-      OAS_WORK: mode === "workspace" ? "workspace" : "worktree",
-      OAS_SETTINGS: JSON.stringify(model ? { "harvest-model": model } : {}),
-      OAS_TEST_RECORD: record,
-      OAS_CLI_BIN: join(fakeOasPath(t), "oas"),
-      ...(errorCode ? { OAS_TEST_ERROR_CODE: errorCode } : {}),
+      OATS_EVENT: "harvest",
+      OATS_HOME: home,
+      OATS_ROOT: root,
+      OATS_INSTANCE: "source-instance-1",
+      OATS_AGENT: "source",
+      OATS_SOUL: soul,
+      OATS_CONTEXT: context,
+      OATS_KIND: mode === "local" ? "local" : "persistent",
+      OATS_WORK: mode === "workspace" ? "workspace" : "worktree",
+      OATS_SETTINGS: JSON.stringify(model ? { "harvest-model": model } : {}),
+      OATS_TEST_RECORD: record,
+      OATS_CLI_BIN: join(fakeOatsPath(t), "oats"),
+      ...(errorCode ? { OATS_TEST_ERROR_CODE: errorCode } : {}),
     },
   };
 }
@@ -113,7 +113,7 @@ const argValue = (args, flag) => {
 test("soul-scaffold creates an idempotent OKF bundle", async (t) => {
   const dir = tempDir(t);
   const soul = join(dir, "soul");
-  const env = { OAS_EVENT: "soul-scaffold", OAS_SOUL: soul, OAS_AGENT: "test-agent", OAS_SETTINGS: "{}" };
+  const env = { OATS_EVENT: "soul-scaffold", OATS_SOUL: soul, OATS_AGENT: "test-agent", OATS_SETTINGS: "{}" };
   const first = await run(["soul-scaffold"], env);
   assert.equal(first.code, 0, first.stderr);
   assert.deepEqual(JSON.parse(first.stdout), { meta: { scaffolded: true } });
@@ -128,16 +128,16 @@ test("soul-scaffold creates an idempotent OKF bundle", async (t) => {
 test("spawn creates persistent-instance continuity files", async (t) => {
   const home = tempDir(t);
   const result = await run(["spawn"], {
-    OAS_EVENT: "spawn",
-    OAS_HOME: home,
-    OAS_INSTANCE: "test-agent-1",
-    OAS_AGENT: "test-agent",
-    OAS_KIND: "persistent",
-    OAS_TASK: "Exercise the package hook.",
-    OAS_REPO: "/tmp/example",
-    OAS_BRANCH: "test",
-    OAS_WORK: "worktree",
-    OAS_SETTINGS: "{}",
+    OATS_EVENT: "spawn",
+    OATS_HOME: home,
+    OATS_INSTANCE: "test-agent-1",
+    OATS_AGENT: "test-agent",
+    OATS_KIND: "persistent",
+    OATS_TASK: "Exercise the package hook.",
+    OATS_REPO: "/tmp/example",
+    OATS_BRANCH: "test",
+    OATS_WORK: "worktree",
+    OATS_SETTINGS: "{}",
   });
   assert.equal(result.code, 0, result.stderr);
   assert.equal(JSON.parse(result.stdout).meta.memory, "okf");
@@ -148,16 +148,16 @@ test("spawn creates persistent-instance continuity files", async (t) => {
 test("harvest implementation uses no private kernel-file boundary", () => {
   const source = readFileSync(CLI, "utf8");
   assert.doesNotMatch(source, /lib\/core\.mjs/);
-  assert.doesNotMatch(source, /oas root/);
-  assert.doesNotMatch(source, /pathToFileURL|resolveOasConfig|spawnInstance/);
-  assert.match(source, /process\.env\.OAS_CLI_BIN/);
+  assert.doesNotMatch(source, /oats root/);
+  assert.doesNotMatch(source, /pathToFileURL|resolveOatsConfig|spawnInstance/);
+  assert.match(source, /process\.env\.OATS_CLI_BIN/);
   assert.match(source, /execFile\(packageRuntimeCli\(\)/);
-  assert.doesNotMatch(source, /spawnSync|return "oas"/);
+  assert.doesNotMatch(source, /spawnSync|return "oats"/);
 });
 
 test("manifest exports the packaged ephemeral memory-harvest agent", () => {
-  const capability = join(ROOT, "capabilities", "oas-okf");
-  const manifest = JSON.parse(readFileSync(join(capability, "oas.json"), "utf8"));
+  const capability = join(ROOT, "capabilities", "oats-okf");
+  const manifest = JSON.parse(readFileSync(join(capability, "oats.json"), "utf8"));
   assert.deepEqual(manifest.agents, ["agents/memory-harvest"]);
   const soul = readFileSync(join(capability, manifest.agents[0], "soul.yaml"), "utf8");
   assert.match(soul, /^name: memory-harvest$/m);
@@ -169,11 +169,11 @@ test("manifest exports the packaged ephemeral memory-harvest agent", () => {
 test("spawn leaves capability agents ephemeral", async (t) => {
   const home = tempDir(t);
   const result = await run(["spawn"], {
-    OAS_EVENT: "spawn",
-    OAS_HOME: home,
-    OAS_INSTANCE: "memory-harvest-test",
-    OAS_KIND: "capability",
-    OAS_SETTINGS: "{}",
+    OATS_EVENT: "spawn",
+    OATS_HOME: home,
+    OATS_INSTANCE: "memory-harvest-test",
+    OATS_KIND: "capability",
+    OATS_SETTINGS: "{}",
   });
   assert.equal(result.code, 0, result.stderr);
   assert.equal(JSON.parse(result.stdout).meta.memory, "none");
@@ -182,7 +182,7 @@ test("spawn leaves capability agents ephemeral", async (t) => {
 
 test("harvest skips without notes before requiring the runtime boundary", async (t) => {
   const home = tempDir(t);
-  const result = await run(["harvest", "--json"], { OAS_HOME: home, OAS_SETTINGS: "{}" }, home);
+  const result = await run(["harvest", "--json"], { OATS_HOME: home, OATS_SETTINGS: "{}" }, home);
   assert.equal(result.code, 0, result.stderr);
   assert.deepEqual(JSON.parse(result.stdout), {
     schemaVersion: 1,
@@ -191,14 +191,14 @@ test("harvest skips without notes before requiring the runtime boundary", async 
   });
 });
 
-test("harvest rejects a non-absolute OAS_CLI_BIN instead of searching PATH", async (t) => {
+test("harvest rejects a non-absolute OATS_CLI_BIN instead of searching PATH", async (t) => {
   const fixture = harvestFixture(t, "local");
-  fixture.env.OAS_CLI_BIN = "oas";
+  fixture.env.OATS_CLI_BIN = "oats";
   const result = await run(["harvest", "--json"], fixture.env, fixture.home);
   assert.equal(result.code, 1);
   const envelope = JSON.parse(result.stdout);
   assert.equal(envelope.error.code, "E_SPAWN_FAILED");
-  assert.match(envelope.error.message, /OAS_CLI_BIN must be an absolute path/);
+  assert.match(envelope.error.message, /OATS_CLI_BIN must be an absolute path/);
   assert.equal(existsSync(fixture.record), false, "relative CLI must never execute");
 });
 

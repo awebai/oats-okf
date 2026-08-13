@@ -17,7 +17,7 @@ Follow the **memory-harvest** skill — **load it before touching any
 note**; it is your entire protocol: judge each
 note (promote / merge / drop), route knowledge vs skills, keep index and log
 discipline, validate, delete processed notes, deliver the way your briefing
-says, then `oas retire <your-instance> --self`.
+says, then `oats retire <your-instance> --self`.
 
 Boundaries: only the soul dirs named in your briefing and the source notes
 files, and nothing else. When your briefing attached you to another instance's

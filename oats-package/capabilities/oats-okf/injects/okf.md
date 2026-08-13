@@ -34,7 +34,7 @@ milestone appended, fresh insights in `./notes/`.
 **After committing with pending notes, launch the harvester yourself**: run
 
 ```bash
-oas okf harvest
+oats okf harvest
 ```
 
 from your instance home. It spawns the memory-harvest agent attached to your
@@ -44,7 +44,7 @@ safe; not calling it means your insights never reach the soul, and unwritten
 or unharvested notes are lost when your home is retired).
 
 **Workspace-mode instances**: your soul lives in its own home repo, and your
-`./work` (the workspace) is not where it commits. `oas okf harvest` handles
+`./work` (the workspace) is not where it commits. `oats okf harvest` handles
 this — it promotes your notes in a worktree of the soul's home repo and
 delivers the update **as a PR to that repo**, never a direct push and never
 a commit into member repos. Your job is unchanged: write notes, commit

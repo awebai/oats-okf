@@ -1,7 +1,7 @@
 {
-  "name": "@oas-framework/oas-okf",
+  "name": "@awebai/oats-okf",
   "version": "1.4.1",
-  "description": "Official OAS knowledge integration for Open Knowledge Format bundles and continuous memory harvesting.",
+  "description": "Official OATS knowledge integration for Open Knowledge Format bundles and continuous memory harvesting.",
   "license": "MIT",
   "type": "module",
   "private": true,
@@ -11,6 +11,6 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/OAS-Framework/oas-okf"
+    "url": "https://github.com/awebai/oats-okf"
   }
 }
