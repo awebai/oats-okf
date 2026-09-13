@@ -24,7 +24,7 @@ function fixture(t) {
   assert.equal(packageManifest.capabilities.length, 1);
   const capabilityDir = packageManifest.capabilities[0];
   const capabilityRoot = join(payload, capabilityDir);
-  cpSync(join(ROOT, "oats-package", capabilityDir), capabilityRoot, { recursive: true });
+  cpSync(join(ROOT, "oats-package", capabilityDir), capabilityRoot, { recursive: true, verbatimSymlinks: true });
   const manifest = readJson(join(capabilityRoot, "oats.json"));
   return {
     dir, payload, capabilityRoot, packageManifest, manifest,
