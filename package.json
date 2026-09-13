@@ -7,7 +7,7 @@
   "private": true,
   "scripts": {
     "validate": "node scripts/validate-manifests.mjs",
-    "test": "npm run validate && node --test"
+    "test": "npm run validate && node --test test/*.test.mjs"
   },
   "repository": {
     "type": "git",

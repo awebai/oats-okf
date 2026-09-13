@@ -1,7 +1,27 @@
-# Schema status
+# Schema and consumer verification status
 
-- **Corrected schemas verified**: all three vendored schemas are byte-identical to the canonical package-engine reference now merged to main (reviewed head `af49fd542e7190d1da72a6e0b9214036b59cbd7c`; package-engine merge `612b4f8c48efb63be7435df3d4473feba7b25abf`; package-config merge `a0366349915f151b6f6897cb682b7258f9fc1d79`); CI validates package and capability manifests against them.
-- **Runtime boundary final**: harvest requires the dispatcher's canonical absolute `OATS_CLI_BIN`, invokes it with argv-safe `execFile`, parses schema-v1 envelopes, reads dispatch settings, uses a capability-defined agent, and cleans mode-0600 task files. It never searches PATH or imports/discovers kernel files.
-- `TODO(engine-consumer-fixtures)`: run the released OATS 0.19.0 three-mode harvest fixture, Pi/Claude scaffold parity, retired-flag/sub-floor rejection, and task-file cleanup when WS1 fixtures are published.
+## Current baseline
 
-No publication tag or catalog entry may be created while this item remains open.
+The exported distribution and capability manifests both declare **1.6.1** and **OATS >=0.22.3**. Release tag `v1.6.1` already exists. Earlier references to an unreleased 1.4.1 package and pending released-0.19.0 fixtures are historical, not a prohibition on a release that has already happened.
+
+The authoritative payload is `oats-package/capabilities/oats-okf/`, enumerated by `oats-package/oats-package.json`. Root private npm metadata and unenumerated payload copies do not select the installed capability.
+
+## What standalone CI checks
+
+`npm test` runs the local manifest validator and only `test/*.test.mjs`:
+
+- Package and capability manifests are checked against the vendored schema keywords used by this repository, including `oneOf` hook/requirement alternatives and `const`. This is a small local validator, not a general JSON Schema implementation. The vendored lock schema is not exercised by these tests, and no fresh canonical-schema byte-parity claim is made.
+- Enumerated capabilities, their manifests, exported skills/agents/injections, command/hook entrypoints and config profiles must remain inside the distribution after realpath resolution. Exported directory descendants are checked too; escapes, dangling links and directory cycles fail. Repository-only tooling cannot satisfy an exported resource.
+- Behavioral tests execute the exported CLI against a fake structured OATS boundary. They check argv preservation, canonical CLI selection, effective runtime settings, spawn-envelope failures and temporary task custody. Real temporary Git repositories cover workspace branch reclaim/refusal, while record tests distinguish preparation from accepted watermarks. Inspect tests read large JSON through an actual pipe.
+
+No tests spawn live agents, install capabilities, modify deployments or perform model judgment. Custody assertions about worker instructions do not prove that a worker executed those instructions or delivered a PR.
+
+## Consumer gates still requiring evidence
+
+Before a subsequent release, run isolated installed-artifact probes and record the exact package tag, kernel version, harness versions, commands and outcomes:
+
+1. Acquire → lock/restore → trust → activate → scaffold/retire with the declared minimum kernel and the intended released consumer. Check enumerated skills/agents and operation dispatch, not uninstalled source copies.
+2. Exercise actual local-soul, workspace-soul and repo-resident harvests; verify Pi/Claude scaffold parity, selected-runtime behavior, retired-flag/sub-floor rejection, and task-file cleanup through the real consumer boundary.
+3. Verify delivery and fresh-reader learning separately from a successful process launch. Record promotion/PR outcomes and reader-visible knowledge; do not count scaffolding alone as that gate.
+
+These probes are **not run by this CI**, and this baseline repair supplies no new consumer-pass evidence. The historical 0.19.0 fixture TODO is superseded by this explicit verification gap, not silently marked passed. Future external-knowledge/directory custody work needs its own acceptance evidence; v1.6.1 does not claim that implementation.
