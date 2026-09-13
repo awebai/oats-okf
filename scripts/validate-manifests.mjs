@@ -86,13 +86,37 @@ function safeResource(base, candidate, at, kind = "path", { type, recursive = fa
   return inspect(resolve(base, candidate), at, new Set(), type);
 }
 
+// Match the consumer's skillEntriesIn/hasSkillDoc discovery: a leaf SKILL.md
+// wins; otherwise only immediate real child directories contribute skills.
+// A symlinked child directory is not materialized, even if package-contained.
+function validateSkillTree(tree, at) {
+  const hasSkillDoc = (dir) => {
+    try { return statSync(join(dir, "SKILL.md")).isFile(); } catch { return false; }
+  };
+  try {
+    const skills = hasSkillDoc(tree) ? [tree] : readdirSync(tree, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && hasSkillDoc(join(tree, entry.name)))
+      .map((entry) => join(tree, entry.name));
+    if (!skills.length) report(at, "skill tree contains no discoverable skill (requires a regular SKILL.md in the tree or an immediate non-symlink child directory)");
+    for (const skill of skills) {
+      const doc = safeResource(skill, "SKILL.md", `${at}/${relative(tree, skill) || "."}/SKILL.md`, "skill document", { type: "file" });
+      if (doc) readFileSync(doc, "utf8");
+    }
+  } catch (error) {
+    report(at, `skill tree must be readable: ${error.code || error.message}`);
+  }
+}
+
 const entries = (value) => value && typeof value === "object" && !Array.isArray(value) ? Object.entries(value) : [];
 const array = (value) => Array.isArray(value) ? value : [];
 
 const packagePath = join(root, "oats-package.json");
 const packageSchemaPath = join(repoRoot, "schemas", "oats-package.schema.json");
 const capabilitySchemaPath = join(repoRoot, "schemas", "capability-manifest.schema.json");
-const packageManifest = readJson(packagePath);
+// The root manifest is installed input too: never read it through an escaping
+// or dangling symlink, or try to parse a directory/device as JSON.
+const safePackagePath = safeResource(root, "oats-package.json", "oats-package.json", "package manifest", { type: "file" });
+const packageManifest = safePackagePath ? readJson(safePackagePath) : undefined;
 const packageSchema = readJson(packageSchemaPath);
 const capabilitySchema = readJson(capabilitySchemaPath);
 
@@ -120,7 +144,11 @@ for (const [index, capabilityDir] of declaredCapabilities.entries()) {
   if (capabilitySchema) validateSchema(manifest, capabilitySchema, `${capabilityDir}/oats.json`);
   if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) continue;
   capabilities.push(manifest);
-  for (const [resourceIndex, resource] of array(manifest.skills).entries()) safeResource(capabilityRoot, resource, `${capabilityDir}/oats.json.skills[${resourceIndex}]`, "skill path", { recursive: true });
+  for (const [resourceIndex, resource] of array(manifest.skills).entries()) {
+    const at = `${capabilityDir}/oats.json.skills[${resourceIndex}]`;
+    const tree = safeResource(capabilityRoot, resource, at, "skill path", { type: "directory", recursive: true });
+    if (tree) validateSkillTree(tree, at);
+  }
   if ("inject" in manifest) safeResource(capabilityRoot, manifest.inject, `${capabilityDir}/oats.json.inject`, "injection path", { type: "file" });
   for (const [agentIndex, agent] of array(manifest.agents).entries()) safeResource(capabilityRoot, agent, `${capabilityDir}/oats.json.agents[${agentIndex}]`, "agent path", { type: "directory", recursive: true });
   // A hook may be a plain "entrypoint args" string or the object form
@@ -132,6 +160,11 @@ for (const [index, capabilityDir] of declaredCapabilities.entries()) {
   };
   for (const [name, command] of entries(manifest.commands)) safeResource(capabilityRoot, entrypoint(command), `${capabilityDir}/oats.json.commands.${name}`, "command entrypoint", { type: "file" });
   for (const [event, hook] of entries(manifest.hooks)) safeResource(capabilityRoot, entrypoint(hook), `${capabilityDir}/oats.json.hooks.${event}`, "hook entrypoint", { type: "file" });
+  for (const [name, operation] of entries(manifest.operations)) {
+    if (typeof operation?.command !== "string" || !Object.hasOwn(manifest.commands || {}, operation.command)) {
+      report(`${capabilityDir}/oats.json.operations.${name}.command`, "must name one of the manifest's commands");
+    }
+  }
   for (const forbidden of ["global", "agent-types", "souls"]) if (forbidden in manifest) report(`${capabilityDir}/oats.json.${forbidden}`, "deployment targeting belongs to config, not a capability manifest");
 }
 

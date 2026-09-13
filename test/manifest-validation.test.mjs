@@ -28,9 +28,12 @@ function fixture(t) {
   const manifest = readJson(join(capabilityRoot, "oats.json"));
   return {
     dir, payload, capabilityRoot, packageManifest, manifest,
-    run() {
+    run(mutateFiles = () => {}) {
       writeJson(join(payload, "oats-package.json"), packageManifest);
       writeJson(join(capabilityRoot, "oats.json"), manifest);
+      // Mutate after writing manifests so a symlink fixture is never followed
+      // (and its external invalid JSON overwritten) by test setup itself.
+      mutateFiles();
       return spawnSync(process.execPath, [join(dir, "scripts/validate-manifests.mjs")], {
         cwd: dir, encoding: "utf8", timeout: 10000,
       });
@@ -38,12 +41,13 @@ function fixture(t) {
   };
 }
 
-function rejected(f, message) {
-  const result = f.run();
+function rejected(f, message, mutateFiles) {
+  const result = f.run(mutateFiles);
   assert.equal(result.status, 1, result.stderr);
   assert.match(result.stderr, /Manifest validation failed:/);
   assert.match(result.stderr, message);
   assert.doesNotMatch(result.stderr, /TypeError|RangeError|at safeResource/);
+  return result;
 }
 
 test("validator accepts the actual exported release with no unenumerated payload", (t) => {
@@ -128,6 +132,30 @@ test("validator checks the capability manifest itself before reading it", (t) =>
   assert.doesNotMatch(result.stderr, /invalid JSON/);
 });
 
+for (const dangling of [false, true]) {
+  test(`validator checks ${dangling ? "dangling" : "escaping"} root manifest symlinks before reading JSON`, (t) => {
+    const f = fixture(t);
+    const outside = join(f.dir, "outside.json");
+    const invalid = "not JSON: external package manifest must not be read";
+    if (!dangling) writeFileSync(outside, invalid);
+    const result = rejected(f, dangling ? /package manifest cannot be resolved: ENOENT/ : /package manifest escapes the package root/, () => {
+      rmSync(join(f.payload, "oats-package.json"));
+      symlinkSync(outside, join(f.payload, "oats-package.json"));
+    });
+    assert.doesNotMatch(result.stderr, /invalid JSON/);
+    if (!dangling) assert.equal(readFileSync(outside, "utf8"), invalid);
+  });
+}
+
+test("validator rejects a non-regular root manifest before reading JSON", (t) => {
+  const f = fixture(t);
+  const result = rejected(f, /package manifest must be a file/, () => {
+    rmSync(join(f.payload, "oats-package.json"));
+    mkdirSync(join(f.payload, "oats-package.json"));
+  });
+  assert.doesNotMatch(result.stderr, /invalid JSON/);
+});
+
 test("validator accepts package-contained shared skills and required spawn hooks", (t) => {
   const f = fixture(t);
   const shared = join(f.payload, "shared-skills");
@@ -139,10 +167,47 @@ test("validator accepts package-contained shared skills and required spawn hooks
   assert.equal(result.status, 0, result.stderr);
 });
 
+test("validator accepts leaf skills and does not impose OKF baseline names on other capabilities", (t) => {
+  const f = fixture(t);
+  f.packageManifest.package = f.manifest.capability = "example.notes";
+  mkdirSync(join(f.capabilityRoot, "custom-skill"));
+  writeFileSync(join(f.capabilityRoot, "custom-skill/SKILL.md"), "# Custom skill\n");
+  f.manifest.skills = ["custom-skill"];
+  let result = f.run();
+  assert.equal(result.status, 0, result.stderr);
+  // No skills is valid generically. The OKF baseline, not manifest validation,
+  // requires this release's okf + memory-harvest closure.
+  f.manifest.skills = [];
+  result = f.run();
+  assert.equal(result.status, 0, result.stderr);
+});
+
 for (const [name, mutate, message] of [
   ["missing resource", (f) => { f.manifest.inject = "missing.md"; }, /cannot be resolved: ENOENT/],
   ["traversal", (f) => { f.manifest.skills = ["../../scripts"]; }, /must be package-relative/],
   ["non-file command", (f) => { f.manifest.commands.harvest = "skills harvest"; }, /command entrypoint must be a file/],
+  ["non-directory skill", (f) => { f.manifest.skills = ["injects/okf.md"]; }, /skill path must be a directory/],
+  ["empty declared skill tree", (f) => {
+    rmSync(join(f.capabilityRoot, "skills"), { recursive: true });
+    mkdirSync(join(f.capabilityRoot, "skills"));
+  }, /skill tree contains no discoverable skill/],
+  ["directory SKILL.md marker", (f) => {
+    mkdirSync(join(f.capabilityRoot, "invalid-skill/SKILL.md"), { recursive: true });
+    f.manifest.skills = ["invalid-skill"];
+  }, /skill tree contains no discoverable skill/],
+  ["grandchild-only skill tree", (f) => {
+    mkdirSync(join(f.capabilityRoot, "nested/child/grandchild"), { recursive: true });
+    writeFileSync(join(f.capabilityRoot, "nested/child/grandchild/SKILL.md"), "# Too deep\n");
+    f.manifest.skills = ["nested"];
+  }, /skill tree contains no discoverable skill/],
+  ["symlink-child-only skill tree", (f) => {
+    mkdirSync(join(f.capabilityRoot, "linked-children"));
+    symlinkSync(join(f.capabilityRoot, "skills/okf"), join(f.capabilityRoot, "linked-children/okf"));
+    f.manifest.skills = ["linked-children"];
+  }, /skill tree contains no discoverable skill/],
+  ["undeclared operation command", (f) => { f.manifest.operations.inspect.command = "not-declared"; }, /operations.inspect.command: must name one of the manifest's commands/],
+  ["inherited operation command", (f) => { f.manifest.operations.inspect.command = "constructor"; }, /operations.inspect.command: must name one of the manifest's commands/],
+  ["removed inspect command", (f) => { delete f.manifest.commands.inspect; }, /operations.inspect.command: must name one of the manifest's commands/],
   ["malformed resources", (f) => { f.manifest.skills = {}; f.manifest.agents = 1; }, /must be array/],
   ["required retire hook", (f) => { f.manifest.hooks.retire = { command: "bin/oats-okf.mjs retire", required: true }; }, /must match exactly one schema alternative/],
   ["invalid requirement", (f) => { f.manifest.requires = [{ command: "git" }]; }, /must match exactly one schema alternative/],
@@ -168,6 +233,70 @@ for (const manifest of [null, [], "not an object"]) {
     writeJson(join(alias, "oats.json"), manifest);
     f.packageManifest.capabilities = ["invalid-capability"];
     rejected(f, /must be object/);
+  });
+}
+
+// Exercise the real baseline assertions against mutated installed bytes. Keep
+// nested runners to the baseline contract tests, never this mutation suite, and
+// clear Node's inherited runner channel so stdout remains ordinary TAP.
+function runBaseline(f) {
+  mkdirSync(join(f.dir, "test"), { recursive: true });
+  copyFileSync(join(ROOT, "test/oats-okf.test.mjs"), join(f.dir, "test/oats-okf.test.mjs"));
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^(NODE_TEST_|OATS_|GIT_)/.test(key)));
+  return spawnSync(process.execPath, ["--test", "--test-name-pattern=^baseline ", "test/oats-okf.test.mjs"], {
+    cwd: f.dir, env, encoding: "utf8", timeout: 20000,
+  });
+}
+
+test("baseline mutation harness accepts the unmodified installed payload", (t) => {
+  const f = fixture(t);
+  assert.equal(f.run().status, 0);
+  const result = runBaseline(f);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.match(result.stdout, /ok \d+ - baseline exports/);
+  assert.match(result.stdout, /ok \d+ - baseline harvest operation/);
+  assert.match(result.stdout, /ok \d+ - baseline inspect operation/);
+});
+
+for (const [name, mutate, validationStatus, diagnostic] of [
+  ["deleted memory-harvest skill", (f) => {
+    rmSync(join(f.capabilityRoot, "skills/memory-harvest"), { recursive: true });
+  }, 0, /missing required baseline skill memory-harvest/],
+  ["non-file memory-harvest SKILL.md", (f) => {
+    const doc = join(f.capabilityRoot, "skills/memory-harvest/SKILL.md");
+    rmSync(doc);
+    mkdirSync(doc);
+  }, 0, /missing required baseline skill memory-harvest/],
+  ["empty skills declaration", (f) => { f.manifest.skills = []; }, 0, /missing required baseline skill okf/],
+  ["undeclared memory-harvest skill", (f) => { f.manifest.skills = ["skills/okf"]; }, 0, /missing required baseline skill memory-harvest/],
+  ["empty skills directory", (f) => {
+    rmSync(join(f.capabilityRoot, "skills"), { recursive: true });
+    mkdirSync(join(f.capabilityRoot, "skills"));
+  }, 1, /skill tree contains no discoverable skill/],
+  ["skills pointing to injection file", (f) => { f.manifest.skills = ["injects/okf.md"]; }, 1, /skill path must be a directory/],
+  ["wrong-event harvest fixed argv", (f) => { f.manifest.commands.harvest = "bin/oats-okf.mjs retire"; }, 0, /not ok \d+ - baseline harvest operation/],
+  ["wrong-event inspect fixed argv", (f) => { f.manifest.commands.inspect = "bin/oats-okf.mjs retire"; }, 0, /not ok \d+ - baseline inspect command/],
+  ["removed inspect command", (f) => { delete f.manifest.commands.inspect; }, 1, /operations.inspect.command: must name one of the manifest's commands/],
+  ["removed inspect command and operation", (f) => {
+    delete f.manifest.commands.inspect;
+    delete f.manifest.operations.inspect;
+  }, 0, /missing command inspect/],
+  ["undeclared operation command", (f) => { f.manifest.operations.harvest.command = "not-declared"; }, 1, /operations.harvest.command: must name one of the manifest's commands/],
+  ["misrouted harvest operation", (f) => { f.manifest.operations.harvest.command = "inspect"; }, 0, /not ok \d+ - baseline harvest operation/],
+  ["misrouted inspect operation", (f) => { f.manifest.operations.inspect.command = "harvest"; }, 0, /not ok \d+ - baseline inspect operation/],
+]) {
+  test(`release gate rejects mutation: ${name}`, (t) => {
+    const f = fixture(t);
+    mutate(f);
+    const validation = f.run();
+    assert.equal(validation.status, validationStatus, validation.stderr);
+    if (validationStatus === 1) {
+      assert.match(validation.stderr, diagnostic);
+    } else {
+      const result = runBaseline(f);
+      assert.equal(result.status, 1, result.stdout + result.stderr);
+      assert.match(result.stdout + result.stderr, diagnostic);
+    }
   });
 }
 
