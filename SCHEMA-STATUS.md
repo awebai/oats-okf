@@ -9,8 +9,13 @@ and its older compatibility floor do not describe this candidate's runtime.
 
 The authoritative payload is `oats-package/capabilities/oats-okf/`, enumerated
 by `oats-package/oats-package.json`. The private root npm package supplies
-standalone tooling. Unenumerated copies under `oats-package/` do not select the
-installed capability and cannot satisfy exported-resource tests.
+standalone tooling. Obsolete unenumerated root `oats.json`, `bin/`, `agents/`,
+`skills/` and `injects/` copies have been removed after checking manifest,
+validator, test, CI and framework consumer paths. The distribution manifest,
+LICENSE and actual exported capability remain; its canonical worker
+`CLAUDE.md -> AGENTS.md` symlink is unchanged. A baseline test prevents those
+obsolete copies from returning. This remains **2.0.0 before tagging**, not a
+published patch.
 
 ## What `npm test` and default CI check
 
@@ -42,6 +47,17 @@ The suite exercises the v2 implementation, not legacy harvest-branch behavior:
   registration, delivery and fresh reads. Failure tests check partial-build
   cleanup, destination preservation and registration retries on both sides of
   the durable source pointer without resetting source identity or evidence.
+  Descriptor-selected read/refresh caches stay under the durable source's
+  `views/` directory for live, retired, disappeared and reused homes, never in
+  the invoking context/repository. Home-selected views retain their home layout.
+- **Inspection compatibility:** both manifest command and operation routing
+  return the v1 labeled STATE/log/notes Markdown documents for a live matching
+  source, alongside v2 receipts, frozen bindings and registered view freshness.
+  Tests assert complete large stdout, explicit 256 KiB/UTF-8 preview metadata,
+  identity checks before/after reading, missing/retired/reused-home suppression,
+  symlink/hardlink/non-regular file rejection and explicit error envelopes.
+  Inspection is a best-effort live view, not a locked snapshot; it neither
+  captures evidence nor mutates custody/worker state.
 
 Neither local schema checker is a general JSON Schema implementation. The
 vendored OATS lock schema is not exercised, and the OKF root/exported byte-parity
@@ -54,8 +70,11 @@ Three tests skip by default, with explicit Node test skip output:
 1. `test/consumer.test.mjs` uses `OATS_OKF_CONSUMER_CLI` (absolute CLI path) to
    exercise public command dispatch, targeted hooks, directory worker
    scaffolding, retirement, completion after source deletion and fresh-reader
-   scaffolding. It copies only the enumerated OKF capability into a disposable
-   owned-capability fixture. It does **not** acquire the OKF distribution.
+   scaffolding. It also transports large live STATE/log/notes through native
+   `oats okf inspect` and `oats operation run knowledge:inspect`, checks
+   disappeared/reused-home suppression and external read/refresh cache paths.
+   It copies only the enumerated OKF capability into a disposable owned-capability
+   fixture. It does **not** acquire the OKF distribution.
 2. The native capture/recall test in `test/oats-okf.test.mjs` transports sixty
    synthetic 350 kB Claude records through the actual public kernel into durable
    bounded input, then exercises fixture completion after source removal.

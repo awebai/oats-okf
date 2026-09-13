@@ -76,7 +76,7 @@ else process.exit(44);
   fs.symlinkSync(soul,join(home,'soul'));save(join(home,'instance.json'),{instance:'source-one',agent:'source',repo:context,work:'directory',launched:true});
   Object.assign(process.env,{OATS_HOME:home,OATS_INSTANCE_HOME:home,OATS_INSTANCE:'source-one',OATS_AGENT:'source',OATS_SOUL:soul,OATS_CONTEXT:context});
   const source=()=>register(home);
-  const cli=(cmd,args=[],env={})=>{const r=spawnSync(process.execPath,[CLI,cmd,...args,'--json'],{cwd:home,env:{...process.env,...env},encoding:'utf8',timeout:30000});let out;try{out=JSON.parse(r.stdout);}catch{}return {...r,out};};
+  const cli=(cmd,args=[],env={})=>{const r=spawnSync(process.execPath,[CLI,cmd,...args,'--json'],{cwd:home,env:{...process.env,...env},encoding:'utf8',timeout:30000,maxBuffer:16*1024*1024});let out;try{out=JSON.parse(r.stdout);}catch{}return {...r,out};};
   return {dir,home,soul,bindings,bindingFile,repo,source,cli,calls,context,base:bindings.bases.project};
 }
 function git(repo,args) {return execFileSync('git',['-C',repo,...args],{encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();}
@@ -94,6 +94,8 @@ function judgment(f,s,run,{drop=false,base='project',node='expert',secret=false}
 }
 
 test('exported payload version, floor, required hooks and complete command inventory',()=>{
+  for(const obsolete of ['oats.json','bin','agents','skills','injects']) assert.equal(fs.existsSync(join(ROOT,'oats-package',obsolete)),false,`obsolete unenumerated root payload: ${obsolete}`);
+  assert.ok(fs.statSync(join(ROOT,'oats-package/LICENSE')).isFile());
   assert.equal(fs.readlinkSync(join(CAP,'agents/memory-harvest/CLAUDE.md')),'AGENTS.md','source compatibility alias preserves one canonical instruction file');
   const m=readJSON(join(CAP,'oats.json'));assert.equal(m.version,'2.0.0');assert.equal(m.compatibility.oats,'>=0.23.0');assert.equal(m.hooks.spawn.required,true);
   for(const c of ['harvest','inspect','setup','run-source','complete','retry','migrate','read','refresh','init']) assert.ok(m.commands[c]);
@@ -218,7 +220,7 @@ function declaredRun(f,name,args=[],operation=false) {
   if(operation) {assert.ok(manifest.operations?.[name],`missing operation ${name}`);name=manifest.operations[name].command;}
   assert.ok(Object.hasOwn(manifest.commands,name),`missing command ${name}`);
   const [entry,...fixed]=manifest.commands[name].trim().split(/\s+/);
-  const r=spawnSync(process.execPath,[join(CAP,entry),...fixed,...args,'--json'],{cwd:f.home,env:process.env,encoding:'utf8',timeout:10000});
+  const r=spawnSync(process.execPath,[join(CAP,entry),...fixed,...args,'--json'],{cwd:f.home,env:process.env,encoding:'utf8',timeout:10000,maxBuffer:16*1024*1024});
   assert.equal(r.status,0,r.stdout+r.stderr);return JSON.parse(r.stdout);
 }
 test('baseline exports the readable okf and memory-harvest skill closure',()=>{
@@ -237,7 +239,19 @@ test('baseline harvest operation dispatches its declared command without a hook 
 });
 for(const operation of [false,true]) test(`baseline inspect ${operation?'operation':'command'} returns provider receipts through declared dispatch`,t=>{
   const f=fixture(t);const s=f.source();const status=loadStatus(s);status.diagnostic='large α receipt\n'.repeat(10000);saveStatus(s,status);
-  const r=declaredRun(f,'inspect',[],operation);assert.equal(r.schemaVersion,1);assert.equal(r.ok,true);assert.equal(r.result.source,s.file);assert.equal(r.result.status.diagnostic,status.diagnostic);assert.ok(r.result.documents.length);
+  const state='# State\n'+'Large live α state\n'.repeat(10000),log='# Log\n'+'Observed β limitation\n'.repeat(9000);
+  put(join(f.home,'STATE.md'),state);put(join(f.home,'log.md'),log);put(join(f.home,'notes/b.md'),'second note\n');put(join(f.home,'notes/a.md'),'first note\n');put(join(f.home,'notes/nested/c.md'),'nested note\n');put(join(f.home,'notes/skip.txt'),'not Markdown');
+  const before=fs.readFileSync(join(dirname(s.file),'status.json'),'utf8');
+  const r=declaredRun(f,'inspect',[],operation);assert.equal(r.schemaVersion,1);assert.equal(r.ok,true);assert.equal(r.result.source,s.file);assert.equal(r.result.status.diagnostic,status.diagnostic);
+  assert.deepEqual(r.result.documents.map(d=>[d.label,d.kind,d.path]),[
+    ['Working state (STATE.md)','markdown',join(f.home,'STATE.md')],['Log (log.md)','markdown',join(f.home,'log.md')],
+    ...['a.md','b.md','nested/c.md'].map(n=>[`Pending note: ${n}`,'markdown',join(f.home,'notes',n)]),
+    ['Durable processing receipts','text',join(dirname(s.file),'status.json')]
+  ]);
+  assert.deepEqual(r.result.documents.slice(0,5).map(d=>d.text),[state,log,'first note\n','second note\n','nested note\n']);
+  assert.equal(r.result.documents[0].truncated,undefined);assert.equal(r.result.liveMemory.available,true);
+  assert.deepEqual(r.result.acceptedView,s.acceptedView);assert.deepEqual(r.result.bases,s.bindings.bases);
+  assert.equal(fs.readFileSync(join(dirname(s.file),'status.json'),'utf8'),before,'inspection never changes receipts');
 });
 
 test('capture interleaved with directory completion preserves both cursors',t=>{
@@ -906,4 +920,85 @@ test('custody R3 exact content staging supports deletion and literal metacharact
   const r=complete(s,run.id,j);assert.equal(r.processed,true);
   assert.equal(git(f.repo,['ls-tree','-r','--name-only',r.receipts.project.commit]).includes('knowledge/'+old),false);
   assert.match(git(f.repo,['show',`${r.receipts.project.commit}:knowledge/${next}`]),/Evidence: OKF input/);
+});
+
+// Inspection-only compatibility. No capture/worker protocol changes.
+function externalView(f,cmd,args=[]) {
+  const r=spawnSync(process.execPath,[CLI,cmd,...args,'--json'],{cwd:f.context,env:{...process.env,OATS_HOME:f.context,OATS_INSTANCE_HOME:f.context},encoding:'utf8',timeout:30000,maxBuffer:16*1024*1024});
+  assert.equal(r.status,0,r.stdout+r.stderr);const out=JSON.parse(r.stdout);assert.equal(out.ok,true);return out.result;
+}
+test('inspect preserves the explicit 256 KiB document preview and UTF-8 boundary contract',t=>{
+  const f=fixture(t);f.source();const text='x'.repeat(256*1024-1)+'α trailing bytes';put(join(f.home,'STATE.md'),text);
+  const r=f.cli('inspect');assert.equal(r.status,0,r.stdout);const d=r.out.result.documents[0];
+  assert.equal(d.text,'x'.repeat(256*1024-1));assert.equal(d.truncated,true);assert.equal(d.bytes,Buffer.byteLength(text));
+  assert.doesNotMatch(d.text,/\uFFFD/);assert.equal(r.out.result.documents.at(-1).label,'Durable processing receipts');
+});
+for(const mode of ['retired','missing-home','missing-marker','reused-marker','reused-metadata','invalid-marker','invalid-metadata','symlink-home']) test(`inspect keeps durable receipts without exposing ${mode} live memory`,t=>{
+  const f=fixture(t),s=f.source();note(f);capture(s,{final:mode==='retired'});
+  if(mode==='missing-home') fs.rmSync(f.home,{recursive:true});
+  else if(mode==='missing-marker') fs.unlinkSync(join(f.home,'.okf-source.json'));
+  else if(mode==='reused-marker') save(join(f.home,'.okf-source.json'),{version:1,id:'00000000-0000-0000-0000-000000000000',source:join(f.dir,'untrusted.json')});
+  else if(mode==='reused-metadata') save(join(f.home,'instance.json'),{agent:'other',instance:s.instance});
+  else if(mode==='invalid-marker') put(join(f.home,'.okf-source.json'),'DO_NOT_EXPOSE_REPLACEMENT_OR_RETIRED_HOME');
+  else if(mode==='invalid-metadata') put(join(f.home,'instance.json'),'DO_NOT_EXPOSE_REPLACEMENT_OR_RETIRED_HOME');
+  else if(mode==='symlink-home') {fs.renameSync(f.home,join(f.context,'moved-home'));fs.symlinkSync(join(f.context,'moved-home'),f.home);}
+  if(mode!=='missing-home') put(join(f.home,'STATE.md'),'DO_NOT_EXPOSE_REPLACEMENT_OR_RETIRED_HOME');
+  const r=externalView(f,'inspect',['--source',s.file]);assert.equal(r.liveMemory.available,false);
+  assert.equal(r.status.captured.inputs.length,1);assert.equal(r.documents.length,1);assert.equal(r.documents[0].kind,'text');
+  assert.deepEqual(r.status,loadStatus(s));assert.deepEqual(r.acceptedView,s.acceptedView);assert.deepEqual(r.bases,s.bindings.bases);
+  assert.doesNotMatch(JSON.stringify(r),/DO_NOT_EXPOSE_REPLACEMENT_OR_RETIRED_HOME/);
+  assert.match(r.summary,/live memory unavailable/);
+});
+for(const mode of ['state-symlink','state-hardlink','state-directory','note-symlink','notes-symlink','note-hardlink','notes-file']) test(`inspect fails explicitly for unsafe live documents: ${mode}`,t=>{
+  const f=fixture(t),s=f.source(),secret=join(f.dir,'secret');put(secret,'DO_NOT_EXPOSE_UNSAFE_DOCUMENT');
+  const state=join(f.home,'STATE.md'),notes=join(f.home,'notes');
+  if(mode.startsWith('state-')) {
+    fs.unlinkSync(state);
+    if(mode==='state-symlink') fs.symlinkSync(secret,state);
+    else if(mode==='state-hardlink') fs.linkSync(secret,state);
+    else fs.mkdirSync(state);
+  } else if(mode==='note-symlink') fs.symlinkSync(secret,join(notes,'secret.md'));
+  else if(mode==='note-hardlink') fs.linkSync(secret,join(notes,'secret.md'));
+  else {fs.rmSync(notes,{recursive:true});if(mode==='notes-symlink') fs.symlinkSync(f.dir,notes);else put(notes,'not a directory');}
+  const r=f.cli('inspect',['--source',s.file]);assert.equal(r.status,1,r.stdout);assert.equal(r.out.ok,false);
+  assert.equal(r.out.error.code,mode==='notes-file'?'E_INSPECT_FAILED':'E_PATH');assert.equal(r.out.result,undefined);
+  assert.doesNotMatch(r.stdout,/DO_NOT_EXPOSE_UNSAFE_DOCUMENT/);assert.equal(loadStatus(s).processed.length,0);
+});
+test('inspect tolerates absent live documents, but not a malformed durable descriptor',t=>{
+  const f=fixture(t),s=f.source();for(const p of ['STATE.md','log.md','notes']) fs.rmSync(join(f.home,p),{recursive:true});
+  const r=f.cli('inspect');assert.equal(r.status,0,r.stdout);assert.equal(r.out.result.liveMemory.available,true);assert.equal(r.out.result.documents.length,1);
+  const bad=join(f.dir,'bad-source.json');save(bad,{version:1,id:s.id,bindings:s.bindings});
+  const broken=f.cli('inspect',['--source',bad]);assert.equal(broken.status,1);assert.equal(broken.out.error.code,'E_SOURCE');
+  const ambiguous=f.cli('inspect',['--source',s.file,'--home',f.home]);assert.equal(ambiguous.status,1);assert.equal(ambiguous.out.error.code,'E_USAGE');
+});
+test('inspect drops every live document if the matching home is replaced during the read',async t=>{
+  const f=fixture(t),s=f.source();put(join(f.home,'notes/a.md'),'original note');
+  const {workingDocuments}=await mod('inspection'),native=await import('node:fs');const original=native.default.readdirSync;
+  native.default.readdirSync=function(path,...args) {
+    if(path===join(f.home,'notes')) {
+      fs.renameSync(f.home,join(f.context,'old-home'));fs.mkdirSync(join(f.home,'notes'),{recursive:true});
+      save(join(f.home,'.okf-source.json'),{version:1,id:s.id,source:s.file});
+      put(join(f.home,'notes/replacement.md'),'DO_NOT_EXPOSE_RACING_REPLACEMENT');
+    }
+    return original(path,...args);
+  };syncBuiltinESMExports();
+  try {const result=workingDocuments(s);assert.equal(result.liveMemory.reason,'home-changed');assert.deepEqual(result.documents,[]);}
+  finally {native.default.readdirSync=original;syncBuiltinESMExports();}
+});
+for(const mode of ['live','retired','missing','reused']) test(`descriptor-selected read/refresh put views only in durable state: ${mode}`,t=>{
+  const f=fixture(t),s=f.source();
+  if(mode==='retired') capture(s,{final:true});
+  if(mode==='missing' || mode==='reused') fs.rmSync(f.home,{recursive:true});
+  if(mode==='reused') {put(join(f.home,'STATE.md'),'replacement home');save(join(f.home,'.okf-source.json'),{version:1,id:'replacement',source:'untrusted'});}
+  const before=fs.readdirSync(f.context).sort(),homeFiles=fs.existsSync(f.home)?fs.readdirSync(f.home).sort():null;
+  const refresh=externalView(f,'refresh',['--source',s.file]);assert.equal(dirname(refresh.path),join(dirname(s.file),'views'));assertView(refresh.path,'project');
+  const read=externalView(f,'read',['--source',s.file,'--base','project','--path','expert/index.md']);
+  assert.ok(read.path.startsWith(join(dirname(s.file),'views')+'/'));assert.equal(read.text,fs.readFileSync(join(f.base.path,'expert/index.md'),'utf8'));
+  assert.deepEqual(fs.readdirSync(f.context).sort(),before);assert.deepEqual(fs.existsSync(f.home)?fs.readdirSync(f.home).sort():null,homeFiles);
+  assert.equal(fs.readdirSync(join(dirname(s.file),'views')).length,2);
+});
+test('descriptor-selected reads still reject traversal and non-Markdown paths',t=>{
+  const f=fixture(t),s=f.source();capture(s,{final:true});
+  for(const path of ['../../../../status.json','../view.json','okf-base.json']) {const r=f.cli('read',['--source',s.file,'--base','project','--path',path]);assert.equal(r.status,1);assert.equal(r.out.error.code,'E_PATH');}
+  assert.equal(fs.readdirSync(f.home).some(p=>p.startsWith('knowledge-view-')),false);
 });

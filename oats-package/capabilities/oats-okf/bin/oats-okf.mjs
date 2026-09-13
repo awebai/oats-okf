@@ -5,13 +5,14 @@ import { loadBindings, declaration, splitRef } from '../lib/config.mjs';
 import { register, homeSource, loadSource, loadStatus, saveStatus, updateStatus, capture, scheduleSource, service, markerPath, views } from '../lib/sources.mjs';
 import { runSource, complete, retry, readRun } from '../lib/worker.mjs';
 import { initBase, migrate, deliverMigration, cutoverMigration, migrateSource } from '../lib/migration.mjs';
+import { inspect } from '../lib/inspection.mjs';
 const HELP=`oats okf inspect [--home PATH | --source FILE] [--json]
 oats okf harvest [--home PATH] [--no-launch] [--json]
 oats okf run-source --source FILE [--manual] [--no-launch] [--json]
 oats okf complete --source FILE --run ID --judgment FILE [--json]
 oats okf retry --source FILE [--rejudge | --launch | --adopt-home PATH] [--json]
-oats okf read [--home PATH] --base ALIAS [--path node/index.md] [--json]
-oats okf refresh [--home PATH] [--json]
+oats okf read [--home PATH | --source FILE] --base ALIAS [--path node/index.md] [--json]
+oats okf refresh [--home PATH | --source FILE] [--json]
 oats okf setup --source FILE [--enable | --disable] [--install-host] [--json]
 oats okf init --base ALIAS --nodes FILE [--output PATH | --confirm] [--json]
 oats okf migrate --legacy PATH --base ALIAS --node NODE --output PATH [--json]
@@ -71,18 +72,18 @@ else {
     } else if(event==='run-source') result=runSource(src(),{manual:!!flags.manual,noLaunch:!!flags['no-launch']});
     else if(event==='complete') result=complete(src(),flags.run,flags.judgment && resolve(flags.judgment));
     else if(event==='retry') result=retry(src(),{rejudge:!!flags.rejudge,launch:!!flags.launch,adoptHome:flags['adopt-home']});
-    else if(event==='inspect') {
-      const s=src(),status=loadStatus(s);
-      let health;try {health=oats(['schedule','list','--dir',s.context,'--json'],s.context).scheduler;} catch(e){health={active:false,error:e.message};}
-      result={summary:`OKF ${s.id}: ${status.captured.inputs.length-status.processed.length} unprocessed inputs; ${status.retired?'source retired':'source active'}`,source:s.file,owns:s.decl.owns,reads:s.decl.reads,bases:s.bindings.bases,status,scheduler:health,documents:[{label:'Durable processing receipts',kind:'text',path:join(dirname(s.file),'status.json'),text:JSON.stringify(status,null,2)}]};
-    } else if(event==='setup') {
+    else if(event==='inspect') result=inspect(src());
+    else if(event==='setup') {
       const s=src();if(flags.enable && flags.disable) fail('E_USAGE','choose enable or disable');
       scheduleSource(s);
       if(flags.enable || flags.disable) {oats(['schedule',flags.enable?'enable':'disable',`okf-${s.id}`,'--dir',s.context,'--json'],s.context);updateStatus(s,current=>{current.auto=!!flags.enable;});}
       if(flags['install-host']) oats(['schedule','host','install','--dir',s.context,'--json'],s.context);
       result={source:s.file,scheduler:oats(['schedule','list','--dir',s.context,'--json'],s.context).scheduler};
     } else if(event==='read' || event==='refresh') {
-      const s=src();const target=join(home,`knowledge-view-${randomUUID()}`);
+      const s=src();
+      // A descriptor-selected read is independent of any invoking/source home.
+      // In particular, retired sources must not leave caches in context/repo.
+      const target=join(flags.source?join(dirname(s.file),'views'):home,`knowledge-view-${randomUUID()}`);
       const receipts=views(s.bindings,s.decl,target);
       if(event==='refresh') result={path:target,receipts};
       else {

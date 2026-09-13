@@ -6,9 +6,12 @@ bases. Skills remain curated soul artifacts; v2 never automatically edits them.
 Procedure candidates may become external Playbook concepts.
 
 **Release payload:** `oats-package/capabilities/oats-okf/`, enumerated by
-`oats-package/oats-package.json`. Root-level historical duplicates are not source,
-not tested as runtime, and not distributed. The capability is self-contained,
-including both runtime skills, worker soul, injections, validator and schemas.
+`oats-package/oats-package.json`. The obsolete unenumerated root `oats.json`,
+`bin/`, `agents/`, `skills/` and `injects/` copies have been removed; they are not
+an alternative runtime. The distribution retains its manifest and LICENSE, and
+the capability is self-contained, including both runtime skills, worker soul,
+injections, validator and schemas. This remains the **2.0.0 pre-tag candidate**,
+not a published patch release.
 
 ## Configuration and ownership
 
@@ -131,7 +134,17 @@ Fresh provider reads coordinate with publication:
 ```sh
 oats okf read --base project --path expert/index.md --json
 oats okf refresh --json    # returns a NEW immutable view path; old views remain
+# From deployment context, including after source retirement:
+oats okf read --source /absolute/state/sources/UUID/source.json --base project --path expert/index.md --soul domain-expert --json
+oats okf refresh --source /absolute/state/sources/UUID/source.json --soul domain-expert --json
 ```
+
+Home-selected reads/refreshes create `./knowledge-view-<uuid>/` in that home.
+**Every `--source` read/refresh creates its new view under
+`<stateDir>/sources/<source-id>/views/knowledge-view-<uuid>/`**, even if the source
+is still live. It never writes a cache into the invoking context/repository,
+a replacement home, or a retired/missing home. `path` and base receipts identify
+the actual materialized view. Choose either `--home` or `--source`, not both.
 
 Directory readers hold the same cooperative lock as publication while copying
 accepted bytes. A pending journal blocks fresh views rather than exposing a
@@ -172,6 +185,7 @@ State layout (private, local, **no automatic evidence deletion**):
 <stateDir>/sources/<uuid>/status.json       # captured / processed / delivered / accepted
 <stateDir>/sources/<uuid>/inputs/<hash>.json # immutable notes and full record windows
 <stateDir>/sources/<uuid>/runs/<uuid>/       # plans, proposals, judgment and receipts
+<stateDir>/sources/<uuid>/views/             # descriptor-selected read/refresh caches
 <stateDir>/migrations/<uuid>/               # explicit migration preservation
 ```
 
@@ -197,7 +211,41 @@ oats okf setup --source /absolute/state/sources/UUID/source.json --install-host 
 oats okf setup --source /absolute/state/sources/UUID/source.json --disable --soul domain-expert --json
 ```
 
-Inspect reports scheduler health; an absent/inactive timer is not claimed active.
+Inspect reports frozen bindings (`owns`, `reads`, `bases`), the registered
+`acceptedView` (not a fresh read of today's accepted branch), durable capture /
+processing / delivery / acceptance receipts, and scheduler health. An absent or
+inactive timer is not claimed active; scheduler lookup failures are diagnostic,
+not a reason to hide durable receipts. `status.lastCapture` describes the last
+capture attempt, not current source availability.
+
+For a **live matching source only**, inspect also restores the v1 labeled
+Markdown `documents`: `Working state (STATE.md)`, `Log (log.md)`, and sorted
+`Pending note: <relative-name>` entries under `notes/` (including nested notes).
+The `Durable processing receipts` text document follows them. Missing documents
+are omitted; non-Markdown files are not displayed. `liveMemory` reports
+`available`, `reason`, and the observation time `observedAt`. Retired, missing,
+reused, or unverified homes return **only durable documents**, with an explicit
+unavailability reason; they do not erase the durable source's bindings or
+receipts. Use `--source` after disappearance/retirement; the home pointer cannot
+identify a deleted source.
+
+Inspection checks the durable source's home pointer ID/path and any instance
+metadata, rejects symbolic/hard-linked or non-regular Markdown, never follows
+symlinked notes directories, and rechecks home identity/retirement after reading.
+An unsafe live document returns an `E_PATH` error; other document I/O failures
+return `E_INSPECT_FAILED`, with no partial success payload. An unreadable or
+unsafe **home identity** is instead reported as `liveMemory.reason: unverified-home`
+with its diagnostic while durable receipts remain available. This is a
+best-effort live observation, not a locked multi-file snapshot or OS sandbox.
+
+The v1 **256 KiB per-document preview cap** remains explicit: a longer document
+carries `truncated: true` and its original `bytes` count; an incomplete trailing
+UTF-8 character is omitted. Documents below the cap arrive byte-exact, and the
+**entire JSON envelope drains through stdout** (including large receipts).
+Inspection is read-only: it does not capture, refresh, schedule work, or launch
+a worker. Ordinary commands return the JSON-v1 success/error envelope, with
+nonzero exit on failure; native lifecycle hooks retain their hook result shape.
+
 Service agents never register/capture themselves. No-launch sources cannot cause
 scheduled model launches; a final no-launch source is auto-disabled. An operator
 can request a scaffold-only worker explicitly:
@@ -400,9 +448,13 @@ fixtures lack Git/gh. Tests cover command dispatch, strict manifest mutation,
 final source deletion, full record backlog, rewritten notes/replay, frozen
 bindings/ownership, contention, partial publication and receipt-write crashes,
 PR failure/unknown, merge visibility, migration preservation, exclusions and
-actual complete receipts. The opt-in public consumer probe uses isolated HOME,
-config, schedules and inert runtime executables, checks source-targeted access
-after retirement and fresh reader scaffolding, and installs **no host timer**.
+actual complete receipts. Inspection tests cover large state/log/notes through
+both declared dispatch and the public `knowledge:inspect` runner, explicit
+preview truncation, disappeared/reused/unsafe homes, file-safety errors, identity
+changes during reads, and durable external-view placement. The opt-in public
+consumer probe uses isolated HOME, config, schedules and inert runtime
+executables, checks source-targeted access after retirement and fresh reader
+scaffolding, and installs **no host timer**.
 Default CI skips the three optional probes explicitly. A manual CI run can supply
 an exact published `consumer_version` to install that public kernel in a disposable
 prefix and run them; it does not acquire/lock/trust the OKF distribution. See
