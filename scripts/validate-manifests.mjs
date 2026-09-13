@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -19,6 +19,15 @@ const readJson = (path) => {
 
 function validateSchema(value, schema, at) {
   if (!schema || typeof schema !== "object") return;
+  if (schema.oneOf) {
+    const matches = schema.oneOf.filter((alternative) => {
+      const start = errors.length;
+      validateSchema(value, alternative, at);
+      return errors.splice(start).length === 0;
+    }).length;
+    if (matches !== 1) report(at, "must match exactly one schema alternative");
+  }
+  if ("const" in schema && !Object.is(schema.const, value)) report(at, `must equal ${JSON.stringify(schema.const)}`);
   if (schema.enum && !schema.enum.some((item) => Object.is(item, value))) report(at, `must be one of ${schema.enum.join(", ")}`);
   const actual = Array.isArray(value) ? "array" : value === null ? "null" : typeof value;
   if (schema.type && actual !== schema.type) { report(at, `must be ${schema.type}, got ${actual}`); return; }
@@ -44,20 +53,70 @@ function validateSchema(value, schema, at) {
   }
 }
 
-function safeResource(base, candidate, at, kind = "path") {
+// Check actual installed bytes, including descendants of exported directories.
+// Checking just the directory symlink misses a skill, agent or imported module
+// that links out to repository-only tooling (or beyond the checkout entirely).
+function safeResource(base, candidate, at, kind = "path", { type, recursive = false } = {}) {
   if (typeof candidate !== "string" || !candidate.trim()) { report(at, `${kind} must be a non-empty string`); return; }
-  if (isAbsolute(candidate) || candidate.split(/[\\/]+/).includes("..")) { report(at, `${kind} must be package-relative and may not contain '..'`); return; }
-  const target = resolve(base, candidate);
-  if (!existsSync(target)) { report(at, `${kind} does not exist: ${candidate}`); return; }
+  if (isAbsolute(candidate) || /^[A-Za-z]:/.test(candidate) || candidate.includes("\\") || candidate.includes("\0") || candidate.split("/").includes("..")) {
+    report(at, `${kind} must be package-relative, use forward slashes and may not contain '..'`); return;
+  }
   const realRoot = realpathSync(root);
-  const realTarget = realpathSync(target);
-  if (realTarget !== realRoot && !realTarget.startsWith(realRoot + sep)) report(at, `${kind} escapes the package root after symlink resolution`);
+  const inspect = (path, label, ancestors = new Set(), expectedType) => {
+    try {
+      const target = realpathSync(path);
+      if (target !== realRoot && !target.startsWith(realRoot + sep)) {
+        report(label, `${kind} escapes the package root after symlink resolution`); return;
+      }
+      const stat = statSync(target);
+      if ((expectedType === "file" && !stat.isFile()) || (expectedType === "directory" && !stat.isDirectory())) {
+        report(label, `${kind} must be a ${expectedType}`); return;
+      }
+      if (!stat.isFile() && !stat.isDirectory()) { report(label, `${kind} must be a regular file or directory`); return; }
+      if (recursive && stat.isDirectory()) {
+        if (ancestors.has(target)) { report(label, `${kind} contains a directory symlink cycle`); return; }
+        const next = new Set([...ancestors, target]);
+        for (const child of readdirSync(target).sort()) inspect(join(target, child), `${label}/${child}`, next);
+      }
+      return target;
+    } catch (error) {
+      report(label, `${kind} cannot be resolved: ${error.code || error.message}`);
+    }
+  };
+  return inspect(resolve(base, candidate), at, new Set(), type);
 }
+
+// Match the consumer's skillEntriesIn/hasSkillDoc discovery: a leaf SKILL.md
+// wins; otherwise only immediate real child directories contribute skills.
+// A symlinked child directory is not materialized, even if package-contained.
+function validateSkillTree(tree, at) {
+  const hasSkillDoc = (dir) => {
+    try { return statSync(join(dir, "SKILL.md")).isFile(); } catch { return false; }
+  };
+  try {
+    const skills = hasSkillDoc(tree) ? [tree] : readdirSync(tree, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && hasSkillDoc(join(tree, entry.name)))
+      .map((entry) => join(tree, entry.name));
+    if (!skills.length) report(at, "skill tree contains no discoverable skill (requires a regular SKILL.md in the tree or an immediate non-symlink child directory)");
+    for (const skill of skills) {
+      const doc = safeResource(skill, "SKILL.md", `${at}/${relative(tree, skill) || "."}/SKILL.md`, "skill document", { type: "file" });
+      if (doc) readFileSync(doc, "utf8");
+    }
+  } catch (error) {
+    report(at, `skill tree must be readable: ${error.code || error.message}`);
+  }
+}
+
+const entries = (value) => value && typeof value === "object" && !Array.isArray(value) ? Object.entries(value) : [];
+const array = (value) => Array.isArray(value) ? value : [];
 
 const packagePath = join(root, "oats-package.json");
 const packageSchemaPath = join(repoRoot, "schemas", "oats-package.schema.json");
 const capabilitySchemaPath = join(repoRoot, "schemas", "capability-manifest.schema.json");
-const packageManifest = readJson(packagePath);
+// The root manifest is installed input too: never read it through an escaping
+// or dangling symlink, or try to parse a directory/device as JSON.
+const safePackagePath = safeResource(root, "oats-package.json", "oats-package.json", "package manifest", { type: "file" });
+const packageManifest = safePackagePath ? readJson(safePackagePath) : undefined;
 const packageSchema = readJson(packageSchemaPath);
 const capabilitySchema = readJson(capabilitySchemaPath);
 
@@ -67,7 +126,7 @@ const configs = packageManifest?.configs && typeof packageManifest.configs === "
 const defaultConfigs = Object.entries(configs).filter(([, spec]) => spec?.default === true);
 if (defaultConfigs.length > 1) report("oats-package.json.configs", "at most one config profile may be marked default");
 for (const [name, spec] of Object.entries(configs)) {
-  if (spec?.path) safeResource(root, spec.path, `oats-package.json.configs.${name}.path`, "config profile");
+  safeResource(root, spec?.path, `oats-package.json.configs.${name}.path`, "config profile", { type: "file" });
 }
 
 const declaredCapabilities = Array.isArray(packageManifest?.capabilities) ? packageManifest.capabilities : [];
@@ -77,18 +136,21 @@ if (declaredCapabilities.length !== 1) {
 
 const capabilities = [];
 for (const [index, capabilityDir] of declaredCapabilities.entries()) {
-  safeResource(root, capabilityDir, `oats-package.json.capabilities[${index}]`, "capability directory");
-  if (isAbsolute(capabilityDir) || capabilityDir.split(/[\\/]+/).includes("..")) continue;
-  const manifestPath = join(root, capabilityDir, "oats.json");
-  if (!existsSync(manifestPath)) { report(`oats-package.json.capabilities[${index}]`, `${capabilityDir} has no oats.json`); continue; }
+  const capabilityRoot = safeResource(root, capabilityDir, `oats-package.json.capabilities[${index}]`, "capability directory", { type: "directory", recursive: true });
+  if (!capabilityRoot) continue;
+  const manifestPath = safeResource(capabilityRoot, "oats.json", `${capabilityDir}/oats.json`, "capability manifest", { type: "file" });
+  if (!manifestPath) continue;
   const manifest = readJson(manifestPath);
-  if (!manifest) continue;
-  capabilities.push(manifest);
   if (capabilitySchema) validateSchema(manifest, capabilitySchema, `${capabilityDir}/oats.json`);
-  const capabilityRoot = dirname(manifestPath);
-  for (const [resourceIndex, resource] of (manifest.skills || []).entries()) safeResource(capabilityRoot, resource, `${capabilityDir}/oats.json.skills[${resourceIndex}]`, "skill path");
-  if (manifest.inject) safeResource(capabilityRoot, manifest.inject, `${capabilityDir}/oats.json.inject`, "injection path");
-  for (const [agentIndex, agent] of (manifest.agents || []).entries()) safeResource(capabilityRoot, agent, `${capabilityDir}/oats.json.agents[${agentIndex}]`, "agent path");
+  if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) continue;
+  capabilities.push(manifest);
+  for (const [resourceIndex, resource] of array(manifest.skills).entries()) {
+    const at = `${capabilityDir}/oats.json.skills[${resourceIndex}]`;
+    const tree = safeResource(capabilityRoot, resource, at, "skill path", { type: "directory", recursive: true });
+    if (tree) validateSkillTree(tree, at);
+  }
+  if ("inject" in manifest) safeResource(capabilityRoot, manifest.inject, `${capabilityDir}/oats.json.inject`, "injection path", { type: "file" });
+  for (const [agentIndex, agent] of array(manifest.agents).entries()) safeResource(capabilityRoot, agent, `${capabilityDir}/oats.json.agents[${agentIndex}]`, "agent path", { type: "directory", recursive: true });
   // A hook may be a plain "entrypoint args" string or the object form
   // { command, required } (only the spawn hook may set required). Commands are
   // always strings. Reduce either to the executable entrypoint for containment.
@@ -96,8 +158,13 @@ for (const [index, capabilityDir] of declaredCapabilities.entries()) {
     const command = typeof spec === "string" ? spec : (spec && typeof spec === "object" ? spec.command : undefined);
     return typeof command === "string" ? command.trim().split(/\s+/)[0] : command;
   };
-  for (const [name, command] of Object.entries(manifest.commands || {})) safeResource(capabilityRoot, entrypoint(command), `${capabilityDir}/oats.json.commands.${name}`, "command entrypoint");
-  for (const [event, hook] of Object.entries(manifest.hooks || {})) safeResource(capabilityRoot, entrypoint(hook), `${capabilityDir}/oats.json.hooks.${event}`, "hook entrypoint");
+  for (const [name, command] of entries(manifest.commands)) safeResource(capabilityRoot, entrypoint(command), `${capabilityDir}/oats.json.commands.${name}`, "command entrypoint", { type: "file" });
+  for (const [event, hook] of entries(manifest.hooks)) safeResource(capabilityRoot, entrypoint(hook), `${capabilityDir}/oats.json.hooks.${event}`, "hook entrypoint", { type: "file" });
+  for (const [name, operation] of entries(manifest.operations)) {
+    if (typeof operation?.command !== "string" || !Object.hasOwn(manifest.commands || {}, operation.command)) {
+      report(`${capabilityDir}/oats.json.operations.${name}.command`, "must name one of the manifest's commands");
+    }
+  }
   for (const forbidden of ["global", "agent-types", "souls"]) if (forbidden in manifest) report(`${capabilityDir}/oats.json.${forbidden}`, "deployment targeting belongs to config, not a capability manifest");
 }
 
@@ -110,9 +177,9 @@ if (capabilities.length === 1 && packageManifest) {
     }
   } else {
     if (packageManifest.package !== capability.capability) report("oats-package.json.package", "single-capability official package ID must equal its capability ID");
-    if (packageManifest.version !== capability.version) report("oats-package.json.version", "must start at the extracted capability version");
+    if (packageManifest.version !== capability.version) report("oats-package.json.version", "must match the exported capability version");
   }
-  if (packageManifest.compatibility?.oats !== capability.compatibility?.oats) report("oats-package.json.compatibility.oats", "must match the staged capability compatibility floor");
+  if (packageManifest.compatibility?.oats !== capability.compatibility?.oats) report("oats-package.json.compatibility.oats", "must match the exported capability compatibility floor");
 }
 
 if (errors.length) {

@@ -4,6 +4,13 @@ on:
   pull_request:
   push:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      consumer_version:
+        description: 'Optional exact published @awebai/oats version (>=0.23.0); empty skips consumer probes'
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: read
@@ -16,7 +23,50 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Validate manifests and run unit tests
+      - name: Validate exported manifests and run the complete standalone v2 suite
         run: npm test
-      - name: Consumer probe status
-        run: echo "PENDING(released-0.19.0-fixtures; package-runtime-api.md Consumer fixture) acquire -> lock -> trust -> activate -> spawn"
+      - name: Report default coverage limits (not a consumer probe)
+        run: |
+          echo "npm test covers the exported v2 payload, schema parity/mutations and disposable Git/directory custody."
+          echo "SKIPPED by default: public CLI scaffold and native capture/scheduler probes (3 opt-in tests)."
+          echo "NOT COVERED: OKF acquire/lock/restore/trust, remote GitHub PRs or fresh real-model learning."
+          echo "Use workflow_dispatch with an exact published consumer_version for the optional public CLI job; see SCHEMA-STATUS.md."
+
+  public-consumer:
+    if: github.event_name == 'workflow_dispatch' && inputs.consumer_version != ''
+    runs-on: ubuntu-latest
+    env:
+      CONSUMER_VERSION: ${{ inputs.consumer_version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Require an exact stable version at or above the declared floor
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { readFileSync } from 'node:fs';
+          const version=process.env.CONSUMER_VERSION;
+          assert.match(version,/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/,'supply an exact published version, not a tag/range/source');
+          const capability=JSON.parse(readFileSync('oats-package/oats-package.json')).capabilities[0];
+          const floor=JSON.parse(readFileSync(`oats-package/${capability}/oats.json`)).compatibility.oats;
+          assert.match(floor,/^>=\d+\.\d+\.\d+$/,'update this gate if the compatibility expression changes');
+          const requested=version.split('.').map(Number), minimum=floor.slice(2).split('.').map(Number);
+          const different=requested.findIndex((v,i)=>v!==minimum[i]);
+          assert.ok(different===-1 || requested[different]>minimum[different],`consumer must satisfy ${floor}`);
+          NODE
+      - name: Install only the selected public kernel in a disposable prefix
+        run: |
+          npm install --prefix "$RUNNER_TEMP/okf-consumer-kernel" --ignore-scripts --no-audit --no-fund --package-lock=false "@awebai/oats@$CONSUMER_VERSION"
+          node -e 'const p=require(process.argv[1]); if(p.version!==process.env.CONSUMER_VERSION) throw Error("consumer version mismatch"); console.log("Public consumer:",p.name,p.version)' "$RUNNER_TEMP/okf-consumer-kernel/node_modules/@awebai/oats/package.json"
+          echo "OATS_OKF_CONSUMER_CLI=$RUNNER_TEMP/okf-consumer-kernel/node_modules/@awebai/oats/bin/oats.mjs" >> "$GITHUB_ENV"
+      - name: Run v2 suite including public CLI scaffold and native probes
+        run: |
+          test -f "$OATS_OKF_CONSUMER_CLI"
+          npm test
+      - name: Report consumer evidence boundaries
+        run: |
+          echo "This job uses an installed public kernel with the enumerated OKF source payload in disposable owned-capability fixtures."
+          echo "No model is launched, no host timer is installed, and no real GitHub PR is created."
+          echo "This is NOT an OKF distribution acquire/lock/restore/trust probe or fresh real-model learning."

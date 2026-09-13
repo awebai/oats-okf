@@ -1,267 +1,909 @@
-import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-import test from "node:test";
-import { fileURLToPath } from "node:url";
-
-const ROOT = resolve(fileURLToPath(new URL("../oats-package", import.meta.url)));
-const CLI = join(ROOT, "capabilities", "oats-okf", "bin", "oats-okf.mjs");
-
-function run(args = [], env = {}, cwd = ROOT) {
-  return new Promise((done) => {
-    const child = spawn(process.execPath, [CLI, ...args], {
-      cwd,
-      env: { ...process.env, ...env },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", (chunk) => { stdout += chunk; });
-    child.stderr.on("data", (chunk) => { stderr += chunk; });
-    child.on("close", (code) => done({ code, stdout, stderr }));
-  });
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, dirname, resolve } from 'node:path';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { syncBuiltinESMExports } from 'node:module';
+const ROOT=fileURLToPath(new URL('../',import.meta.url));
+const CAP=join(ROOT,'oats-package',JSON.parse(fs.readFileSync(join(ROOT,'oats-package/oats-package.json'),'utf8')).capabilities[0]);
+const CLI=join(CAP,'bin/oats-okf.mjs');
+const mod=p=>import(new URL(`../oats-package/capabilities/oats-okf/lib/${p}.mjs`,import.meta.url));
+const {loadBindings,metadata,validateBindings,validateDeclaration}=await mod('config');
+const {tree,save,readJSON,atomic,digest,withLock,baseLock:unused,quote,command,hash}=await mod('io');
+const {register,capture,input,loadStatus,loadSource,saveStatus,views,scheduleSource}=await mod('sources');
+const {runSource,readRun,complete,retry}=await mod('worker');
+const {initBase,migrate,deliverMigration,cutoverMigration}=await mod('migration');
+const {stageBase,baseLock,journalPath,directoryPublish}=await mod('stores');
+function put(p,text) {fs.mkdirSync(dirname(p),{recursive:true});fs.writeFileSync(p,text);}
+const hostPath=process.env.PATH;
+function fixture(t,{kind='directory',root='knowledge',nodes={expert:{path:'expert',owner:'owner-1'},peer:{path:'peer',owner:'owner-2'}}}={}) {
+  const dir=fs.realpathSync(fs.mkdtempSync(join(tmpdir(),'okf-v2-'))); const old={...process.env};
+  t.after(()=>{for(const k of Object.keys(process.env)) delete process.env[k];Object.assign(process.env,old);fs.rmSync(dir,{recursive:true,force:true});});
+  for(const k of Object.keys(process.env)) delete process.env[k];
+  Object.assign(process.env,{HOME:join(dir,'user'),PATH:join(dir,'bin'),OATS_HOME_DIR:join(dir,'host-state'),GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:'/dev/null'});
+  fs.mkdirSync(process.env.HOME);fs.mkdirSync(process.env.PATH);
+  fs.symlinkSync(process.execPath,join(process.env.PATH,'node'));
+  const fake=join(dir,'bin',"oats ' boundary.mjs");
+  const context=join(dir,'context');fs.mkdirSync(context);
+  const calls=join(dir,'calls.jsonl');process.env.FIXTURE_CALLS=calls;process.env.FIXTURE_ROOT=dir;
+  put(fake,`#!${process.execPath}
+import * as fs from 'node:fs';import {join} from 'node:path';
+const a=process.argv.slice(2),root=process.env.FIXTURE_ROOT;
+fs.appendFileSync(process.env.FIXTURE_CALLS,JSON.stringify({a,cwd:process.cwd(),identity:process.env.OATS_HOME || null})+'\\n');
+const val=k=>a[a.indexOf(k)+1];const out=result=>console.log(JSON.stringify({schemaVersion:1,ok:true,result}));
+if(a[0]==='capture') {const p=join(root,'capture.json');console.log(fs.existsSync(p)?fs.readFileSync(p,'utf8'):JSON.stringify({status:'complete',complete:true,sessions:[],ignored:0}));}
+else if(a[0]==='recall') {const all=JSON.parse(fs.readFileSync(join(root,'turns.json')));const start=a.includes('--after')?all.findIndex(t=>t.id===val('--after'))+1:0;const end=all.findIndex(t=>t.id===val('--until'))+1;const turns=all.slice(start,Math.min(end,start+Number(val('--limit'))));const result=a.includes('--ids-only')?turns.map(({text,...t})=>({...t,bytes:Buffer.byteLength(JSON.stringify({...t,text},null,2))+8})):turns;const fault=join(root,'recall-fail');if(!a.includes('--ids-only') && fs.existsSync(fault) && turns.some(t=>t.id===fs.readFileSync(fault,'utf8'))) process.exit(47);console.log(JSON.stringify({turns:result,remaining:end-start-turns.length}));}
+else if(a[0]==='spawn') {const instance='memory-harvest-'+val('--purpose'),home=join(root,'workers',instance);fs.mkdirSync(join(home,'work'),{recursive:true});fs.writeFileSync(join(home,'instance.json'),JSON.stringify({instance,agent:'memory-harvest',work:'directory',repo:val('--repo'),kind:'capability',launched:false}));fs.copyFileSync(val('--task-file'),join(home,'TASK.md'));out({instance,home,work:'directory',launched:false});}
+else if(a[0]==='session') {console.error('NO MODEL SESSIONS IN FIXTURES');process.exit(91);}
+else if(a[0]==='schedule') {
+  if(a.includes('install')) {console.error('NO HOST TIMERS IN FIXTURES');process.exit(92);}
+  const error=(code,message)=>{console.log(JSON.stringify({schemaVersion:1,ok:false,error:{code,message}}));process.exit(1);};
+  if(fs.existsSync(join(root,'schedule-fail'))) error('E_SCHEDULE_FIXTURE','scheduler unavailable');
+  const p=join(root,'schedules.json'),jobs=fs.existsSync(p)?JSON.parse(fs.readFileSync(p,'utf8')):{};
+  const persist=()=>fs.writeFileSync(p,JSON.stringify(jobs));
+  if(a[1]==='add') {if(jobs[a[2]]) error('E_SCHEDULE_EXISTS','already exists');jobs[a[2]]=JSON.parse(fs.readFileSync(val('--file'),'utf8'));persist();out({schedule:jobs[a[2]]});}
+  else if(a[1]==='show') {if(!jobs[a[2]]) error('E_SCHEDULE_UNKNOWN','missing');out({schedule:jobs[a[2]]});}
+  else if(['enable','disable'].includes(a[1])) {jobs[a[2]].enabled=a[1]==='enable';persist();out({schedule:jobs[a[2]]});}
+  else if(a[1]==='list') out({schedules:Object.values(jobs),scheduler:{installed:false,active:false}});
+  else error('E_FIXTURE','unknown schedule call');
 }
-
-function tempDir(t) {
-  const dir = mkdtempSync(join(tmpdir(), "oats-okf-test-"));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
-  return dir;
-}
-
-function fakeOatsPath(t) {
-  const bin = join(tempDir(t), "bin");
-  mkdirSync(bin);
-  const script = join(bin, "oats");
-  writeFileSync(script, `#!/usr/bin/env node
-const fs = require("node:fs");
-const args = process.argv.slice(2);
-const taskFile = args[args.indexOf("--task-file") + 1];
-fs.writeFileSync(process.env.OATS_TEST_RECORD, JSON.stringify({
-  args,
-  taskFile,
-  task: fs.readFileSync(taskFile, "utf8"),
-  taskMode: fs.statSync(taskFile).mode & 0o777,
-}));
-if (process.env.OATS_TEST_ERROR_CODE) {
-  console.log(JSON.stringify({ schemaVersion: 1, ok: false, error: { code: process.env.OATS_TEST_ERROR_CODE, message: "synthetic spawn failure" } }));
-  process.exit(1);
-}
-const purpose = args[args.indexOf("--purpose") + 1];
-const instance = \`memory-harvest-\${purpose}\`;
-console.log(JSON.stringify({ schemaVersion: 1, ok: true, result: {
-  instance,
-  agent: "memory-harvest",
-  home: "/synthetic/home",
-  work: args[args.indexOf("--work") + 1],
-  tmux: { window: instance },
-} }));
-`);
-  chmodSync(script, 0o755);
-  return bin;
-}
-
-function harvestFixture(t, mode, { model, errorCode } = {}) {
-  const scope = tempDir(t);
-  const root = join(scope, "agents");
-  const home = join(root, "source", "instances", "source-instance-1");
-  const context = join(scope, "context");
-  const work = join(home, "work");
-  mkdirSync(join(home, "notes"), { recursive: true });
-  mkdirSync(context, { recursive: true });
-  mkdirSync(work, { recursive: true });
-  writeFileSync(join(home, "notes", "pending.md"), "---\ntype: Lesson\n---\n\nPending.\n");
-
-  let soul = join(home, "soul");
-  if (mode === "workspace") {
-    const soulRepo = join(scope, "soul-repo");
-    mkdirSync(join(soulRepo, ".git"), { recursive: true });
-    soul = join(soulRepo, "agents", "source", "soul");
+else {console.error('unknown fixture call '+JSON.stringify(a));process.exit(90);}
+`);fs.chmodSync(fake,0o755);process.env.OATS_CLI_BIN=fake;
+  const gh=join(dir,'bin','gh');
+  put(gh,`#!${process.execPath}
+import * as fs from 'node:fs';import {join} from 'node:path';import {execFileSync} from 'node:child_process';
+const a=process.argv.slice(2),val=k=>a[a.indexOf(k)+1],root=process.env.FIXTURE_ROOT,p=join(root,'pr.json');
+if(a[1]==='list') {if(fs.existsSync(join(root,'gh-unavailable'))) process.exit(45);console.log(fs.existsSync(p)?fs.readFileSync(p,'utf8'):'[]');}
+else if(a[1]==='create') {if(fs.existsSync(join(root,'gh-fail'))) process.exit(42);const branch=val('--head'),oid=execFileSync('git',['ls-remote','origin','refs/heads/'+branch],{encoding:'utf8'}).trim().split(/\\s/)[0];fs.writeFileSync(p,JSON.stringify([{number:1,url:'https://github.com/fixture/knowledge/pull/1',state:'OPEN',headRefName:branch,headRefOid:oid,baseRefName:val('--base'),mergedAt:null,mergeCommit:null}]));if(fs.existsSync(join(root,'gh-uncertain'))) process.exit(43);console.log('https://github.com/fixture/knowledge/pull/1');}
+else process.exit(44);
+`);fs.chmodSync(gh,0o755);
+  const repo=join(dir,'accepted-repo'); const base=kind==='directory'?{id:'base-1',kind,path:'base'}:{id:'base-1',kind,repository:repo,root,acceptedBranch:'main',pr:{repository:'fixture/knowledge'}};
+  if(kind==='git') {process.env.PATH+=`:${hostPath}`;fs.mkdirSync(repo);git(repo,['init','-q','--initial-branch=main']);}
+  const bindingFile=join(dir,'bindings.json');save(bindingFile,{version:1,stateDir:'state',bases:{project:base}});process.env.OATS_SETTINGS=JSON.stringify({'bindings-file':bindingFile});
+  const nodesFile=join(dir,'nodes.json');save(nodesFile,nodes);
+  const bindings=loadBindings();
+  if(kind==='directory') initBase(bindings,'project',nodesFile,undefined,{confirm:true});
+  else {
+    const tmp=join(dir,'seed');initBase(bindings,'project',nodesFile,tmp);fs.cpSync(tmp,root==='.'?repo:join(repo,root),{recursive:true});
+    if(root!=='.') put(join(repo,'code.txt'),'code baseline\n');
+    git(repo,['add','.']);git(repo,['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','baseline']);
   }
-  mkdirSync(soul, { recursive: true });
-
-  const record = join(scope, "spawn-record.json");
-  return {
-    home,
-    context,
-    soul,
-    record,
-    env: {
-      OATS_EVENT: "harvest",
-      OATS_HOME: home,
-      OATS_ROOT: root,
-      OATS_INSTANCE: "source-instance-1",
-      OATS_AGENT: "source",
-      OATS_SOUL: soul,
-      OATS_CONTEXT: context,
-      OATS_KIND: mode === "local" ? "local" : "persistent",
-      OATS_WORK: mode === "workspace" ? "workspace" : "worktree",
-      OATS_SETTINGS: JSON.stringify(model ? { "harvest-model": model } : {}),
-      OATS_TEST_RECORD: record,
-      OATS_CLI_BIN: join(fakeOatsPath(t), "oats"),
-      ...(errorCode ? { OATS_TEST_ERROR_CODE: errorCode } : {}),
-    },
-  };
+  const home=join(context,'source-home'),soul=join(context,'source-soul');fs.mkdirSync(join(home,'work'),{recursive:true});fs.mkdirSync(soul);
+  put(join(soul,'AGENTS.md'),'# Expert\nOwn domain rationale and hard-won limitations.\n');
+  put(join(soul,'soul.yaml'),'name: source\nwork: directory\n');save(join(soul,'okf.json'),{version:1,owner:'owner-1',owns:['project/expert'],reads:['project/peer']});
+  fs.symlinkSync(soul,join(home,'soul'));save(join(home,'instance.json'),{instance:'source-one',agent:'source',repo:context,work:'directory',launched:true});
+  Object.assign(process.env,{OATS_HOME:home,OATS_INSTANCE_HOME:home,OATS_INSTANCE:'source-one',OATS_AGENT:'source',OATS_SOUL:soul,OATS_CONTEXT:context});
+  const source=()=>register(home);
+  const cli=(cmd,args=[],env={})=>{const r=spawnSync(process.execPath,[CLI,cmd,...args,'--json'],{cwd:home,env:{...process.env,...env},encoding:'utf8',timeout:30000});let out;try{out=JSON.parse(r.stdout);}catch{}return {...r,out};};
+  return {dir,home,soul,bindings,bindingFile,repo,source,cli,calls,context,base:bindings.bases.project};
+}
+function git(repo,args) {return execFileSync('git',['-C',repo,...args],{encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();}
+function note(f,name='decision.md',text='The human chose explicit custody because hidden fallbacks conceal delivery failures.') {put(join(f.home,'notes',name),`---\ntype: Decision\ntitle: Explicit custody\ndescription: Why custody is explicit.\n---\n\n${text}\n`);}
+function prepared(f,s=f.source()) {capture(s);const r=runSource(s,{manual:true,noLaunch:true});return {s,run:readRun(s,r.run)};}
+function judgment(f,s,run,{drop=false,base='project',node='expert',secret=false}={}) {
+  const stage=run.stages[base]; const file=join(run.worker.home,'work','judgment.json');
+  const outcomes=run.inputs.map(id=>({input:id,verdict:drop?'drop':'promote',reason:drop?'Task residue.':'Human accepted rationale passes both tests.',concepts:drop?[]:[{base,path:`${node}/decision.md`}]}));
+  if(!drop) {
+    put(join(stage.root,node,'decision.md'),`---\ntype: Decision\ntitle: Explicit custody\ndescription: Why custody is explicit.\n---\n\nExplicit custody prevents hidden delivery fallback.\n${secret?'ghp_abcdefghijklmnopqrstuvwxyz0123456789':''}\n${run.inputs.map(id=>'Evidence: OKF input '+id).join('\n')}\n`);
+    fs.appendFileSync(join(stage.root,node,'index.md'),'* [Explicit custody](decision.md) - Why custody is explicit.\n');
+    fs.appendFileSync(join(stage.root,node,'log.md'),'* Creation: explicit custody.\n');
+  }
+  save(file,{version:1,exclusionsReviewed:true,outcomes});return file;
 }
 
-const argValue = (args, flag) => {
-  const index = args.indexOf(flag);
-  return index === -1 ? undefined : args[index + 1];
-};
-
-test("soul-scaffold creates an idempotent OKF bundle", async (t) => {
-  const dir = tempDir(t);
-  const soul = join(dir, "soul");
-  const env = { OATS_EVENT: "soul-scaffold", OATS_SOUL: soul, OATS_AGENT: "test-agent", OATS_SETTINGS: "{}" };
-  const first = await run(["soul-scaffold"], env);
-  assert.equal(first.code, 0, first.stderr);
-  assert.deepEqual(JSON.parse(first.stdout), { meta: { scaffolded: true } });
-  assert.match(readFileSync(join(soul, "knowledge", "index.md"), "utf8"), /okf_version: "0.1"/);
-  assert.match(readFileSync(join(soul, "knowledge", "log.md"), "utf8"), /knowledge bundle scaffolded/);
-
-  const second = await run(["soul-scaffold"], env);
-  assert.equal(second.code, 0, second.stderr);
-  assert.deepEqual(JSON.parse(second.stdout), { meta: { scaffolded: true } });
+test('exported payload version, floor, required hooks and complete command inventory',()=>{
+  assert.equal(fs.readlinkSync(join(CAP,'agents/memory-harvest/CLAUDE.md')),'AGENTS.md','source compatibility alias preserves one canonical instruction file');
+  const m=readJSON(join(CAP,'oats.json'));assert.equal(m.version,'2.0.0');assert.equal(m.compatibility.oats,'>=0.23.0');assert.equal(m.hooks.spawn.required,true);
+  for(const c of ['harvest','inspect','setup','run-source','complete','retry','migrate','read','refresh','init']) assert.ok(m.commands[c]);
+  const inj=fs.readFileSync(join(CAP,m.inject),'utf8');assert.doesNotMatch(inj,/harvest/i);assert.match(inj,/after compaction/);
+  const skill=fs.readFileSync(join(CAP,'skills/memory-harvest/SKILL.md'),'utf8');assert.ok(skill.indexOf('### 3.2 The accept list')<skill.indexOf('## Independent input'));assert.match(skill,/Could it NOT have found this by reading the repository/);
+});
+test('help is side-effect free, including malformed settings and every declared command',t=>{
+  const f=fixture(t);for(const cmd of Object.keys(readJSON(join(CAP,'oats.json')).commands)) {const r=f.cli(cmd,['--help'],{OATS_SETTINGS:'!'});assert.equal(r.status,0,r.stderr);assert.match(r.stdout,/oats okf/);}assert.equal(fs.existsSync(f.calls),false);
+});
+test('directory init, cross-node views, role evidence allowlist and inactive scheduler',t=>{
+  const f=fixture(t);const s=f.source();assert.ok(fs.existsSync(join(f.home,'knowledge/bases/project/peer/index.md')));assert.equal(s.owner,'owner-1');assert.equal(s.launchRecipe,undefined);assert.equal(s.settings,undefined);scheduleSource(s);
+  const calls=fs.readFileSync(f.calls,'utf8').trim().split('\n').map(JSON.parse);assert.equal(calls[0].a[0],'schedule');assert.equal(calls[0].identity,null);
+  const spec=readJSON(join(dirname(s.file),'schedule.json'));assert.equal(spec.cwd,f.context);assert.ok(spec.argv.includes('--soul'));assert.equal(spec.argv.includes(f.home),false);
+  assert.equal(f.cli('inspect').out.result.scheduler.active,false);
+});
+test('notes AND complete bounded record backlog are durable before final home deletion',t=>{
+  const f=fixture(t);const s=f.source();note(f);
+  const turns=Array.from({length:145},(_,i)=>({id:`turn-${i}`,thread:'thread-1',kind:'session',ts:'2026-09-13',source:'pi',text:[{role:'assistant',text:'Observed limitation '+i}]}));
+  save(join(f.dir,'turns.json'),turns);save(join(f.dir,'capture.json'),{status:'complete',complete:true,sessions:[{thread:'thread-1',lastTurnId:'turn-144'}],ignored:2});
+  const result=capture(s,{final:true});assert.equal(result.complete,true);
+  const st=loadStatus(s);assert.equal(st.captured.inputs.length,4);assert.equal(st.captured.threads['thread-1'],'turn-144');assert.equal(st.lastCapture.ignored,2);
+  fs.rmSync(f.home,{recursive:true});
+  const r=runSource(loadSource(s.file),{manual:true,noLaunch:true});const run=readRun(s,r.run);
+  const evidence=readJSON(join(run.worker.home,'work/input.json'));assert.equal(evidence.inputs.filter(i=>i.kind==='record').flatMap(i=>i.turns).length,145);assert.equal(evidence.inputs.filter(i=>i.kind==='note').length,1);
+  const calls=fs.readFileSync(f.calls,'utf8').trim().split('\n').map(JSON.parse);const spawn=calls.find(c=>c.a[0]==='spawn');assert.equal(spawn.a.includes('--parent'),false);assert.equal(spawn.a.includes('--work-dir'),false);assert.equal(spawn.a.includes('--branch'),false);
+});
+test('capture incomplete, held, skipped, failed and uncertified results retain home and evidence',t=>{
+  const f=fixture(t);const s=f.source();note(f);
+  for(const status of ['incomplete','held','skipped','failed',undefined]) {
+    save(join(f.dir,'capture.json'),{status,complete:false,sessions:[]});const r=f.cli('retire');assert.equal(r.status,1);assert.equal(r.out.meta.retired,false);assert.equal(loadStatus(s).retired,false);assert.equal(fs.existsSync(f.home),true);
+  }
+  assert.equal(loadStatus(s).captured.inputs.length,1);
+});
+test('notes content rewrite is captured, replay is idempotent, completion never deletes live notes',t=>{
+  const f=fixture(t);note(f);const {s,run}=prepared(f);note(f,'decision.md','Revised observation while the worker is running.');capture(s);const before=loadStatus(s);assert.equal(before.captured.inputs.length,2);capture(s);assert.equal(loadStatus(s).captured.inputs.length,2);
+  const result=complete(s,run.id,judgment(f,s,run));assert.equal(result.processed,true);assert.equal(result.receipts.project.status,'accepted');assert.match(fs.readFileSync(join(f.home,'notes/decision.md'),'utf8'),/Revised/);assert.equal(loadStatus(s).processed.length,1);
+});
+test('no-change/all-drop succeeds without invented Git or PR receipt',t=>{
+  const f=fixture(t);note(f);const {s,run}=prepared(f);const r=complete(s,run.id,judgment(f,s,run,{drop:true}));assert.equal(r.status,'processed');assert.equal(r.receipts.project.status,'no-change');assert.equal(r.receipts.project.pr,undefined);
+});
+test('directory delivery uses no git/gh tools and confirms reader-visible bytes',t=>{
+  const f=fixture(t);fs.unlinkSync(join(f.dir,'bin','gh'));note(f);const {s,run}=prepared(f);const r=complete(s,run.id,judgment(f,s,run));assert.equal(r.receipts.project.status,'accepted');assert.ok(fs.existsSync(join(f.base.path,'expert/decision.md')));
+  const target=join(f.dir,'fresh-reader');views(s.bindings,s.decl,target);assert.match(fs.readFileSync(join(target,'bases/project/expert/decision.md'),'utf8'),/prevents hidden delivery/);
+});
+test('directory baseline conflict retains pending input and permits explicit rejudgment',t=>{
+  const f=fixture(t);note(f);const {s,run}=prepared(f);const j=judgment(f,s,run);fs.appendFileSync(join(f.base.path,'peer/log.md'),'other writer\n');assert.throws(()=>complete(s,run.id,j),/base changed/);assert.equal(loadStatus(s).processed.length,0);
+  assert.equal(retry(s,{rejudge:true}).status,'abandoned');assert.equal(fs.existsSync(run.worker.home),true);
+});
+test('directory crash midway publication blocks readers, retry recovers and confirms once',t=>{
+  const f=fixture(t);note(f);const {s,run}=prepared(f);const j=judgment(f,s,run);
+  assert.throws(()=>complete(s,run.id,j,{afterWrite:n=>{if(n===1)throw new Error('simulated crash');}}),/simulated crash/);
+  assert.equal(fs.existsSync(journalPath(f.base)),true);assert.equal(loadStatus(s).processed.length,0);
+  assert.throws(()=>views(s.bindings,s.decl,join(f.dir,'blocked-reader')),/publication pending/);
+  const r=retry(s);assert.equal(r.processed,true);assert.equal(fs.existsSync(journalPath(f.base)),false);assert.equal(loadStatus(s).processed.length,1);
+});
+test('source and base contention do not expire or steal locks',t=>{
+  const f=fixture(t);const s=f.source();note(f);
+  withLock(join(dirname(s.file),'capture.lock'),()=>assert.throws(()=>capture(s),/busy or abandoned/));
+  withLock(baseLock(f.base),()=>assert.throws(()=>stageBase(f.base,join(f.dir,'stage')),/busy or abandoned/));
+});
+test('frozen bindings prevent alias retargeting queued source input',t=>{
+  const f=fixture(t);note(f);const s=f.source();capture(s,{final:true});const changed=readJSON(f.bindingFile);changed.bases.project.path='another-base';save(f.bindingFile,changed);
+  const r=runSource(loadSource(s.file),{manual:true,noLaunch:true});const run=readRun(s,r.run);complete(s,run.id,judgment(f,s,run));assert.ok(fs.existsSync(join(f.base.path,'expert/decision.md')));assert.equal(fs.existsSync(join(f.dir,'another-base')),false);
+});
+test('ownership escape and unrelated base navigation edits fail before publication',t=>{
+  const f=fixture(t);note(f);const {s,run}=prepared(f);const j=judgment(f,s,run);fs.appendFileSync(join(run.stages.project.root,'peer/log.md'),'unauthorized\n');assert.throws(()=>complete(s,run.id,j),/unauthorized touched/);assert.equal(fs.existsSync(join(f.base.path,'expert/decision.md')),false);
+});
+test('symlink, hardlink, traversal, overlapping paths and ambiguous owners fail closed',t=>{
+  const f=fixture(t);const raw=readJSON(f.bindingFile);
+  const bad=structuredClone(raw);bad.bases.duplicate={...bad.bases.project};assert.throws(()=>validateBindings(bad,f.bindingFile),/duplicate base identity/);
+  const state=structuredClone(raw);state.stateDir='base/state';assert.throws(()=>validateBindings(state,f.bindingFile),/state overlaps/);
+  fs.symlinkSync(f.base.path,join(f.dir,'alias'));const link=structuredClone(raw);link.bases.project.path='alias';assert.throws(()=>validateBindings(link,f.bindingFile),/symlink/);
+  const escape=tree(f.base.path);const m=JSON.parse(Buffer.from(escape['okf-base.json'],'base64'));m.nodes.peer.path='../escape';escape['okf-base.json']=Buffer.from(JSON.stringify(m)).toString('base64');assert.throws(()=>metadata(escape,f.base),/noncanonical/);
+  fs.linkSync(join(f.base.path,'log.md'),join(f.base.path,'hard.md'));assert.throws(()=>tree(f.base.path),/hardlink/);
+});
+test('missing bases never bootstrap during required spawn; legacy bundles get migration diagnostic',t=>{
+  const f=fixture(t);put(join(f.soul,'knowledge/index.md'),'legacy remains');const r=f.cli('spawn');assert.equal(r.status,1);assert.match(r.out.warning,/legacy.*migration|legacy.*migrate/);assert.equal(fs.readFileSync(join(f.soul,'knowledge/index.md'),'utf8'),'legacy remains');
+  fs.rmSync(join(f.soul,'knowledge'),{recursive:true});fs.rmSync(f.base.path,{recursive:true});const missing=f.cli('spawn');assert.equal(missing.status,1);assert.equal(fs.existsSync(f.base.path),false);
+});
+test('no-launch sources and service workers never trigger scheduled model launches or recursive capture',t=>{
+  const f=fixture(t);const s=f.source();note(f);save(join(f.home,'instance.json'),{instance:'source-one',agent:'source',repo:f.context,work:'directory',launched:false});const before=fs.readFileSync(f.calls,'utf8');assert.equal(runSource(s).status,'skipped');assert.equal(fs.readFileSync(f.calls,'utf8'),before);
+  const serviceHome=join(f.dir,'service-home');fs.mkdirSync(serviceHome);
+  const service=f.cli('spawn',[],{OATS_KIND:'capability',OATS_SETTINGS:'{}',OATS_HOME:serviceHome,OATS_INSTANCE_HOME:serviceHome});assert.equal(service.out.meta.memory,'none');assert.equal(fs.readFileSync(f.calls,'utf8'),before);
+  capture(s,{final:true});assert.equal(loadStatus(s).auto,false);assert.equal(runSource(s).status,'disabled');
+});
+test('completion rejects invalid judgment and credential-shaped promotion output',t=>{
+  const f=fixture(t);note(f);const {s,run}=prepared(f);const j=judgment(f,s,run,{secret:true});assert.throws(()=>complete(s,run.id,j),/credential-shaped/);const doc=readJSON(j);doc.outcomes=[];save(j,doc);assert.throws(()=>complete(s,run.id,j),/exactly one outcome/);assert.equal(loadStatus(s).processed.length,0);
+});
+test('actual complete command dispatch validates and records processed receipt',t=>{
+  const f=fixture(t);note(f);const {s,run}=prepared(f);const j=judgment(f,s,run);const r=f.cli('complete',['--source',s.file,'--run',run.id,'--judgment',j]);assert.equal(r.status,0,r.stdout+r.stderr);assert.equal(r.out.schemaVersion,1);assert.equal(r.out.result.receipts.project.status,'accepted');assert.equal(loadStatus(s).processed.length,1);
+});
+for(const root of ['knowledge','.']) test(`actual temporary Git ${root==='.'?'dedicated':'embedded'} base delivers verified PR, not accepted head`,t=>{
+  const f=fixture(t,{kind:'git',root});note(f);const {s,run}=prepared(f);const before=git(f.repo,['rev-parse','main']);const r=complete(s,run.id,judgment(f,s,run));const receipt=r.receipts.project;
+  assert.equal(receipt.status,'delivered');assert.equal(receipt.pr.number,1);assert.equal(git(f.repo,['rev-parse','main']),before);assert.equal(git(f.repo,['rev-parse',receipt.branch]),receipt.commit);assert.equal(loadStatus(s).processed.length,1);assert.equal(Object.keys(loadStatus(s).accepted).length,0);
+  assert.match(git(f.repo,['show',`${receipt.commit}:${root==='.'?'':root+'/'}expert/decision.md`]),/Evidence: OKF input/);
+});
+test('Git PR failure never falls back; retry verifies an uncertain create without duplication',t=>{
+  const f=fixture(t,{kind:'git'});note(f);const {s,run}=prepared(f);put(join(f.dir,'gh-uncertain'),'1');assert.throws(()=>complete(s,run.id,judgment(f,s,run)),/failed/);assert.equal(loadStatus(s).processed.length,0);assert.equal(readRun(s,run.id).receipts.project.status,'pr-unknown');
+  fs.rmSync(join(f.dir,'gh-uncertain'));const r=retry(s);assert.equal(r.receipts.project.status,'delivered');assert.equal(readJSON(join(f.dir,'pr.json')).length,1);
+});
+test('Git outside-base edits and tracked directory bypass are rejected',t=>{
+  const f=fixture(t,{kind:'git'});note(f);const {s,run}=prepared(f);const j=judgment(f,s,run);put(join(run.stages.project.checkout,'code.txt'),'must not deliver');assert.throws(()=>complete(s,run.id,j),/outside.*knowledge/);
+  const raw={version:1,stateDir:join(f.dir,'s2'),bases:{b:{kind:'directory',id:'other',path:join(f.repo,'knowledge')}}};assert.throws(()=>validateBindings(raw,f.bindingFile),/Git custody/);
+});
+test('Git empty input judgment has no commit, push or PR',t=>{
+  const f=fixture(t,{kind:'git'});note(f);const {s,run}=prepared(f);const r=complete(s,run.id,judgment(f,s,run,{drop:true}));assert.equal(r.receipts.project.status,'no-change');assert.equal(fs.existsSync(join(f.dir,'pr.json')),false);
+});
+test('migration preserves originals, rewrites root links, delivers directory and explicitly cuts over',t=>{
+  const f=fixture(t);const legacy=join(f.soul,'knowledge');put(join(legacy,'index.md'),'---\nokf_version: "0.1"\n---\n\n# Old\n* [Rationale](/rationale.md) - Why.\n');put(join(legacy,'rationale.md'),'---\ntype: Decision\ntitle: Rationale\ndescription: Why.\n---\n\nPreserved human rationale.\n');put(join(legacy,'log.md'),'# History\n');const original=tree(legacy);
+  const m=migrate(f.bindings,{legacy,alias:'project',node:'expert',output:join(f.dir,'migration-stage')});assert.deepEqual(tree(legacy),original);assert.match(fs.readFileSync(join(m.stage,'expert/index.md'),'utf8'),/\/expert\/rationale/);
+  assert.equal(deliverMigration(m.migration).status,'accepted');const r=cutoverMigration(m.migration,f.soul);assert.equal(r.status,'complete');assert.deepEqual(tree(r.backup),original);assert.equal(fs.existsSync(legacy),false);assert.equal(readJSON(join(f.soul,'okf.json')).owner,'owner-1');
+});
+test('generated shell commands quote executable, cwd, descriptors and apostrophes safely',t=>{
+  const f=fixture(t);const payload="x'; touch /tmp/okf-never-create; echo '";const text=command(f.context,['okf','complete','--source',payload]);assert.ok(text.includes(quote(process.env.OATS_CLI_BIN)));assert.ok(text.includes(quote(payload)));
+  const script=`printf '%s\\n' ${quote(payload)}`;const r=execFileSync('/bin/sh',['-c',script],{encoding:'utf8'}).trim();assert.equal(r,payload);
 });
 
-test("spawn creates persistent-instance continuity files", async (t) => {
-  const home = tempDir(t);
-  const result = await run(["spawn"], {
-    OATS_EVENT: "spawn",
-    OATS_HOME: home,
-    OATS_INSTANCE: "test-agent-1",
-    OATS_AGENT: "test-agent",
-    OATS_KIND: "persistent",
-    OATS_TASK: "Exercise the package hook.",
-    OATS_REPO: "/tmp/example",
-    OATS_BRANCH: "test",
-    OATS_WORK: "worktree",
-    OATS_SETTINGS: "{}",
+// These names are the strengthened mutation harness's contract. Execute the
+// actual manifest fixed argv and operation routing, never a hardcoded event.
+const manifest=readJSON(join(CAP,'oats.json'));
+function declaredRun(f,name,args=[],operation=false) {
+  if(operation) {assert.ok(manifest.operations?.[name],`missing operation ${name}`);name=manifest.operations[name].command;}
+  assert.ok(Object.hasOwn(manifest.commands,name),`missing command ${name}`);
+  const [entry,...fixed]=manifest.commands[name].trim().split(/\s+/);
+  const r=spawnSync(process.execPath,[join(CAP,entry),...fixed,...args,'--json'],{cwd:f.home,env:process.env,encoding:'utf8',timeout:10000});
+  assert.equal(r.status,0,r.stdout+r.stderr);return JSON.parse(r.stdout);
+}
+test('baseline exports the readable okf and memory-harvest skill closure',()=>{
+  const hasDoc=p=>{try{return fs.statSync(join(p,'SKILL.md')).isFile();}catch{return false;}};
+  const skills=new Map();
+  for(const declared of manifest.skills || []) {
+    const dir=join(CAP,declared);assert.ok(fs.statSync(dir).isDirectory());
+    const entries=hasDoc(dir)?[{name:dir.split('/').at(-1),dir}]:fs.readdirSync(dir,{withFileTypes:true}).filter(e=>e.isDirectory() && hasDoc(join(dir,e.name))).map(e=>({name:e.name,dir:join(dir,e.name)}));
+    for(const e of entries) skills.set(e.name,fs.readFileSync(join(e.dir,'SKILL.md'),'utf8'));
+  }
+  for(const name of ['okf','memory-harvest']) {assert.ok(skills.has(name),`missing required baseline skill ${name}`);assert.match(skills.get(name),new RegExp(`^name: ${name}$`,'m'));}
+  assert.ok(fs.statSync(join(CAP,'skills/okf/scripts/okf-validate.mjs')).isFile());
+});
+test('baseline harvest operation dispatches its declared command without a hook event',t=>{
+  const f=fixture(t);f.source();note(f);const r=declaredRun(f,'harvest',['--no-launch'],true);assert.equal(r.schemaVersion,1);assert.equal(r.ok,true);assert.equal(r.result.status,'ready');assert.match(r.result.instance,/^memory-harvest-okf-/);
+});
+for(const operation of [false,true]) test(`baseline inspect ${operation?'operation':'command'} returns provider receipts through declared dispatch`,t=>{
+  const f=fixture(t);const s=f.source();const status=loadStatus(s);status.diagnostic='large α receipt\n'.repeat(10000);saveStatus(s,status);
+  const r=declaredRun(f,'inspect',[],operation);assert.equal(r.schemaVersion,1);assert.equal(r.ok,true);assert.equal(r.result.source,s.file);assert.equal(r.result.status.diagnostic,status.diagnostic);assert.ok(r.result.documents.length);
+});
+
+test('capture interleaved with directory completion preserves both cursors',t=>{
+  const f=fixture(t);note(f);const {s,run}=prepared(f);const j=judgment(f,s,run);let captured=false;
+  complete(s,run.id,j,{afterWrite:()=>{if(captured)return;captured=true;note(f,'new.md','A separate new limitation while delivery runs.');capture(s);}});
+  assert.equal(loadStatus(s).captured.inputs.length,2);assert.equal(loadStatus(s).processed.length,1);
+});
+test('directory accepted receipt with uncleared publication journal recovers after receipt-write crash',t=>{
+  const f=fixture(t);note(f);const {s,run}=prepared(f);const j=judgment(f,s,run);
+  assert.throws(()=>complete(s,run.id,j,{afterWrite:()=>{throw new Error('interrupt');}}),/interrupt/);
+  const current=readRun(s,run.id),r=current.receipts.project,p=readJSON(r.proposal);
+  assert.throws(()=>directoryPublish(f.base,p,r,()=>{save(join(dirname(s.file),'runs',run.id,'run.json'),current);if(r.status==='accepted')throw new Error('receipt persisted, cleanup interrupted');}),/cleanup interrupted/);
+  assert.equal(readRun(s,run.id).receipts.project.status,'accepted');assert.equal(fs.existsSync(journalPath(f.base)),true);
+  assert.equal(retry(s).processed,true);assert.equal(fs.existsSync(journalPath(f.base)),false);
+});
+test('failed Git publication survives worker deletion, then merge-visible acceptance is distinct',t=>{
+  const f=fixture(t,{kind:'git'});note(f);const {s,run}=prepared(f);const j=judgment(f,s,run);put(join(f.dir,'gh-fail'),'1');assert.throws(()=>complete(s,run.id,j),/failed/);
+  fs.rmSync(run.worker.home,{recursive:true});fs.rmSync(join(f.dir,'gh-fail'));
+  const published=retry(s);const r=published.receipts.project;assert.equal(r.status,'delivered');
+  // Simulate native GitHub merge with actual Git history and deterministic gh.
+  git(f.repo,['merge','--ff-only',r.branch]);const pr=readJSON(join(f.dir,'pr.json'));pr[0].state='MERGED';pr[0].mergedAt='2026-09-13T12:00:00Z';pr[0].mergeCommit={oid:r.commit};save(join(f.dir,'pr.json'),pr);
+  const accepted=complete(s,run.id);assert.equal(accepted.receipts.project.status,'accepted');assert.equal(loadStatus(s).accepted[`${run.id}/project`].acceptedCommit,r.commit);
+});
+test('existing, overlapping and hidden directory stages cannot bypass publication',t=>{
+  const f=fixture(t);assert.throws(()=>stageBase(f.base,f.base.path),/exists/);assert.throws(()=>stageBase(f.base,join(f.base.path,'nested')),/overlaps/);
+  put(join(f.base.path,'expert','.hidden.md'),'invalid unvalidated bytes');assert.throws(()=>f.source(),/hidden knowledge/);
+});
+test('frozen accepted ownership/path cannot silently retarget a queued node',t=>{
+  const f=fixture(t);const s=f.source();note(f);capture(s,{final:true});const meta=readJSON(join(f.base.path,'okf-base.json'));meta.nodes.expert.owner='replacement-owner';save(join(f.base.path,'okf-base.json'),meta);
+  assert.throws(()=>runSource(s,{manual:true,noLaunch:true}),/ownership\/path changed/);assert.equal(loadStatus(s).processed.length,0);
+});
+test('absolute CLI boundary is required and unknown commands fail in one envelope',t=>{
+  const f=fixture(t);const r=f.cli('unknown');assert.equal(r.status,1);assert.equal(r.out.error.code,'E_USAGE');const s=f.source();note(f);process.env.OATS_CLI_BIN='oats';assert.throws(()=>capture(s),/absolute OATS_CLI_BIN/);assert.equal(loadStatus(s).retired,false);
+});
+test('whole-base validation and exclusion guards include read nodes and navigation',t=>{
+  const f=fixture(t);note(f);const {s,run}=prepared(f);const j=judgment(f,s,run);
+  fs.appendFileSync(join(run.stages.project.root,'expert','log.md'),'ghp_abcdefghijklmnopqrstuvwxyz0123456789\n');assert.throws(()=>complete(s,run.id,j),/credential-shaped/);
+  put(join(run.stages.project.root,'expert','log.md'),'# expert log\n');put(join(run.stages.project.root,'peer','bad.md'),'missing frontmatter');assert.throws(()=>complete(s,run.id,j),/frontmatter/);
+});
+test('real process death mid-publication retains locks/journal until explicit dead-owner recovery',t=>{
+  const f=fixture(t);note(f);const {s,run}=prepared(f);const j=judgment(f,s,run);
+  const sourceModule=new URL('../oats-package/capabilities/oats-okf/lib/sources.mjs',import.meta.url).href;
+  const workerModule=new URL('../oats-package/capabilities/oats-okf/lib/worker.mjs',import.meta.url).href;
+  const code=`import {loadSource} from ${JSON.stringify(sourceModule)};import {complete} from ${JSON.stringify(workerModule)};complete(loadSource(${JSON.stringify(s.file)}),${JSON.stringify(run.id)},${JSON.stringify(j)},{afterWrite:()=>process.exit(55)});`;
+  const child=spawnSync(process.execPath,['--input-type=module','-e',code],{env:process.env,encoding:'utf8'});assert.equal(child.status,55,child.stderr);
+  assert.equal(fs.existsSync(journalPath(f.base)),true);
+  for(const lock of [baseLock(f.base),join(dirname(s.file),'worker.lock')]) {
+    const token=readJSON(join(lock,'owner.json')).token;const r=f.cli('unlock',['--lock',lock,'--token',token]);assert.equal(r.status,0,r.stdout);
+  }
+  assert.equal(retry(s).processed,true);assert.equal(fs.existsSync(journalPath(f.base)),false);
+});
+test('unexpected source deletion cannot strand enqueued evidence or certify missing final input',t=>{
+  const f=fixture(t);note(f);const s=f.source();capture(s);fs.rmSync(f.home,{recursive:true});
+  const r=runSource(s,{manual:true,noLaunch:true});const run=readRun(s,r.run);assert.equal(complete(s,run.id,judgment(f,s,run)).processed,true);
+  assert.equal(loadStatus(s).finalCaptureUncertified,true);assert.equal(runSource(s,{manual:true,noLaunch:true}).status,'source-unavailable');
+});
+test('legacy source cursor preservation is explicit, byte exact and not processed proof',t=>{
+  const f=fixture(t);note(f);put(join(f.home,'.okf-harvest-record.json'),'{"threads":{"old":{"untilTurnId":"old-1"}}}\n');assert.throws(()=>f.source(),/legacy source watermarks/);
+  const migrated=f.cli('migrate',['--source-home',f.home]);assert.equal(migrated.status,0,migrated.stdout);assert.equal(migrated.out.result.status,'preserved');
+  const backup=readJSON(migrated.out.result.backup);assert.equal(Buffer.from(backup.files['.okf-harvest-record.json'],'base64').toString(),fs.readFileSync(join(f.home,'.okf-harvest-record.json'),'utf8'));
+  const s=f.source();capture(s);assert.deepEqual(loadStatus(s).processed,[]);assert.equal(loadStatus(s).captured.inputs.length,1);
+});
+test('typos in mutation flags fail before any worker or scheduler side effect',t=>{
+  const f=fixture(t);const r=f.cli('harvest',['--no-lauch','yes']);assert.equal(r.status,1);assert.equal(r.out.error.code,'E_USAGE');assert.equal(fs.existsSync(f.calls),false);
+});
+test('multi-base partial delivery keeps per-destination receipts and processes input only after both confirm',t=>{
+  const f=fixture(t);const raw=readJSON(f.bindingFile);raw.bases.secondary={id:'base-2',kind:'directory',path:'second-base'};save(f.bindingFile,raw);
+  const bindings=loadBindings();initBase(bindings,'secondary',join(f.dir,'nodes.json'),undefined,{confirm:true});const decl=readJSON(join(f.soul,'okf.json'));decl.owns.push('secondary/expert');save(join(f.soul,'okf.json'),decl);
+  note(f);const {s,run}=prepared(f);const file=judgment(f,s,run);const first=readJSON(file);judgment(f,s,run,{base:'secondary'});const second=readJSON(file);first.outcomes[0].concepts.push(...second.outcomes[0].concepts);save(file,first);
+  let writes=0;assert.throws(()=>complete(s,run.id,file,{afterWrite:()=>{if(++writes===4)throw new Error('second base interrupted');}}),/second base interrupted/);
+  const pending=readRun(s,run.id);assert.equal(pending.receipts.project.status,'accepted');assert.equal(pending.receipts.secondary.status,'publishing');assert.equal(loadStatus(s).processed.length,0);
+  const result=retry(s);assert.equal(result.receipts.secondary.status,'accepted');assert.equal(loadStatus(s).processed.length,1);
+});
+
+// R1 lifecycle regressions. Only fixture scaffolds / recording backends run.
+const nativeCLI=process.env.OATS_OKF_NATIVE_CLI || process.env.OATS_OKF_CONSUMER_CLI;
+const callsOf=f=>fs.readFileSync(f.calls,'utf8').trim().split('\n').map(JSON.parse);
+function records(f,count=60,size=350000) {
+  const turns=Array.from({length:count},(_,i)=>({id:`turn-${i}`,thread:'thread-large',kind:'session',ts:'2026-09-13',source:'cc',text:[{role:'assistant',text:`${i}:`+'x'.repeat(size)}]}));
+  save(join(f.dir,'turns.json'),turns);save(join(f.dir,'capture.json'),{status:'complete',complete:true,sessions:[{thread:'thread-large',lastTurnId:turns.at(-1).id}],ignored:0});return turns;
+}
+function capturedTurns(s) {return loadStatus(s).captured.inputs.map(id=>input(s,id)).filter(v=>v.kind==='record').flatMap(v=>v.turns);}
+
+test('R1 large legal records plan ids-only windows before text and persist every turn',t=>{
+  const f=fixture(t),s=f.source(),turns=records(f);
+  assert.equal(capture(s,{final:true}).complete,true);
+  assert.deepEqual(capturedTurns(s),turns);assert.equal(loadStatus(s).retired,true);
+  const recall=callsOf(f).filter(c=>c.a[0]==='recall');assert.ok(recall[0].a.includes('--ids-only'));
+  const text=recall.filter(c=>!c.a.includes('--ids-only'));assert.equal(text.length,60);
+  assert.ok(text.every(c=>c.a[c.a.indexOf('--limit')+1]==='1'));
+  assert.equal(loadStatus(s).captured.inputs.length,60);assert.deepEqual(loadStatus(s).processed,[]);
+  for(const id of loadStatus(s).captured.inputs) assert.ok(Buffer.byteLength(JSON.stringify(input(s,id)))<1024*1024);
+});
+test('R1 interrupted large backlog retries from durable cursor without losing receipts or duplicating inputs',t=>{
+  const f=fixture(t),s=f.source(),turns=records(f,6);
+  const before=loadStatus(s);before.delivered.prior={status:'delivered'};before.accepted.prior={status:'accepted'};saveStatus(s,before);
+  put(join(f.dir,'recall-fail'),'turn-3');assert.throws(()=>capture(s,{final:true}),/failed/);
+  assert.equal(loadStatus(s).captured.threads['thread-large'],'turn-2');assert.equal(loadStatus(s).retired,false);assert.equal(capturedTurns(s).length,3);
+  fs.rmSync(join(f.dir,'recall-fail'));assert.equal(capture(s,{final:true}).complete,true);assert.deepEqual(capturedTurns(s),turns);
+  const after=loadStatus(s);assert.equal(after.captured.inputs.length,6);assert.deepEqual(after.delivered,before.delivered);assert.deepEqual(after.accepted,before.accepted);assert.deepEqual(after.processed,[]);
+});
+test('R1 individually oversize records fail closed after making durable progress on legal prefix',t=>{
+  const f=fixture(t),s=f.source(),turns=records(f,2);turns[1].text[0].text='x'.repeat(1024*1024);save(join(f.dir,'turns.json'),turns);
+  assert.throws(()=>capture(s,{final:true}),/exceeds 1MiB/);assert.equal(capturedTurns(s).length,1);assert.equal(loadStatus(s).retired,false);assert.equal(loadStatus(s).captured.threads['thread-large'],'turn-0');
+  assert.equal(fs.existsSync(f.home),true);assert.deepEqual(loadStatus(s).processed,[]);
+});
+test('R1 near-limit legal compact input is not rejected merely for pretty-print overhead',t=>{
+  const f=fixture(t),s=f.source(),turns=records(f,1,1024*1024-500);
+  assert.equal(capture(s,{final:true}).complete,true);assert.deepEqual(capturedTurns(s),turns);
+});
+
+test('R1 registration schedules idempotently, recreates missing jobs and preserves explicit disable',t=>{
+  const f=fixture(t),s=f.source();note(f);capture(s);
+  const before=loadStatus(s);assert.equal(f.source().id,s.id);assert.equal(loadStatus(s).schedule.status,'ready');
+  assert.equal(f.cli('setup',['--source',s.file,'--disable']).status,0);
+  assert.equal(f.source().id,s.id);assert.equal(readJSON(join(f.dir,'schedules.json'))[`okf-${s.id}`].enabled,false);
+  fs.rmSync(join(f.dir,'schedules.json'));f.source();assert.equal(readJSON(join(f.dir,'schedules.json'))[`okf-${s.id}`].enabled,false);
+  capture(s,{final:true});assert.equal(loadStatus(s).auto,false);assert.deepEqual(loadStatus(s).captured.inputs,before.captured.inputs);assert.deepEqual(loadStatus(s).processed,before.processed);
+  assert.ok(callsOf(f).every(c=>!c.a.includes('install')));
+});
+test('R1 failed registration scheduling is reported and retry repairs the same source without losing evidence',t=>{
+  const f=fixture(t);put(join(f.dir,'schedule-fail'),'1');const result=f.cli('spawn');assert.equal(result.status,1);assert.match(result.out.warning,/scheduler unavailable/);
+  const marker=readJSON(join(f.home,'.okf-source.json')),s=loadSource(marker.source);assert.equal(loadStatus(s).schedule.status,'failed');note(f);capture(s);const before=loadStatus(s);
+  fs.rmSync(join(f.dir,'schedule-fail'));assert.equal(f.source().id,s.id);assert.equal(loadStatus(s).schedule.status,'ready');assert.deepEqual(loadStatus(s).captured,before.captured);
+  put(join(f.dir,'schedule-fail'),'1');const failed=f.cli('harvest',['--no-launch']);assert.equal(failed.status,1);assert.match(failed.out.error.message,/scheduler unavailable/);assert.equal(loadStatus(s).activeRun,null);assert.deepEqual(loadStatus(s).captured,before.captured);
+  assert.ok(!callsOf(f).some(c=>c.a[0]==='spawn'));
+});
+test('R1 schedule collision is not silently overwritten or treated as successful registration',t=>{
+  const f=fixture(t),s=f.source(),file=join(f.dir,'schedules.json'),jobs=readJSON(file);jobs[`okf-${s.id}`].argv=['oats','unexpected'];save(file,jobs);
+  assert.throws(()=>f.source(),/schedule definition differs/);assert.equal(loadStatus(s).schedule.status,'failed');assert.deepEqual(readJSON(file),jobs);
+});
+test('R1 harvest after legacy source migration creates one durable job that survives retirement',t=>{
+  const f=fixture(t);note(f);put(join(f.home,'.okf-harvest-record.json'),'{}\n');assert.equal(f.cli('migrate',['--source-home',f.home]).status,0);
+  const h=f.cli('harvest',['--no-launch']);assert.equal(h.status,0,h.stdout);assert.equal(h.out.result.status,'ready');
+  const marker=readJSON(join(f.home,'.okf-source.json')),s=loadSource(marker.source);assert.equal(loadStatus(s).schedule.status,'ready');
+  const r=f.cli('retire');assert.equal(r.status,0,r.stdout);fs.rmSync(f.home,{recursive:true});
+  const jobs=readJSON(join(f.dir,'schedules.json'));assert.equal(Object.keys(jobs).length,1);assert.ok(jobs[`okf-${s.id}`].argv.includes(s.file));
+  assert.equal(loadStatus(s).captured.inputs.length,1);assert.equal(loadStatus(s).processed.length,0);assert.ok(callsOf(f).every(c=>!c.a.includes('install')));
+});
+
+function aliasedFixture(t,alias) {
+  const f=fixture(t),raw=readJSON(f.bindingFile);
+  raw.bases={[alias]:raw.bases.project};save(f.bindingFile,raw);
+  save(join(f.soul,'okf.json'),{version:1,owner:'owner-1',owns:[`${alias}/expert`],reads:[]});
+  return f;
+}
+function assertView(target,alias) {
+  const receipt=readJSON(join(target,'view.json')).bases[alias];
+  assert.equal(receipt.path,`bases/${alias}`);
+  assert.equal(fs.lstatSync(join(target,'view.json')).isFile(),true);
+  assert.equal(fs.lstatSync(join(target,receipt.path)).isDirectory(),true);
+  assert.equal(digest(tree(join(target,receipt.path))),receipt.digest);
+  return receipt;
+}
+for(const alias of ['input.json','view.json','staging.json','judgment.json','bases']) test(`R1 alias ${alias} uses isolated base namespace through delivery and fresh read`,t=>{
+  const f=aliasedFixture(t,alias);
+  note(f);const {s,run}=prepared(f);assert.equal(run.stages[alias].root,join(run.worker.home,'work','bases',alias));
+  const original=tree(join(f.home,'knowledge'));assertView(join(f.home,'knowledge'),alias);
+  const spawn=f.cli('spawn');assert.equal(spawn.status,0,spawn.stdout);assert.match(spawn.out.brief,/knowledge\/bases\/<alias>/);
+  assert.equal(readJSON(join(run.worker.home,'work','input.json')).source.id,s.id);assert.ok(readJSON(join(run.worker.home,'work','staging.json'))[alias]);
+  const r=complete(s,run.id,judgment(f,s,run,{base:alias}));assert.equal(r.receipts[alias].status,'accepted');assert.equal(loadStatus(s).processed.length,1);
+  const reader=join(f.dir,'reader');views(s.bindings,s.decl,reader);assertView(reader,alias);
+  assert.match(fs.readFileSync(join(reader,'bases',alias,'expert/decision.md'),'utf8'),/Explicit custody/);
+  const refresh=f.cli('refresh');assert.equal(refresh.status,0,refresh.stdout);
+  assert.deepEqual(refresh.out.result.receipts[alias],assertView(refresh.out.result.path,alias));
+  const read=f.cli('read',['--base',alias,'--path','expert/decision.md']);assert.equal(read.status,0,read.stdout);
+  assert.equal(read.out.result.receipt.path,`bases/${alias}`);assert.match(read.out.result.text,/Explicit custody/);
+  assert.ok(read.out.result.path.endsWith(`/bases/${alias}/expert/decision.md`));
+  assert.deepEqual(tree(join(f.home,'knowledge')),original,'refresh/read never modify the original view');
+  assert.equal(f.cli('read',['--base',alias,'--path','../../view.json']).out.error.code,'E_PATH');
+});
+// Fail real filesystem renames in-process, then restore the built-in export.
+// No test-only fault controls are added to the shipped implementation.
+function renameFailure(predicate,fn) {
+  const original=fs.default.renameSync;
+  fs.default.renameSync=(from,to)=>{if(predicate(from,to)) throw Object.assign(new Error('injected view I/O failure'),{code:'EIO'});return original(from,to);};
+  syncBuiltinESMExports();
+  try {return fn();} finally {fs.default.renameSync=original;syncBuiltinESMExports();}
+}
+for(const alias of ['input.json','view.json','staging.json']) {
+  test(`view alias ${alias}: partial registration and refresh fail cleanly, then retry`,t=>{
+    const f=aliasedFixture(t,alias),raw=readJSON(f.bindingFile);
+    raw.bases.secondary={id:'base-2',kind:'directory',path:'second-base'};save(f.bindingFile,raw);
+    const bindings=loadBindings();initBase(bindings,'secondary',join(f.dir,'nodes.json'),undefined,{confirm:true});
+    const index=join(bindings.bases.secondary.path,'index.md'),bytes=fs.readFileSync(index);
+    fs.rmSync(index); // First alias was copied before second-base validation fails.
+    const failed=f.cli('spawn');assert.equal(failed.status,1);assert.match(failed.out.warning,/index.md.*required/);
+    assert.equal(fs.existsSync(join(f.home,'knowledge')),false);assert.equal(fs.existsSync(join(f.home,'.okf-source.json')),false);
+    assert.deepEqual(fs.readdirSync(join(bindings.stateDir,'sources')),[]);
+    assert.ok(!fs.readdirSync(f.home).some(p=>p.startsWith('.okf-view-')));
+    put(index,bytes);const s=f.source();assertView(join(f.home,'knowledge'),alias);
+    const original=tree(join(f.home,'knowledge')),before=fs.readdirSync(f.home).sort(),target=join(f.home,'retry-view');
+    fs.rmSync(index);
+    assert.throws(()=>views(s.bindings,s.decl,target),/index.md.*required/);assert.equal(fs.existsSync(target),false);
+    const refresh=f.cli('refresh');assert.equal(refresh.status,1);assert.match(refresh.out.error.message,/index.md.*required/);
+    assert.deepEqual(fs.readdirSync(f.home).sort(),before);assert.deepEqual(tree(join(f.home,'knowledge')),original);
+    put(index,bytes);views(s.bindings,s.decl,target);assertView(target,alias);
+    const fresh=f.cli('refresh');assert.equal(fresh.status,0,fresh.stdout);assertView(fresh.out.result.path,alias);
+    assert.equal(f.source().id,s.id);assert.equal(fs.readdirSync(join(bindings.stateDir,'sources')).length,1);
   });
-  assert.equal(result.code, 0, result.stderr);
-  assert.equal(JSON.parse(result.stdout).meta.memory, "okf");
-  for (const path of ["STATE.md", "log.md", "notes"]) assert.equal(existsSync(join(home, path)), true, `${path} was not scaffolded`);
-  assert.match(readFileSync(join(home, "STATE.md"), "utf8"), /Exercise the package hook/);
-});
-
-test("harvest implementation uses no private kernel-file boundary", () => {
-  const source = readFileSync(CLI, "utf8");
-  assert.doesNotMatch(source, /lib\/core\.mjs/);
-  assert.doesNotMatch(source, /oats root/);
-  assert.doesNotMatch(source, /pathToFileURL|resolveOatsConfig|spawnInstance/);
-  assert.match(source, /process\.env\.OATS_CLI_BIN/);
-  assert.match(source, /execFile\(packageRuntimeCli\(\)/);
-  assert.doesNotMatch(source, /spawnSync|return "oats"/);
-});
-
-test("manifest exports the packaged ephemeral memory-harvest agent", () => {
-  const capability = join(ROOT, "capabilities", "oats-okf");
-  const manifest = JSON.parse(readFileSync(join(capability, "oats.json"), "utf8"));
-  assert.deepEqual(manifest.agents, ["agents/memory-harvest"]);
-  const soul = readFileSync(join(capability, manifest.agents[0], "soul.yaml"), "utf8");
-  assert.match(soul, /^name: memory-harvest$/m);
-  assert.match(soul, /^kind: capability$/m);
-  assert.match(soul, /^work: attached$/m);
-  assert.match(readFileSync(join(capability, manifest.agents[0], "AGENTS.md"), "utf8"), /Follow the \*\*memory-harvest\*\* skill.*load it before/s);
-});
-
-test("spawn leaves capability agents ephemeral", async (t) => {
-  const home = tempDir(t);
-  const result = await run(["spawn"], {
-    OATS_EVENT: "spawn",
-    OATS_HOME: home,
-    OATS_INSTANCE: "memory-harvest-test",
-    OATS_KIND: "capability",
-    OATS_SETTINGS: "{}",
+  test(`view alias ${alias}: failure before source pointer does not strand registration`,t=>{
+    const f=aliasedFixture(t,alias);
+    renameFailure((from,to)=>to.endsWith('/source.json'),()=>assert.throws(()=>f.source(),/injected view I\/O failure/));
+    assert.equal(fs.existsSync(join(f.home,'knowledge')),false);assert.equal(fs.existsSync(join(f.home,'.okf-source.json')),false);
+    assert.ok(!fs.readdirSync(f.home).some(p=>p.startsWith('.okf-view-')));
+    assert.deepEqual(fs.readdirSync(join(f.bindings.stateDir,'sources')),[]);
+    const s=f.source();assertView(join(f.home,'knowledge'),alias);assert.equal(f.source().id,s.id);
   });
-  assert.equal(result.code, 0, result.stderr);
-  assert.equal(JSON.parse(result.stdout).meta.memory, "none");
-  assert.equal(existsSync(join(home, "STATE.md")), false);
-});
-
-test("harvest skips without notes before requiring the runtime boundary", async (t) => {
-  const home = tempDir(t);
-  const result = await run(["harvest", "--json"], { OATS_HOME: home, OATS_SETTINGS: "{}" }, home);
-  assert.equal(result.code, 0, result.stderr);
-  assert.deepEqual(JSON.parse(result.stdout), {
-    schemaVersion: 1,
-    ok: true,
-    result: { harvest: "skipped", reason: "no pending notes" },
+  test(`view alias ${alias}: failure after source pointer resumes the same snapshot and evidence`,t=>{
+    const f=aliasedFixture(t,alias);
+    renameFailure((from,to)=>to===join(f.home,'knowledge'),()=>assert.throws(()=>f.source(),/injected view I\/O failure/));
+    const pointer=readJSON(join(f.home,'.okf-source.json')),s=loadSource(pointer.source),pending=join(f.home,`.okf-view-${s.id}`);
+    const original=tree(pending);assertView(pending,alias);assert.equal(fs.existsSync(f.calls),false);
+    note(f);capture(s);const before=loadStatus(s);
+    // Retry must publish the prepared accepted snapshot, not silently restage.
+    fs.appendFileSync(join(f.base.path,'expert/log.md'),'\nLater accepted event.\n');
+    const result=f.cli('spawn');assert.equal(result.status,0,result.stdout);assert.equal(result.out.meta.source,s.file);
+    assert.equal(fs.existsSync(pending),false);assert.deepEqual(tree(join(f.home,'knowledge')),original);
+    assert.deepEqual(loadStatus(s).captured,before.captured);assert.equal(loadStatus(s).schedule.status,'ready');
+    assert.equal(f.source().id,s.id);assert.equal(fs.readdirSync(join(s.bindings.stateDir,'sources')).length,1);
   });
+}
+test('views preserve existing destinations and roll back failed node resolution',t=>{
+  const f=fixture(t),s=f.source(),target=join(f.dir,'reader');
+  views(s.bindings,s.decl,target);const original=tree(target);
+  assert.throws(()=>views(s.bindings,s.decl,target),/view exists/);assert.deepEqual(tree(target),original);
+  const retryTarget=join(f.dir,'unresolved-view');
+  assert.throws(()=>views(s.bindings,{...s.decl,reads:['project/missing']},retryTarget),/unresolved node/);
+  assert.equal(fs.existsSync(retryTarget),false);views(s.bindings,s.decl,retryTarget);assertView(retryTarget,'project');
+});
+test('registration never deletes an unknown existing view or a symlink destination',t=>{
+  const f=fixture(t),target=join(f.home,'knowledge');put(join(target,'keep.md'),'unregistered bytes');
+  assert.throws(()=>f.source(),/unregistered knowledge view/);assert.equal(fs.readFileSync(join(target,'keep.md'),'utf8'),'unregistered bytes');
+  fs.rmSync(target,{recursive:true});fs.symlinkSync(f.base.path,target);
+  assert.throws(()=>f.source(),/symlink/);assert.ok(fs.existsSync(join(f.base.path,'index.md')));
+});
+function migrationFixture(f) {
+  const legacy=join(f.soul,'knowledge');put(join(legacy,'index.md'),'---\nokf_version: "0.1"\n---\n\n# Legacy\n* [Decision](decision.md) - Preserved.\n');put(join(legacy,'log.md'),'# History\n');put(join(legacy,'decision.md'),'---\ntype: Decision\ntitle: Decision\ndescription: Preserved.\n---\n\nPreserved legacy rationale.\n');
+  const m=migrate(f.bindings,{legacy,alias:'project',node:'expert',output:join(f.dir,'migration-stage')});deliverMigration(m.migration);return {m,legacy,original:tree(legacy),decl:readJSON(join(f.soul,'okf.json'))};
+}
+function unchangedCutover(f,{m,legacy,original,decl}) {
+  assert.deepEqual(tree(legacy),original);assert.deepEqual(readJSON(join(f.soul,'okf.json')),decl);assert.equal(fs.existsSync(join(f.soul,'.okf-cutover.json')),false);assert.equal(readJSON(m.migration).cutover,undefined);assert.equal(readJSON(m.migration).receipt.status,'accepted');
+}
+test('R1 migration cutover rejects current alias retargeting before changing legacy bundle or declaration',t=>{
+  const f=fixture(t),mf=migrationFixture(f),raw=readJSON(f.bindingFile);
+  const variants=[{...raw,bases:{project:{...raw.bases.project,path:'other-empty'}}},{...raw,bases:{project:{...raw.bases.project,id:'other-id'}}},{...raw,bases:{other:raw.bases.project}}];
+  // An empty accepted replacement with exactly the SAME identity and owner is
+  // still different custody. The frozen locator, not just owner/ID, must match.
+  const alternate=structuredClone(raw);alternate.bases.project.path='other-empty';save(f.bindingFile,alternate);initBase(loadBindings(),'project',join(f.dir,'nodes.json'),undefined,{confirm:true});
+  for(const changed of variants) {save(f.bindingFile,changed);assert.throws(()=>cutoverMigration(mf.m.migration,f.soul),/current migration alias differs/);unchangedCutover(f,mf);}
+  save(f.bindingFile,raw);assert.equal(cutoverMigration(mf.m.migration,f.soul).status,'complete');
+});
+test('R1 cutover verifies accepted readiness, frozen owner/path, delivered content and all declared refs',t=>{
+  const f=fixture(t),mf=migrationFixture(f),metaFile=join(f.base.path,'okf-base.json'),meta=readJSON(metaFile);
+  const wrong=structuredClone(meta);wrong.nodes.expert.owner='owner-other';save(metaFile,wrong);assert.throws(()=>cutoverMigration(mf.m.migration,f.soul),/ownership\/path differs/);unchangedCutover(f,mf);save(metaFile,meta);
+  const index=fs.readFileSync(join(f.base.path,'index.md'));fs.rmSync(join(f.base.path,'index.md'));assert.throws(()=>cutoverMigration(mf.m.migration,f.soul),/index.md.*required/);unchangedCutover(f,mf);put(join(f.base.path,'index.md'),index);
+  const concept=join(f.base.path,'expert/decision.md'),text=fs.readFileSync(concept);fs.appendFileSync(concept,'\nUnreviewed replacement.\n');assert.throws(()=>cutoverMigration(mf.m.migration,f.soul),/no longer matches delivered content/);unchangedCutover(f,mf);put(concept,text);
+  const declarationFile=join(f.soul,'okf.json');save(declarationFile,{...mf.decl,reads:['project/missing']});assert.throws(()=>cutoverMigration(mf.m.migration,f.soul),/unresolved node/);assert.equal(fs.existsSync(mf.legacy),true);assert.equal(readJSON(mf.m.migration).cutover,undefined);save(declarationFile,mf.decl);
+  assert.equal(cutoverMigration(mf.m.migration,f.soul).status,'complete');assert.equal(cutoverMigration(mf.m.migration,f.soul).status,'complete');
 });
 
-test("harvest rejects a non-absolute OATS_CLI_BIN instead of searching PATH", async (t) => {
-  const fixture = harvestFixture(t, "local");
-  fixture.env.OATS_CLI_BIN = "oats";
-  const result = await run(["harvest", "--json"], fixture.env, fixture.home);
-  assert.equal(result.code, 1);
-  const envelope = JSON.parse(result.stdout);
-  assert.equal(envelope.error.code, "E_SPAWN_FAILED");
-  assert.match(envelope.error.message, /OATS_CLI_BIN must be an absolute path/);
-  assert.equal(existsSync(fixture.record), false, "relative CLI must never execute");
+test('R1 actual native capture/recall transports 60 large Claude records into durable bounded inputs',{skip:!nativeCLI},t=>{
+  const f=fixture(t),s=f.source(),fakeCLI=process.env.OATS_CLI_BIN;
+  // This is a standalone synthetic inventory, not a kernel-managed launch.
+  // Opt in explicitly to observer roots; production final capture does not.
+  const nativeFixtureCLI=join(f.dir,'native-fixture-cli');
+  put(nativeFixtureCLI,`#!/bin/sh\nif [ "$1" = capture ]; then exec ${quote(process.execPath)} ${quote(resolve(nativeCLI))} "$@" --current-roots; fi\nexec ${quote(process.execPath)} ${quote(resolve(nativeCLI))} "$@"\n`);fs.chmodSync(nativeFixtureCLI,0o755);
+  process.env.OATS_CLI_BIN=nativeFixtureCLI;process.env.TURN_RECORD_ROOT=join(f.dir,'native-record');process.env.TURN_RECORD_OWNER='fixture';
+  const transcript=join(process.env.HOME,'.claude/projects/-fixture/fixture-session.jsonl');
+  put(transcript,Array.from({length:60},(_,i)=>JSON.stringify({type:'assistant',cwd:f.home,sessionId:'fixture-session',timestamp:'2026-09-13T12:00:00Z',message:{role:'assistant',content:[{type:'text',text:`${i}:`+'x'.repeat(350000)}]}})).join('\n')+'\n');
+  assert.equal(capture(s,{final:true}).complete,true);
+  const all=capturedTurns(s);assert.equal(all.length,60);assert.ok(all.every(v=>v.text[0].text.length>350000));assert.equal(loadStatus(s).captured.inputs.length,60);
+  fs.rmSync(f.home,{recursive:true});fs.rmSync(transcript);process.env.OATS_CLI_BIN=fakeCLI;
+  // Post-removal worker consumes only durable input; no runtime is launched.
+  const run=readRun(s,runSource(loadSource(s.file),{manual:true,noLaunch:true}).run);const evidence=readJSON(join(run.worker.home,'work/input.json'));assert.ok(evidence.inputs[0].turns[0].text[0].text.startsWith('0:'));
+  assert.equal(complete(s,run.id,judgment(f,s,run,{drop:true})).processed,true);assert.equal(loadStatus(s).processed.length,1);assert.equal(loadStatus(s).captured.inputs.length,60);
+});
+test('R1 actual native scheduler registration is idempotent and never installs a host timer',{skip:!nativeCLI},t=>{
+  const f=fixture(t),s=f.source();put(join(f.context,'oats-config.yaml'),'name: fixture\n');process.env.OATS_CLI_BIN=resolve(nativeCLI);
+  const first=scheduleSource(s),second=scheduleSource(s);assert.equal(first.schedule.id,second.schedule.id);assert.equal(second.schedule.argv.includes(s.file),true);
+  assert.equal(f.cli('setup',['--source',s.file,'--disable']).status,0);assert.equal(scheduleSource(s).schedule.enabled,false);
+  const state=f.cli('inspect',['--source',s.file]);assert.equal(state.status,0,state.stdout);assert.notEqual(state.out.result.scheduler.active,true);assert.notEqual(state.out.result.scheduler.installed,true);
 });
 
-test("local-soul harvest spawns attached through the CLI boundary with effective settings", async (t) => {
-  const fixture = harvestFixture(t, "local", { model: "test-provider/harvest-model" });
-  const result = await run(["harvest", "--json"], fixture.env, fixture.home);
-  assert.equal(result.code, 0, result.stderr);
-  assert.equal(JSON.parse(result.stdout).result.instance, "memory-harvest-source-instance-1");
-  const record = JSON.parse(readFileSync(fixture.record, "utf8"));
-  assert.deepEqual(record.args.slice(0, 2), ["spawn", "memory-harvest"]);
-  assert.equal(argValue(record.args, "--purpose"), "source-instance-1");
-  assert.equal(record.args.includes("--instance"), false, "retired raw-instance flag must never cross the boundary");
-  assert.equal(record.args.includes("--ephemeral"), false, "retired ephemeral flag must never cross the boundary");
-  assert.equal(argValue(record.args, "--parent"), "source-instance-1");
-  assert.equal(argValue(record.args, "--repo"), fixture.context);
-  assert.equal(argValue(record.args, "--work"), "attached");
-  assert.equal(argValue(record.args, "--work-dir"), realpathSync(join(fixture.home, "work")));
-  assert.equal(argValue(record.args, "--model"), "test-provider/harvest-model");
-  assert.equal(record.taskMode, 0o600);
-  assert.match(record.task, /LOCAL-SOUL/);
-  assert.equal(record.args.at(-1), "--json");
-  assert.equal(existsSync(record.taskFile), false, "task tempfile must be removed after spawn");
+// Custody R1: publication must confirm the delivered tree, not merely a valid
+// working copy. All repositories, HOME configs and killed processes are fixtures.
+function fixtureCommit(repo,message) {git(repo,['add','.']);git(repo,['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm',message]);}
+function noPublication(f,s) {
+  assert.deepEqual(loadStatus(s).processed,[]);
+  assert.equal(fs.existsSync(join(f.dir,'pr.json')),false);
+  assert.equal(git(f.repo,['for-each-ref','--format=%(refname)','refs/heads/okf/']),'');
+}
+test('custody R1 ignored concept cannot disappear from the validated Git proposal',t=>{
+  const f=fixture(t,{kind:'git'});put(join(f.repo,'.gitignore'),'**/decision.md\n');fixtureCommit(f.repo,'ordinary ignore rule');
+  note(f);const {s,run}=prepared(f),j=judgment(f,s,run);
+  assert.throws(()=>complete(s,run.id,j),/publication tree omits validated proposal/);noPublication(f,s);
+  const retained=readRun(s,run.id);assert.equal(retained.receipts.project.commit,undefined);
+  assert.equal(fs.existsSync(join(run.stages.project.root,'expert/decision.md')),true);
+  assert.throws(()=>retry(s),/publication tree omits validated proposal/);noPublication(f,s);
+});
+test('custody R1 Git normalization cannot change validated CRLF proposal bytes',t=>{
+  const f=fixture(t,{kind:'git'});put(join(f.repo,'.gitattributes'),'**/*.md text eol=lf\n');fixtureCommit(f.repo,'ordinary text normalization');
+  note(f);const {s,run}=prepared(f),j=judgment(f,s,run),p=join(run.stages.project.root,'expert/decision.md');
+  put(p,fs.readFileSync(p,'utf8').replace('fallback.\n','fallback.\r\n'));
+  assert.throws(()=>complete(s,run.id,j),/publication tree bytes differ/);noPublication(f,s);
+});
+test('custody R1 staged outside-base edit is rejected even when working bytes match baseline',t=>{
+  const f=fixture(t,{kind:'git'});note(f);const {s,run}=prepared(f),j=judgment(f,s,run),cwd=run.stages.project.checkout;
+  put(join(cwd,'code.txt'),'unauthorized index content\n');git(cwd,['add','code.txt']);put(join(cwd,'code.txt'),'code baseline\n');
+  assert.equal(git(cwd,['diff',run.stages.project.head,'--','code.txt']),'');
+  assert.throws(()=>complete(s,run.id,j),/outside.*knowledge/);noPublication(f,s);
+  assert.equal(git(cwd,['show',':code.txt']),'unauthorized index content','rejection preserves the worker index');
+});
+function gitWrapper(f,body) {
+  const real=execFileSync('/bin/sh',['-c','command -v git'],{env:{PATH:hostPath},encoding:'utf8'}).trim();
+  const p=join(f.dir,'bin/git');
+  put(p,`#!${process.execPath}\nimport fs from 'node:fs';import {spawnSync,execFileSync} from 'node:child_process';const real=${JSON.stringify(real)},a=process.argv.slice(2),cwd=a[a.indexOf('-C')+1];${body}\nconst r=spawnSync(real,a,{stdio:'inherit'});process.exit(r.status ?? 1);\n`);fs.chmodSync(p,0o755);
+}
+test('custody R1 publication index is rebuilt from baseline, not copied from worker index',t=>{
+  const f=fixture(t,{kind:'git'});note(f);const {s,run}=prepared(f),j=judgment(f,s,run);
+  // Modify the ordinary index AFTER scope checks, at private read-tree. This
+  // must not contaminate publication, nor be overwritten by the private index.
+  gitWrapper(f,`if(a.includes('read-tree') && process.env.GIT_INDEX_FILE) {const env={...process.env};delete env.GIT_INDEX_FILE;fs.writeFileSync(cwd+'/code.txt','late index edit\\n');execFileSync(real,['-C',cwd,'add','code.txt'],{env});fs.writeFileSync(cwd+'/code.txt','code baseline\\n');}`);
+  const r=complete(s,run.id,j);assert.equal(r.processed,true);
+  assert.equal(git(f.repo,['show',`${r.receipts.project.commit}:code.txt`]),'code baseline');
+  assert.equal(git(run.stages.project.checkout,['show',':code.txt']),'late index edit');
+});
+test('custody R1 actual full publication tree diff rejects an out-of-base index change',t=>{
+  const f=fixture(t,{kind:'git'});note(f);const {s,run}=prepared(f),j=judgment(f,s,run);
+  // Independently exercise the final tree guard, after both scope checks.
+  gitWrapper(f,`if(a.includes('write-tree') && process.env.GIT_INDEX_FILE) {fs.writeFileSync(cwd+'/code.txt','unauthorized publication index\\n');execFileSync(real,['-C',cwd,'add','code.txt']);fs.writeFileSync(cwd+'/code.txt','code baseline\\n');}`);
+  assert.throws(()=>complete(s,run.id,j),/publication tree changes files outside/);noPublication(f,s);
+});
+for(const mode of ['local','ambient','multiple','pushInsteadOf']) test(`custody R1 ${mode} effective push destination fails BEFORE unauthorized transfer`,t=>{
+  const f=fixture(t,{kind:'git'}),wrong=join(f.dir,'unapproved.git');fs.mkdirSync(wrong);git(wrong,['init','--bare','-q']);
+  const before=tree(wrong);note(f);const {s,run}=prepared(f),j=judgment(f,s,run),cwd=run.stages.project.checkout;
+  if(mode==='ambient') put(join(process.env.HOME,'.gitconfig'),`[remote "origin"]\n\tpushurl = ${wrong}\n`);
+  else if(mode==='pushInsteadOf') git(cwd,['config',`url.${wrong}.pushInsteadOf`,f.repo]);
+  else {
+    git(cwd,['remote','set-url','--push','origin',mode==='multiple'?f.repo:wrong]);
+    if(mode==='multiple') git(cwd,['remote','set-url','--add','--push','origin',wrong]);
+  }
+  assert.equal(git(cwd,['remote','get-url','origin']),f.repo);
+  assert.throws(()=>complete(s,run.id,j),/frozen Git publication remote or effective push destination/);
+  noPublication(f,s);assert.deepEqual(tree(wrong),before,'no objects OR refs transferred to the unapproved repository');
+});
+test('custody R1 retry rechecks effective push URLs after an uncertain successful push',t=>{
+  const f=fixture(t,{kind:'git'});note(f);const {s,run}=prepared(f),j=judgment(f,s,run);
+  const count=join(f.dir,'push-count');
+  gitWrapper(f,`if(a.includes('push')) {const r=spawnSync(real,a,{stdio:'inherit'});if(r.status===0){fs.appendFileSync(${JSON.stringify(count)},'p');process.exit(73);}process.exit(r.status ?? 1);}`);
+  assert.throws(()=>complete(s,run.id,j),/failed/);assert.equal(readRun(s,run.id).receipts.project.status,'push-unknown');
+  const wrong=join(f.dir,'unapproved.git');fs.mkdirSync(wrong);git(wrong,['init','--bare','-q']);const before=tree(wrong);
+  git(run.stages.project.checkout,['remote','set-url','--push','origin',wrong]);assert.throws(()=>retry(s),/effective push destination/);
+  assert.deepEqual(tree(wrong),before);assert.deepEqual(loadStatus(s).processed,[]);
+  // Reconstructing the deleted worker uses the frozen remote and reconciles
+  // the already successful push, rather than creating a duplicate delivery.
+  fs.rmSync(run.worker.home,{recursive:true});assert.equal(retry(s).processed,true);assert.equal(fs.readFileSync(count,'utf8'),'p');
+});
+for(const phase of ['before-write','partial-write','before-rename']) test(`custody R1 SIGKILL ${phase} inside atomic publication recovers after explicit unlock`,t=>{
+  const f=fixture(t);note(f);const {s,run}=prepared(f),j=judgment(f,s,run),target=join(f.base.path,'expert/decision.md');
+  const code=`import fs from 'node:fs';import {syncBuiltinESMExports} from 'node:module';import {loadSource} from ${JSON.stringify(new URL('../oats-package/capabilities/oats-okf/lib/sources.mjs',import.meta.url).href)};import {complete} from ${JSON.stringify(new URL('../oats-package/capabilities/oats-okf/lib/worker.mjs',import.meta.url).href)};
+    const phase=${JSON.stringify(phase)},open=fs.openSync,write=fs.writeFileSync,rename=fs.renameSync;let tempFd;
+    fs.openSync=(p,...args)=>{const fd=open(p,...args);if(String(p).includes('decision.md.tmp-'))tempFd=fd;return fd;};
+    fs.writeFileSync=(fd,bytes,...args)=>{if(fd===tempFd && phase!=='before-rename'){if(phase==='partial-write'){write(fd,bytes.subarray(0,17),...args);fs.fsyncSync(fd);}process.kill(process.pid,'SIGKILL');}return write(fd,bytes,...args);};
+    fs.renameSync=(from,to)=>{if(to===${JSON.stringify(target)} && phase==='before-rename')process.kill(process.pid,'SIGKILL');return rename(from,to);};syncBuiltinESMExports();
+    complete(loadSource(${JSON.stringify(s.file)}),${JSON.stringify(run.id)},${JSON.stringify(j)});`;
+  const child=spawnSync(process.execPath,['--input-type=module','-e',code],{env:process.env,encoding:'utf8'});assert.equal(child.signal,'SIGKILL',child.stderr);
+  assert.equal(fs.existsSync(journalPath(f.base)),true);assert.deepEqual(loadStatus(s).processed,[]);
+  assert.ok(fs.readdirSync(baseLock(f.base)).some(p=>p.startsWith('decision.md.tmp-')));
+  assert.ok(!Object.keys(tree(f.base.path)).some(p=>p.includes('.tmp-')),'accepted namespace has no atomic-write scratch');
+  for(const lock of [baseLock(f.base),join(dirname(s.file),'worker.lock')]) {const r=f.cli('unlock',['--lock',lock,'--token',readJSON(join(lock,'owner.json')).token]);assert.equal(r.status,0,r.stdout);}
+  assert.throws(()=>views(s.bindings,s.decl,join(f.dir,'blocked-reader')),/publication pending/);
+  if(phase==='partial-write') {
+    const unrelated=join(f.base.path,'expert/unrelated.tmp-foreign');put(unrelated,'unrelated bytes');
+    assert.throws(()=>retry(s),/unexpected bytes during publication recovery/);assert.equal(fs.readFileSync(unrelated,'utf8'),'unrelated bytes');
+    fs.rmSync(unrelated); // Only the fixture/operator may resolve unrelated bytes.
+  }
+  assert.equal(retry(s).processed,true);assert.equal(complete(s,run.id).processed,true);assert.equal(loadStatus(s).processed.length,1);
+  const p=readJSON(readRun(s,run.id).receipts.project.proposal);assert.deepEqual(tree(f.base.path),p.after);
+  assert.equal(fs.existsSync(journalPath(f.base)),false);views(s.bindings,s.decl,join(f.dir,'fresh-reader'));
+});
+function secondDirectory(f,{owned=false}={}) {
+  const raw=readJSON(f.bindingFile);raw.bases.secondary={id:'base-2',kind:'directory',path:'second-base'};save(f.bindingFile,raw);
+  const bindings=loadBindings();initBase(bindings,'secondary',join(f.dir,'nodes.json'),undefined,{confirm:true});
+  if(owned) {const decl=readJSON(join(f.soul,'okf.json'));decl.owns.push('secondary/expert');save(join(f.soul,'okf.json'),decl);}
+  return bindings;
+}
+test('custody R1 migration stage cannot overlap ANY configured base or coordination artifact',t=>{
+  const f=fixture(t),bindings=secondDirectory(f),peer=bindings.bases.secondary,legacy=join(f.soul,'knowledge');
+  put(join(legacy,'index.md'),'---\nokf_version: "0.1"\n---\n\n# Legacy\n');put(join(legacy,'log.md'),'# History\n');
+  const original=tree(legacy),before=Object.fromEntries(Object.entries(bindings.bases).map(([a,b])=>[a,tree(b.path)]));
+  for(const output of [join(peer.path,'expert/migration-stage'),peer.path,f.dir,baseLock(peer),join(baseLock(peer),'stage'),journalPath(peer),join(journalPath(peer),'stage'),baseLock(f.base),join(f.base.path,'expert/stage')]) {
+    assert.throws(()=>migrate(bindings,{legacy,alias:'project',node:'expert',output}),/overlap|disjoint/);
+    for(const [a,b] of Object.entries(bindings.bases)) assert.deepEqual(tree(b.path),before[a]);
+    assert.deepEqual(tree(legacy),original);assert.equal(fs.existsSync(bindings.stateDir),false,'rejected staging creates no preservation or staging state');
+  }
+  assert.equal(migrate(bindings,{legacy,alias:'project',node:'expert',output:join(f.dir,'valid-stage')}).status,'staged');
+});
+function partialConflict(f) {
+  const bindings=secondDirectory(f,{owned:true});note(f);const {s,run}=prepared(f),j=judgment(f,s,run),first=readJSON(j);
+  judgment(f,s,run,{base:'secondary'});first.outcomes[0].concepts.push(...readJSON(j).outcomes[0].concepts);save(j,first);
+  let changed=false;
+  assert.throws(()=>complete(s,run.id,j,{afterWrite:()=>{if(changed)return;changed=true;withLock(baseLock(bindings.bases.secondary),()=>fs.appendFileSync(join(bindings.bases.secondary.path,'peer/log.md'),'newer cooperative accepted update\n'));}}),/directory base changed/);
+  const pending=readRun(s,run.id);assert.equal(pending.receipts.project.status,'accepted');assert.equal(pending.receipts.secondary.status,'validated');
+  for(const b of Object.values(bindings.bases)) {assert.equal(fs.existsSync(baseLock(b)),false);assert.equal(fs.existsSync(journalPath(b)),false);}
+  return {bindings,s,run:pending,j};
+}
+test('custody R1 partial-success CAS conflict rejudges ONLY outstanding destinations without duplicate delivery',t=>{
+  const f=fixture(t),{bindings,s,run,j}=partialConflict(f),accepted=tree(f.base.path),receipt=structuredClone(run.receipts.project);
+  assert.throws(()=>retry(s),/directory base changed/);assert.deepEqual(loadStatus(s).processed,[]);
+  const rejudged=retry(s,{rejudge:true});assert.equal(rejudged.status,'ready');assert.deepEqual(rejudged.outstanding,['secondary']);assert.deepEqual(rejudged.settled,['project']);
+  const next=readRun(s,run.id);assert.deepEqual(next.inputs,run.inputs);assert.deepEqual(next.receipts.project,receipt);
+  assert.deepEqual(readJSON(next.history[0]).receipts,run.receipts);assert.ok(fs.existsSync(run.stages.secondary.root));
+  const map=readJSON(join(run.worker.home,'work/staging.json'));assert.equal(map.project.settled,true);assert.deepEqual(map.project.owned,[]);assert.equal(map.project.root,undefined);
+  assert.equal(runSource(s,{manual:true,noLaunch:true}).run,run.id);assert.deepEqual(loadStatus(s).processed,[]);
+  assert.throws(()=>complete(s,run.id,j),/destination already settled/);
+  // Another CAS change before the new judgment can also be rejudged; neither
+  // failure may erase the earlier receipt or mutate the accepted destination.
+  const secondFile=judgment(f,s,next,{base:'secondary'});withLock(baseLock(bindings.bases.secondary),()=>fs.appendFileSync(join(bindings.bases.secondary.path,'peer/log.md'),'second accepted update\n'));
+  assert.throws(()=>complete(s,run.id,secondFile),/accepted base changed/);assert.equal(retry(s,{rejudge:true}).rejudged,true);
+  const last=readRun(s,run.id),lastFile=judgment(f,s,last,{base:'secondary'});
+  const r=complete(s,run.id,lastFile);assert.equal(r.processed,true);assert.deepEqual(r.receipts.project,receipt);assert.equal(r.receipts.secondary.status,'accepted');
+  assert.deepEqual(tree(f.base.path),accepted);assert.equal(loadStatus(s).processed.length,1);assert.equal(loadStatus(s).activeRun,null);
+  assert.match(fs.readFileSync(join(bindings.bases.secondary.path,'peer/log.md'),'utf8'),/newer cooperative accepted update\nsecond accepted update/);
+  assert.equal(complete(s,run.id).processed,true);assert.deepEqual(tree(f.base.path),accepted);assert.equal(loadStatus(s).processed.length,1);
+});
+test('custody R1 partial-success rejudgment still enforces frozen owner and outstanding journals',t=>{
+  const f=fixture(t),{bindings,s,run}=partialConflict(f),second=bindings.bases.secondary,accepted=tree(f.base.path);
+  const metaFile=join(second.path,'okf-base.json'),meta=readJSON(metaFile);save(metaFile,{...meta,nodes:{...meta.nodes,expert:{...meta.nodes.expert,owner:'changed-owner'}}});
+  assert.throws(()=>retry(s,{rejudge:true}),/ownership\/path changed/);assert.deepEqual(readRun(s,run.id),run);assert.deepEqual(loadStatus(s).processed,[]);save(metaFile,meta);
+  assert.equal(retry(s,{rejudge:true}).rejudged,true);const next=readRun(s,run.id),j=judgment(f,s,next,{base:'secondary'});
+  assert.throws(()=>complete(s,run.id,j,{afterWrite:()=>{throw new Error('interrupted outstanding publication');}}),/interrupted outstanding/);
+  assert.throws(()=>retry(s,{rejudge:true}),/directory publication pending/);assert.deepEqual(tree(f.base.path),accepted);assert.deepEqual(loadStatus(s).processed,[]);
+  assert.equal(retry(s).processed,true);assert.deepEqual(tree(f.base.path),accepted);assert.equal(loadStatus(s).processed.length,1);
+});
+test('custody R1 partial delivered Git PR is retained during rejudgment and still reconciles later merge',t=>{
+  const f=fixture(t,{kind:'git'}),bindings=secondDirectory(f,{owned:true}),second=bindings.bases.secondary;
+  note(f);const {s,run}=prepared(f),j=judgment(f,s,run),first=readJSON(j);judgment(f,s,run,{base:'secondary'});first.outcomes[0].concepts.push(...readJSON(j).outcomes[0].concepts);save(j,first);
+  // Cooperatively advance the second base while the first base's real local
+  // Git proposal receives its deterministic fixture PR.
+  const gh=join(f.dir,'bin/gh'),code=`import {withLock,fs} from ${JSON.stringify(new URL('../oats-package/capabilities/oats-okf/lib/io.mjs',import.meta.url).href)};withLock(${JSON.stringify(baseLock(second))},()=>fs.appendFileSync(${JSON.stringify(join(second.path,'peer/log.md'))},'new accepted update\\n'));`;
+  put(gh,fs.readFileSync(gh,'utf8').replace("else if(a[1]==='create') {",`else if(a[1]==='create') {execFileSync(${JSON.stringify(process.execPath)},['--input-type=module','-e',${JSON.stringify(code)}]);`));
+  assert.throws(()=>complete(s,run.id,j),/directory base changed/);const delivered=readRun(s,run.id).receipts.project;assert.equal(delivered.status,'delivered');assert.deepEqual(loadStatus(s).processed,[]);
+  assert.equal(retry(s,{rejudge:true}).rejudged,true);const next=readRun(s,run.id);assert.equal(complete(s,run.id,judgment(f,s,next,{base:'secondary'})).processed,true);
+  assert.equal(git(f.repo,['for-each-ref','--format=%(refname)','refs/heads/okf/']),`refs/heads/${delivered.branch}`);assert.equal(readRun(s,run.id).receipts.project.commit,delivered.commit);
+  git(f.repo,['merge','--ff-only',delivered.branch]);const prs=readJSON(join(f.dir,'pr.json'));prs[0].state='MERGED';prs[0].mergedAt='2026-09-13T12:00:00Z';prs[0].mergeCommit={oid:delivered.commit};save(join(f.dir,'pr.json'),prs);
+  assert.equal(complete(s,run.id).receipts.project.status,'accepted');assert.equal(loadStatus(s).accepted[`${run.id}/project`].acceptedCommit,delivered.commit);assert.equal(loadStatus(s).processed.length,1);
+});
+test('custody R1 migration stage rejects an embedded local Git base belonging to another alias',t=>{
+  const f=fixture(t,{kind:'git'}),bindings=secondDirectory(f),legacy=join(f.soul,'knowledge');
+  put(join(legacy,'index.md'),'---\nokf_version: "0.1"\n---\n\n# Legacy\n');put(join(legacy,'log.md'),'# History\n');
+  const before=tree(f.repo,{git:true}),directory=tree(bindings.bases.secondary.path);
+  assert.throws(()=>migrate(bindings,{legacy,alias:'secondary',node:'expert',output:join(f.repo,'knowledge/expert/migration-stage')}),/overlaps configured accepted base/);
+  assert.deepEqual(tree(f.repo,{git:true}),before);assert.deepEqual(tree(bindings.bases.secondary.path),directory);
+});
+test('custody R1 unsupported cross-filesystem atomic staging fails before publication intent or accepted writes',t=>{
+  const f=fixture(t);note(f);const {s,run}=prepared(f),j=judgment(f,s,run),before=tree(f.base.path),stat=fs.default.statSync;
+  // No mounts or host configuration: model only the filesystem device check.
+  fs.default.statSync=(p,...args)=>{const value=stat(p,...args);return p===baseLock(f.base)?{...value,dev:value.dev+1}:value;};syncBuiltinESMExports();
+  try {assert.throws(()=>complete(s,run.id,j),/must share a filesystem/);} finally {fs.default.statSync=stat;syncBuiltinESMExports();}
+  assert.equal(fs.existsSync(journalPath(f.base)),false);assert.deepEqual(tree(f.base.path),before);assert.deepEqual(loadStatus(s).processed,[]);
+  assert.equal(readRun(s,run.id).receipts.project.status,'validated');assert.equal(retry(s).processed,true);
 });
 
-test("workspace harvest builds a dedicated worktree spawn with the default model", async (t) => {
-  const fixture = harvestFixture(t, "workspace");
-  const result = await run(["harvest", "--json"], fixture.env, fixture.home);
-  assert.equal(result.code, 0, result.stderr);
-  const record = JSON.parse(readFileSync(fixture.record, "utf8"));
-  const soulRepo = realpathSync(resolve(fixture.soul, "..", "..", ".."));
-  assert.equal(argValue(record.args, "--repo"), soulRepo);
-  assert.equal(argValue(record.args, "--work"), "worktree");
-  assert.equal(argValue(record.args, "--branch"), "memory-harvest/source-instance-1");
-  assert.equal(argValue(record.args, "--model"), "github-copilot/gpt-5.5");
-  assert.equal(record.args.includes("--work-dir"), false);
-  assert.match(record.task, /WORKSPACE-MODE/);
-  assert.equal(record.taskMode, 0o600);
-  assert.equal(existsSync(record.taskFile), false);
+// Custody R2: replacement refs must never substitute frozen publication objects.
+test('custody R2 replace-ref baseline cannot hide an unauthorized out-of-base edit',t=>{
+  const f=fixture(t,{kind:'git'});note(f);const {s,run}=prepared(f),j=judgment(f,s,run),stage=run.stages.project,cwd=stage.checkout;
+  put(join(cwd,'code.txt'),'unauthorized replacement baseline\n');git(cwd,['add','code.txt']);
+  const replacement=git(cwd,['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit-tree',git(cwd,['write-tree']),'-m','replacement baseline']);
+  git(cwd,['replace',stage.head,replacement]);
+  assert.equal(git(cwd,['show',`${stage.head}:code.txt`]),'unauthorized replacement baseline','fixture reproduces replacement-aware object reads');
+  assert.throws(()=>complete(s,run.id,j),/outside.*knowledge/);noPublication(f,s);
+  // Repair only the unauthorized edit. A remaining replacement ref is harmless,
+  // not an instruction to delete/rewrite the worker's repository metadata.
+  git(cwd,['--no-replace-objects','checkout',stage.head,'--','code.txt']);
+  const r=complete(s,run.id,j);assert.equal(r.receipts.project.status,'delivered');
+  assert.equal(git(f.repo,['--no-replace-objects','show',`${r.receipts.project.commit}:code.txt`]),'code baseline');
+  assert.equal(git(f.repo,['diff','--name-only',stage.head,r.receipts.project.commit]).split('\n').every(p=>p.startsWith('knowledge/')),true);
+  assert.equal(git(cwd,['replace','-l']),stage.head);assert.equal(loadStatus(s).processed.length,1);
+});
+test('custody R2 late replacement refs cannot contaminate private baseline or transport',t=>{
+  const f=fixture(t,{kind:'git'});note(f);const {s,run}=prepared(f),j=judgment(f,s,run),stage=run.stages.project,cwd=stage.checkout;
+  put(join(cwd,'code.txt'),'late replacement baseline\n');git(cwd,['add','code.txt']);
+  const replacement=git(cwd,['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit-tree',git(cwd,['write-tree']),'-m','late replacement']);
+  git(cwd,['checkout',stage.head,'--','code.txt']);
+  const calls=join(f.dir,'git-calls.jsonl');
+  gitWrapper(f,`fs.appendFileSync(${JSON.stringify(calls)},JSON.stringify({a,env:process.env.GIT_NO_REPLACE_OBJECTS})+'\\n');if(a.includes('read-tree') && process.env.GIT_INDEX_FILE) execFileSync(real,['-C',cwd,'replace',${JSON.stringify(stage.head)},${JSON.stringify(replacement)}]);`);
+  // Host Git environment cannot turn replacement interpretation back on.
+  process.env.GIT_NO_REPLACE_OBJECTS='0';
+  const r=complete(s,run.id,j);assert.equal(r.processed,true);
+  const recorded=fs.readFileSync(calls,'utf8').trim().split('\n').map(JSON.parse);
+  for(const c of recorded.filter(c=>c.a.includes('core.hooksPath=/dev/null'))) {assert.ok(c.a.includes('--no-replace-objects'));assert.equal(c.env,'1');}
+  for(const cmd of ['clone','fetch','diff','read-tree','write-tree','commit-tree','cat-file','ls-tree','push']) assert.ok(recorded.some(c=>c.a.includes(cmd)),cmd);
+  fs.rmSync(join(f.dir,'bin/git'));
+  assert.equal(git(f.repo,['--no-replace-objects','show',`${r.receipts.project.commit}:code.txt`]),'code baseline');
+  assert.equal(git(f.repo,['--no-replace-objects','cat-file','commit',r.receipts.project.commit]).split('\n').filter(l=>l.startsWith('parent ')).join('\n'),`parent ${stage.head}`);
+});
+for(const defect of ['tree','parent']) test(`custody R2 final raw commit verification rejects replacement-hidden ${defect} substitution`,t=>{
+  const f=fixture(t,{kind:'git'});note(f);const {s,run}=prepared(f),j=judgment(f,s,run),cwd=run.stages.project.checkout;
+  // Make the command return an unexpected real object, then map it to a clean
+  // replacement. The final guard must inspect what Git will actually publish.
+  const mutation=defect==='tree'?`fs.writeFileSync(cwd+'/code.txt','unauthorized actual object\\n');execFileSync(real,['-C',cwd,'add','--all']);badArgs[badArgs.indexOf('commit-tree')+1]=execFileSync(real,['-C',cwd,'write-tree'],{encoding:'utf8'}).trim();`:`badArgs.splice(badArgs.indexOf('-p'),2);`;
+  gitWrapper(f,`if(a.includes('commit-tree')) {const good=execFileSync(real,a,{encoding:'utf8'}).trim(),badArgs=[...a];${mutation}const bad=execFileSync(real,badArgs,{encoding:'utf8'}).trim();execFileSync(real,['-C',cwd,'replace','-f',bad,good]);console.log(bad);process.exit(0);}`);
+  assert.throws(()=>complete(s,run.id,j),defect==='tree'?/publication tree changes files outside/:/exactly the frozen baseline as its parent/);noPublication(f,s);
+  const receipt=readRun(s,run.id).receipts.project;assert.equal(receipt.status,'committed');
+  // Retry re-verifies the immutable object, even with a persisted commit receipt.
+  fs.rmSync(join(f.dir,'bin/git'));
+  assert.throws(()=>retry(s),defect==='tree'?/publication tree changes files outside/:/exactly the frozen baseline as its parent/);noPublication(f,s);
+});
+function journalCrash(f,s,run,j,base,phase='before-install') {
+  const code=`import fs from 'node:fs';import {syncBuiltinESMExports} from 'node:module';import {loadSource} from ${JSON.stringify(new URL('../oats-package/capabilities/oats-okf/lib/sources.mjs',import.meta.url).href)};import {complete} from ${JSON.stringify(new URL('../oats-package/capabilities/oats-okf/lib/worker.mjs',import.meta.url).href)};
+    const rename=fs.renameSync;fs.renameSync=(from,to)=>{if(to!==${JSON.stringify(journalPath(base))})return rename(from,to);if(${JSON.stringify(phase)}==='after-install')rename(from,to);process.kill(process.pid,'SIGKILL');};syncBuiltinESMExports();complete(loadSource(${JSON.stringify(s.file)}),${JSON.stringify(run.id)},${JSON.stringify(j)});`;
+  const child=spawnSync(process.execPath,['--input-type=module','-e',code],{env:process.env,encoding:'utf8'});assert.equal(child.signal,'SIGKILL',child.stderr);
+  assert.equal(fs.existsSync(journalPath(base)),phase==='after-install');
+  assert.equal(readRun(s,run.id).receipts[base.alias].status,'publication-intent');
+  for(const lock of [baseLock(base),join(dirname(s.file),'worker.lock')]) {const r=f.cli('unlock',['--lock',lock,'--token',readJSON(join(lock,'owner.json')).token]);assert.equal(r.status,0,r.stdout);}
+}
+for(const firstAction of ['retry','rejudge']) test(`custody R2 SIGKILL before journal installation permits ${firstAction} after cooperative baseline drift`,t=>{
+  const f=fixture(t);note(f);const {s,run}=prepared(f),j=judgment(f,s,run),before=tree(f.base.path);
+  journalCrash(f,s,run,j,{...f.base,alias:'project'});assert.deepEqual(tree(f.base.path),before);assert.deepEqual(loadStatus(s).processed,[]);
+  withLock(baseLock(f.base),()=>fs.appendFileSync(join(f.base.path,'peer/log.md'),'cooperative update after interrupted intent\n'));
+  const newer=tree(f.base.path);views(s.bindings,s.decl,join(f.dir,'unblocked-reader'));
+  if(firstAction==='retry') {assert.throws(()=>retry(s),/directory base changed/);assert.equal(readRun(s,run.id).receipts.project.status,'validated');}
+  assert.equal(retry(s,{rejudge:true}).status,'abandoned');assert.deepEqual(tree(f.base.path),newer);assert.deepEqual(loadStatus(s).processed,[]);
+  const next=readRun(s,runSource(s,{manual:true,noLaunch:true}).run);assert.notEqual(next.id,run.id);assert.deepEqual(next.inputs,run.inputs);
+  assert.equal(complete(s,next.id,judgment(f,s,next)).processed,true);assert.equal(loadStatus(s).processed.length,1);
+  assert.equal(fs.existsSync(run.worker.home),true);assert.equal(fs.existsSync(readRun(s,run.id).receipts.project.proposal),true);
+  assert.equal(tree(f.base.path)['peer/log.md'],newer['peer/log.md']);
+});
+test('custody R2 absent-journal intent retries the same proposal when baseline is unchanged',t=>{
+  const f=fixture(t);note(f);const {s,run}=prepared(f),j=judgment(f,s,run);journalCrash(f,s,run,j,{...f.base,alias:'project'});
+  assert.equal(retry(s).processed,true);assert.equal(complete(s,run.id).processed,true);assert.equal(loadStatus(s).processed.length,1);
+  assert.deepEqual(tree(f.base.path),readJSON(readRun(s,run.id).receipts.project.proposal).after);
+});
+test('custody R2 installed journal before publishing receipt blocks rejudgment and recovers',t=>{
+  const f=fixture(t);note(f);const {s,run}=prepared(f),j=judgment(f,s,run),before=tree(f.base.path);journalCrash(f,s,run,j,{...f.base,alias:'project'},'after-install');
+  assert.deepEqual(tree(f.base.path),before);assert.throws(()=>retry(s,{rejudge:true}),/publication pending/);
+  assert.throws(()=>views(s.bindings,s.decl,join(f.dir,'blocked-reader')),/publication pending/);
+  assert.equal(retry(s).processed,true);assert.equal(loadStatus(s).processed.length,1);
+});
+for(const firstAction of ['retry','rejudge']) test(`custody R2 partial accepted delivery survives pre-journal death and outstanding ${firstAction}`,t=>{
+  const f=fixture(t),bindings=secondDirectory(f,{owned:true}),second=bindings.bases.secondary;note(f);const {s,run}=prepared(f),j=judgment(f,s,run),first=readJSON(j);
+  judgment(f,s,run,{base:'secondary'});first.outcomes[0].concepts.push(...readJSON(j).outcomes[0].concepts);save(j,first);
+  journalCrash(f,s,run,j,{...second,alias:'secondary'});
+  const pending=readRun(s,run.id),receipt=structuredClone(pending.receipts.project),accepted=tree(f.base.path);
+  assert.equal(receipt.status,'accepted');assert.equal(fs.existsSync(journalPath(f.base)),false);assert.deepEqual(loadStatus(s).processed,[]);
+  withLock(baseLock(second),()=>fs.appendFileSync(join(second.path,'peer/log.md'),'new cooperative baseline\n'));
+  if(firstAction==='retry') assert.throws(()=>retry(s),/directory base changed/);
+  const result=retry(s,{rejudge:true});assert.equal(result.rejudged,true);assert.deepEqual(result.outstanding,['secondary']);assert.deepEqual(result.settled,['project']);
+  const next=readRun(s,run.id);assert.deepEqual(next.receipts.project,receipt);assert.deepEqual(next.inputs,run.inputs);
+  assert.ok(fs.existsSync(next.history[0]));assert.ok(fs.existsSync(pending.receipts.secondary.proposal));
+  const completed=complete(s,run.id,judgment(f,s,next,{base:'secondary'}));assert.equal(completed.processed,true);assert.deepEqual(completed.receipts.project,receipt);
+  assert.deepEqual(tree(f.base.path),accepted);assert.match(fs.readFileSync(join(second.path,'peer/log.md'),'utf8'),/new cooperative baseline/);
+  assert.equal(complete(s,run.id).processed,true);assert.equal(loadStatus(s).processed.length,1);
+});
+test('custody R2 missing write-authorized journal is uncertain, never safe to abandon or replay',t=>{
+  const f=fixture(t);note(f);const {s,run}=prepared(f),j=judgment(f,s,run);
+  assert.throws(()=>complete(s,run.id,j,{afterWrite:()=>{throw new Error('partial publication');}}),/partial publication/);
+  const pending=readRun(s,run.id),jp=journalPath(f.base),journal=fs.readFileSync(jp),partial=tree(f.base.path);
+  assert.equal(pending.receipts.project.status,'publishing');
+  // Emulate loss/removal OUTSIDE the cooperative protocol. Absence must not be
+  // treated as proof of no writes once the write-authorized receipt exists.
+  fs.rmSync(jp);
+  for(const opts of [{},{rejudge:true}]) assert.throws(()=>retry(s,opts),/journal missing after writes were authorized/);
+  assert.deepEqual(tree(f.base.path),partial);assert.deepEqual(loadStatus(s).processed,[]);assert.equal(loadStatus(s).activeRun,run.id);
+  put(jp,journal);
+  // Already accepted individual bytes are not atomically replaced a second time.
+  const proposal=readJSON(pending.receipts.project.proposal),done=proposal.changed.filter(p=>partial[p]===proposal.after[p]);assert.ok(done.length);
+  renameFailure((from,to)=>done.some(p=>to===join(f.base.path,p)),()=>assert.equal(retry(s).processed,true));
+  assert.deepEqual(tree(f.base.path),proposal.after);assert.equal(loadStatus(s).processed.length,1);
+});
+test('custody R2 durable accepted receipt with pending journal requires cleanup only, no accepted rewrites',t=>{
+  const f=fixture(t);note(f);const {s,run}=prepared(f),j=judgment(f,s,run);
+  assert.throws(()=>complete(s,run.id,j,{afterWrite:()=>{throw new Error('partial publication');}}),/partial publication/);
+  const current=readRun(s,run.id),r=current.receipts.project,p=readJSON(r.proposal);
+  assert.throws(()=>directoryPublish(f.base,p,r,()=>{save(join(dirname(s.file),'runs',run.id,'run.json'),current);if(r.status==='accepted')throw new Error('receipt durable, cleanup interrupted');}),/cleanup interrupted/);
+  const accepted=tree(f.base.path),receipt=structuredClone(r);
+  renameFailure((from,to)=>to.startsWith(f.base.path+'/'),()=>assert.equal(retry(s).processed,true));
+  assert.deepEqual(tree(f.base.path),accepted);assert.deepEqual(readRun(s,run.id).receipts.project,receipt);assert.equal(fs.existsSync(journalPath(f.base)),false);assert.equal(loadStatus(s).processed.length,1);
 });
 
-test("repo-resident harvest builds an attached same-tree spawn", async (t) => {
-  const fixture = harvestFixture(t, "repo");
-  const result = await run(["harvest", "--json"], fixture.env, fixture.home);
-  assert.equal(result.code, 0, result.stderr);
-  const record = JSON.parse(readFileSync(fixture.record, "utf8"));
-  assert.equal(argValue(record.args, "--repo"), fixture.context);
-  assert.equal(argValue(record.args, "--work"), "attached");
-  assert.equal(argValue(record.args, "--work-dir"), realpathSync(join(fixture.home, "work")));
-  assert.equal(argValue(record.args, "--branch"), undefined);
-  assert.match(record.task, /ATTACHED to the instance's work tree/);
-  assert.equal(record.taskMode, 0o600);
-  assert.equal(existsSync(record.taskFile), false);
+// Custody R3: content authorization never grants executable-bit ownership.
+// These are real disposable Git repositories; gh, configs and faults are local.
+for(const root of ['knowledge','.']) for(const mask of ['ordinary','hidden','remove-executable']) test(`custody R3 ${root} ${mask} peer mode-only edit is rejected before publication`,t=>{
+  const f=fixture(t,{kind:'git',root}),prefix=root==='.'?'':root+'/';
+  if(mask==='remove-executable') {fs.chmodSync(join(f.repo,prefix+'peer/log.md'),0o755);fixtureCommit(f.repo,'accepted executable peer file');}
+  note(f);const {s,run}=prepared(f),j=judgment(f,s,run),cwd=run.stages.project.checkout,path=prefix+'peer/log.md';
+  fs.chmodSync(join(cwd,path),mask==='remove-executable'?0o644:0o755);
+  if(mask==='hidden') {
+    git(cwd,['config','core.fileMode','false']);git(cwd,['update-index','--assume-unchanged','--skip-worktree','--',path]);
+    assert.equal(git(cwd,['diff','--summary','--',path]),'','ordinary Git status can conceal the mode change');
+  } else assert.match(git(cwd,['diff','--summary','--',path]),/mode change/);
+  assert.throws(()=>complete(s,run.id,j),e=>e.code==='E_OWNER' && /Git file mode/.test(e.message));noPublication(f,s);
+  assert.equal(readRun(s,run.id).judgment,undefined,'reject before freezing or publishing any destination');
 });
-
-test("harvest propagates schema-v1 spawn errors and still removes the task file", async (t) => {
-  const fixture = harvestFixture(t, "local", { errorCode: "E_PARENT_NOT_FOUND" });
-  const result = await run(["harvest", "--json"], fixture.env, fixture.home);
-  assert.equal(result.code, 1);
-  const envelope = JSON.parse(result.stdout);
-  assert.equal(envelope.schemaVersion, 1);
-  assert.equal(envelope.ok, false);
-  assert.equal(envelope.error.code, "E_PARENT_NOT_FOUND");
-  const record = JSON.parse(readFileSync(fixture.record, "utf8"));
-  assert.equal(record.taskMode, 0o600);
-  assert.equal(existsSync(record.taskFile), false);
+test('custody R3 all-drop does not certify a worker that changed peer file modes',t=>{
+  const f=fixture(t,{kind:'git'});note(f);const {s,run}=prepared(f),j=judgment(f,s,run,{drop:true});
+  fs.chmodSync(join(run.stages.project.root,'peer/log.md'),0o755);
+  assert.throws(()=>complete(s,run.id,j),{code:'E_OWNER'});noPublication(f,s);
+});
+function entryMode(repo,oid,path) {return git(repo,['--no-replace-objects','ls-tree',oid,'--',path]).split(' ')[0];}
+test('custody R3 worker index mode-only entries are preserved but cannot contaminate publication',t=>{
+  const f=fixture(t,{kind:'git'});note(f);const {s,run}=prepared(f),j=judgment(f,s,run),cwd=run.stages.project.checkout,path='knowledge/peer/log.md';
+  git(cwd,['update-index','--chmod=+x','--',path]);
+  const index=fs.readFileSync(join(cwd,'.git/index'));
+  assert.equal(git(cwd,['ls-files','--stage','--',path]).split(' ')[0],'100755');
+  const r=complete(s,run.id,j);assert.equal(r.processed,true);
+  assert.equal(entryMode(f.repo,r.receipts.project.commit,path),'100644');
+  assert.deepEqual(fs.readFileSync(join(cwd,'.git/index')),index,'worker index remains byte-for-byte intact');
+});
+test('custody R3 late mode edits cannot enter the private index; add scope is the exact validated content delta',t=>{
+  const f=fixture(t,{kind:'git'});note(f);const {s,run}=prepared(f),j=judgment(f,s,run),cwd=run.stages.project.checkout;
+  const calls=join(f.dir,'private-adds.jsonl');
+  gitWrapper(f,`if(a.includes('read-tree') && process.env.GIT_INDEX_FILE) {fs.chmodSync(cwd+'/knowledge/peer/log.md',0o755);fs.chmodSync(cwd+'/knowledge/expert/decision.md',0o755);execFileSync(real,['-C',cwd,'config','core.fileMode','false']);}if(a.includes('add') && process.env.GIT_INDEX_FILE)fs.appendFileSync(${JSON.stringify(calls)},JSON.stringify(a)+'\\n');`);
+  const r=complete(s,run.id,j);assert.equal(r.processed,true);
+  const paths=fs.readFileSync(calls,'utf8').trim().split('\n').map(JSON.parse).flatMap(a=>{assert.ok(a.includes('--literal-pathspecs'));return a.slice(a.indexOf('--')+1);});
+  assert.deepEqual(paths.sort(),['knowledge/expert/decision.md','knowledge/expert/index.md','knowledge/expert/log.md']);
+  for(const path of ['knowledge/peer/log.md','knowledge/expert/decision.md']) assert.equal(entryMode(f.repo,r.receipts.project.commit,path),'100644');
+  assert.equal(fs.statSync(join(cwd,'knowledge/peer/log.md')).mode & 0o100,0o100,'late worker modes are not rewritten');
+});
+for(const path of ['knowledge/peer/log.md','knowledge/expert/decision.md']) test(`custody R3 final publication tree rejects injected mode for ${path}`,t=>{
+  const f=fixture(t,{kind:'git'});note(f);const {s,run}=prepared(f),j=judgment(f,s,run);
+  gitWrapper(f,`if(a.includes('write-tree') && process.env.GIT_INDEX_FILE) execFileSync(real,['-C',cwd,'update-index','--chmod=+x','--',${JSON.stringify(path)}]);`);
+  assert.throws(()=>complete(s,run.id,j),{code:'E_OWNER'});noPublication(f,s);
+  assert.equal(readRun(s,run.id).receipts.project.commit,undefined);
+});
+for(const path of ['knowledge/peer/log.md','knowledge/expert/decision.md']) test(`custody R3 raw commit and retry reject replacement-hidden mode for ${path}`,t=>{
+  const f=fixture(t,{kind:'git'});note(f);const {s,run}=prepared(f),j=judgment(f,s,run);
+  gitWrapper(f,`if(a.includes('commit-tree')) {const good=execFileSync(real,a,{encoding:'utf8'}).trim();execFileSync(real,['-C',cwd,'add','--all']);execFileSync(real,['-C',cwd,'update-index','--chmod=+x','--',${JSON.stringify(path)}]);const badArgs=[...a];badArgs[badArgs.indexOf('commit-tree')+1]=execFileSync(real,['-C',cwd,'write-tree'],{encoding:'utf8'}).trim();const bad=execFileSync(real,badArgs,{encoding:'utf8'}).trim();execFileSync(real,['-C',cwd,'replace',bad,good]);console.log(bad);process.exit(0);}`);
+  assert.throws(()=>complete(s,run.id,j),{code:'E_OWNER'});noPublication(f,s);
+  const receipt=readRun(s,run.id).receipts.project;assert.equal(receipt.status,'committed');
+  fs.rmSync(join(f.dir,'bin/git'));
+  assert.throws(()=>retry(s),{code:'E_OWNER'});noPublication(f,s);
+});
+test('custody R3 recovery rebuilds the same commit and preserves accepted executable modes despite materialization',t=>{
+  const f=fixture(t,{kind:'git'}),paths=['code.txt','knowledge/peer/log.md','knowledge/expert/log.md'];
+  for(const path of paths) fs.chmodSync(join(f.repo,path),0o755);
+  fixtureCommit(f.repo,'accepted executable files');note(f);const {s,run}=prepared(f),j=judgment(f,s,run);
+  const committed=join(f.dir,'unrecorded-commit');
+  gitWrapper(f,`if(a.includes('commit-tree') && !fs.existsSync(${JSON.stringify(committed)})) {const oid=execFileSync(real,a,{encoding:'utf8'}).trim();fs.writeFileSync(${JSON.stringify(committed)},oid);process.exit(73);}`);
+  assert.throws(()=>complete(s,run.id,j),/failed/);noPublication(f,s);
+  assert.equal(readRun(s,run.id).receipts.project.status,'commit-intent');
+  fs.rmSync(run.worker.home,{recursive:true});
+  const r=retry(s);assert.equal(r.processed,true);assert.equal(r.receipts.project.commit,fs.readFileSync(committed,'utf8'));
+  for(const path of paths) assert.equal(entryMode(f.repo,r.receipts.project.commit,path),'100755',path);
+  assert.equal(entryMode(f.repo,r.receipts.project.commit,'knowledge/expert/decision.md'),'100644');
+});
+test('custody R3 content-only Git migration preserves executable peer and changed-node baseline modes',t=>{
+  const f=fixture(t,{kind:'git'}),paths=['knowledge/peer/log.md','knowledge/expert/index.md'];
+  for(const path of paths) fs.chmodSync(join(f.repo,path),0o755);
+  fixtureCommit(f.repo,'accepted executable files');
+  const legacy=join(f.soul,'knowledge');fs.cpSync(join(f.repo,'knowledge/expert'),legacy,{recursive:true});
+  put(join(legacy,'index.md'),'---\nokf_version: "0.1"\n---\n\n# Migrated expertise\n');
+  const m=migrate(f.bindings,{legacy,alias:'project',node:'expert',output:join(f.dir,'migration-stage')});
+  const receipt=deliverMigration(m.migration);assert.equal(receipt.status,'delivered');
+  for(const path of paths) assert.equal(entryMode(f.repo,receipt.commit,path),'100755',path);
+});
+test('custody R3 exact content staging supports deletion and literal metacharacters in concept paths',t=>{
+  const f=fixture(t,{kind:'git'}),old='expert/obsolete.md';
+  put(join(f.repo,'knowledge',old),'---\ntype: Decision\ntitle: Obsolete\ndescription: Previous decision.\n---\n\nPrevious rationale.\n');
+  fs.appendFileSync(join(f.repo,'knowledge/expert/index.md'),'* [Obsolete](obsolete.md) - Previous decision.\n');fixtureCommit(f.repo,'previous expertise');
+  note(f);const {s,run}=prepared(f),j=judgment(f,s,run),root=run.stages.project.root,next='expert/decision[one].md';
+  fs.renameSync(join(root,'expert/decision.md'),join(root,next));fs.rmSync(join(root,old));
+  const index=join(root,'expert/index.md');put(index,fs.readFileSync(index,'utf8').replace('* [Obsolete](obsolete.md) - Previous decision.\n','').replace('(decision.md)','(decision[one].md)'));
+  const judgmentFile=readJSON(j);judgmentFile.outcomes[0].concepts[0].path=next;judgmentFile.removals=[{base:'project',path:old,reason:'Replaced by the accepted current decision.'}];save(j,judgmentFile);
+  const r=complete(s,run.id,j);assert.equal(r.processed,true);
+  assert.equal(git(f.repo,['ls-tree','-r','--name-only',r.receipts.project.commit]).includes('knowledge/'+old),false);
+  assert.match(git(f.repo,['show',`${r.receipts.project.commit}:knowledge/${next}`]),/Evidence: OKF input/);
 });
