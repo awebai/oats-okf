@@ -6,9 +6,12 @@ bases. Skills remain curated soul artifacts; v2 never automatically edits them.
 Procedure candidates may become external Playbook concepts.
 
 **Release payload:** `oats-package/capabilities/oats-okf/`, enumerated by
-`oats-package/oats-package.json`. Root-level historical duplicates are not source,
-not tested as runtime, and not distributed. The capability is self-contained,
-including both runtime skills, worker soul, injections, validator and schemas.
+`oats-package/oats-package.json`. The obsolete unenumerated root `oats.json`,
+`bin/`, `agents/`, `skills/` and `injects/` copies have been removed; they are not
+an alternative runtime. The distribution retains its manifest and LICENSE, and
+the capability is self-contained, including both runtime skills, worker soul,
+injections, validator and schemas. This remains the **2.0.0 pre-tag candidate**,
+not a published patch release.
 
 ## Configuration and ownership
 
@@ -131,7 +134,17 @@ Fresh provider reads coordinate with publication:
 ```sh
 oats okf read --base project --path expert/index.md --json
 oats okf refresh --json    # returns a NEW immutable view path; old views remain
+# From deployment context, including after source retirement:
+oats okf read --source /absolute/state/sources/UUID/source.json --base project --path expert/index.md --soul domain-expert --json
+oats okf refresh --source /absolute/state/sources/UUID/source.json --soul domain-expert --json
 ```
+
+Home-selected reads/refreshes create `./knowledge-view-<uuid>/` in that home.
+**Every `--source` read/refresh creates its new view under
+`<stateDir>/sources/<source-id>/views/knowledge-view-<uuid>/`**, even if the source
+is still live. It never writes a cache into the invoking context/repository,
+a replacement home, or a retired/missing home. `path` and base receipts identify
+the actual materialized view. Choose either `--home` or `--source`, not both.
 
 Directory readers hold the same cooperative lock as publication while copying
 accepted bytes. A pending journal blocks fresh views rather than exposing a
@@ -172,6 +185,12 @@ State layout (private, local, **no automatic evidence deletion**):
 <stateDir>/sources/<uuid>/status.json       # captured / processed / delivered / accepted
 <stateDir>/sources/<uuid>/inputs/<hash>.json # immutable notes and full record windows
 <stateDir>/sources/<uuid>/runs/<uuid>/       # plans, proposals, judgment and receipts
+<stateDir>/sources/<uuid>/runs/<uuid>/receipt-history/<alias>/<hash>.json
+                                            # immutable receipt observations
+<stateDir>/sources/<uuid>/runs/<uuid>/previous.json # frozen predecessor on recovery
+<stateDir>/sources/<uuid>/recovery-observations/<hash>.json
+                                            # first verified PR identity per publication
+<stateDir>/sources/<uuid>/views/             # descriptor-selected read/refresh caches
 <stateDir>/migrations/<uuid>/               # explicit migration preservation
 ```
 
@@ -197,7 +216,41 @@ oats okf setup --source /absolute/state/sources/UUID/source.json --install-host 
 oats okf setup --source /absolute/state/sources/UUID/source.json --disable --soul domain-expert --json
 ```
 
-Inspect reports scheduler health; an absent/inactive timer is not claimed active.
+Inspect reports frozen bindings (`owns`, `reads`, `bases`), the registered
+`acceptedView` (not a fresh read of today's accepted branch), durable capture /
+processing / delivery / acceptance receipts, and scheduler health. An absent or
+inactive timer is not claimed active; scheduler lookup failures are diagnostic,
+not a reason to hide durable receipts. `status.lastCapture` describes the last
+capture attempt, not current source availability.
+
+For a **live matching source only**, inspect also restores the v1 labeled
+Markdown `documents`: `Working state (STATE.md)`, `Log (log.md)`, and sorted
+`Pending note: <relative-name>` entries under `notes/` (including nested notes).
+The `Durable processing receipts` text document follows them. Missing documents
+are omitted; non-Markdown files are not displayed. `liveMemory` reports
+`available`, `reason`, and the observation time `observedAt`. Retired, missing,
+reused, or unverified homes return **only durable documents**, with an explicit
+unavailability reason; they do not erase the durable source's bindings or
+receipts. Use `--source` after disappearance/retirement; the home pointer cannot
+identify a deleted source.
+
+Inspection checks the durable source's home pointer ID/path and any instance
+metadata, rejects symbolic/hard-linked or non-regular Markdown, never follows
+symlinked notes directories, and rechecks home identity/retirement after reading.
+An unsafe live document returns an `E_PATH` error; other document I/O failures
+return `E_INSPECT_FAILED`, with no partial success payload. An unreadable or
+unsafe **home identity** is instead reported as `liveMemory.reason: unverified-home`
+with its diagnostic while durable receipts remain available. This is a
+best-effort live observation, not a locked multi-file snapshot or OS sandbox.
+
+The v1 **256 KiB per-document preview cap** remains explicit: a longer document
+carries `truncated: true` and its original `bytes` count; an incomplete trailing
+UTF-8 character is omitted. Documents below the cap arrive byte-exact, and the
+**entire JSON envelope drains through stdout** (including large receipts).
+Inspection is read-only: it does not capture, refresh, schedule work, or launch
+a worker. Ordinary commands return the JSON-v1 success/error envelope, with
+nonzero exit on failure; native lifecycle hooks retain their hook result shape.
+
 Service agents never register/capture themselves. No-launch sources cannot cause
 scheduled model launches; a final no-launch source is auto-disabled. An operator
 can request a scaffold-only worker explicitly:
@@ -298,12 +351,26 @@ oats okf retry --source /absolute/state/sources/UUID/source.json --soul domain-e
 oats okf retry --source /absolute/state/sources/UUID/source.json --launch --soul domain-expert --json
 # Before publication, or after verifying no open/merged PR, preserve old work:
 oats okf retry --source /absolute/state/sources/UUID/source.json --rejudge --soul domain-expert --json
+# Historical delivered PR later closed unmerged (even after both homes retire):
+oats okf complete --source /absolute/state/sources/UUID/source.json --run OLD --soul domain-expert --json
+oats okf retry --source /absolute/state/sources/UUID/source.json --run OLD --rejudge --soul domain-expert --json
 # Uncertain spawn: inspect first, then adopt ONLY its exact deterministic home.
 oats okf retry --source /absolute/state/sources/UUID/source.json --adopt-home /absolute/expected-worker-home --soul domain-expert --json
 ```
 
 If `--rejudge` returns `abandoned` (nothing delivered yet), request
-`run-source --manual` (add `--no-launch` for a scaffold). If some destinations
+`run-source --manual` (add `--no-launch` for a scaffold). The pending replacement
+keeps the original bounded input set and links the old run to its successor;
+prior publication identities stay guarded, including through partial rejudgments.
+A PR first discovered after uncertain creation is saved immediately in a separate
+recovery observation keyed by frozen base/repository/branch/commit. This also
+happens during ancestor checks and before later recovery gates can fail; historical
+receipts are never rewritten to pretend delivery was confirmed. Once known,
+queries use the recorded PR number in its repository (`gh pr view`), not a list
+filtered by the original base. Disappearance, changed URL/head/base, or reopening
+or merging a superseded PR blocks further publication, even after home deletion.
+An abandoned run without a tracked successor cannot be explicitly recovered with
+`--run`; use its pending-input flow instead. If some destinations
 are already confirmed, it instead returns `ready` on the same run and existing
 worker: re-read `work/staging.json` and judge ONLY its outstanding destinations.
 They have fresh stages under `work/rejudgments/<attempt>/bases/`; settled entries
@@ -331,6 +398,45 @@ of coordination state. Frozen ownership checks still apply.
 Once a PR merges, repeat **complete with the same source/run**, without judgment,
 to reconcile merge-visible acceptance. Durable proposals can reconstruct a real
 Git delivery checkout if the old worker disappeared. No source home is required.
+
+### Closed-after-delivery recovery
+
+Delivery marks captured inputs processed and releases the active worker slot;
+it is **not** acceptance. A later `complete --run OLD` reports a closed-unmerged
+PR as rejected. Ordinary retry/scheduled processing does **not** unprocess or
+resubmit those inputs. After operator review, `retry --run OLD --rejudge` selects
+that retained run explicitly (the selector requires `--rejudge`). It also checks
+current PR state when the operator has not separately reconciled closure.
+
+The command creates one fresh scaffold-only worker/run, with a new publication
+identity, original bounded evidence, frozen predecessor in `work/previous.json`,
+and fresh accepted stages for **unresolved destinations only**. It does not copy
+rejected edits into the stages. The worker must judge afresh, possibly dropping
+all remaining claims. Neither the original source nor worker home is needed.
+Use the returned **new run ID** for completion, never the superseded one. Add
+`--launch` only for an explicitly requested model launch; a repeated request
+returns the existing successor without another launch or spawn.
+
+Accepted/no-change destinations and still-open delivered PRs retain their
+receipts and have no writable staging root. Unknown, missing or mismatched
+known PR identities block recovery. Another active run blocks historical recovery
+without changing either run. An atomic capability-owned status update records
+`recoveries[old] = new` together with the active slot before any spawn. Repeated
+requests cannot create another successor, even after it finishes. If a later
+attempt is itself rejected, select that latest run for another explicit review.
+Abandoned completion is refused even before its successor is created; stale
+workers cannot resume an abandoned publication. Superseded completion is refused. Existing uncertain-spawn adoption and explicit
+lock recovery apply to the new run too; never edit status to force a retry.
+
+Old proposals and predecessor snapshots are not overwritten. Receipt transitions
+are retained as content-addressed observations under `receipt-history/`; `run.json`
+and `status.json` remain current projections, not immutable logs. Historic
+processed-input IDs remain processed; the new active run tracks the explicit
+rejudgment independently and resolves only its outstanding destinations.
+Ancestor PR guards survive every replacement and are rechecked before fresh Git
+commit/push/PR creation. These observations cannot atomically lock GitHub against
+concurrent external reopen/merge actions; stop and reconcile on any detected
+change rather than overriding it. No direct-write or force-push fallback exists.
 
 Base locks never expire automatically. An unreadable owner needs manual forensic
 recovery; a known dead **local** holder can be released explicitly:
@@ -400,9 +506,13 @@ fixtures lack Git/gh. Tests cover command dispatch, strict manifest mutation,
 final source deletion, full record backlog, rewritten notes/replay, frozen
 bindings/ownership, contention, partial publication and receipt-write crashes,
 PR failure/unknown, merge visibility, migration preservation, exclusions and
-actual complete receipts. The opt-in public consumer probe uses isolated HOME,
-config, schedules and inert runtime executables, checks source-targeted access
-after retirement and fresh reader scaffolding, and installs **no host timer**.
+actual complete receipts. Inspection tests cover large state/log/notes through
+both declared dispatch and the public `knowledge:inspect` runner, explicit
+preview truncation, disappeared/reused/unsafe homes, file-safety errors, identity
+changes during reads, and durable external-view placement. The opt-in public
+consumer probe uses isolated HOME, config, schedules and inert runtime
+executables, checks source-targeted access after retirement and fresh reader
+scaffolding, and installs **no host timer**.
 Default CI skips the three optional probes explicitly. A manual CI run can supply
 an exact published `consumer_version` to install that public kernel in a disposable
 prefix and run them; it does not acquire/lock/trust the OKF distribution. See

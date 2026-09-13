@@ -232,6 +232,29 @@ preserved; a drop here does not retract an earlier accepted promotion. Inputs
 are not processed until all required destinations resolve. A pending directory
 journal must recover before rejudgment; never remove it to force a new attempt.
 
+### Operator recovery after a delivered PR is later closed
+
+A delivered PR is not an accepted promotion. Even after source and worker retire,
+an operator can reconcile `oats okf complete --source FILE --run OLD --json`, then
+request `oats okf retry --source FILE --run OLD --rejudge --json` (include the
+source's `--soul` selector where activation requires it). The selector requires
+explicit rejudgment. Ordinary retry never automatically resubmits rejected
+processed inputs. This creates a NEW scaffold-only run/worker, not a continuation
+of the old publication. Complete using the new run ID in its TASK.md. Launch
+requires explicit `--launch`; repeating the request returns the existing
+successor, not a duplicate worker or launch. Another active run blocks recovery.
+
+In a recovered worker, read `work/previous.json` as evidence of the prior judgment
+and receipts, **not authorization to republish**. Re-read the original retained
+inputs and judge afresh against the fresh accepted stages. Rejected edits are not
+pre-applied. `settled: true` destinations (including still-open PRs) have no
+writable root and cannot be claimed again. Give one outcome per original input,
+covering only outstanding destinations; an all-drop result is valid and does
+not retract earlier accepted work. No deleted home is needed. Old proposals and
+receipt observations remain immutable in capability-owned state. Do not edit
+that state or GitHub branches by hand to bypass a guard. A PR reopened on any
+prior attempt blocks new publication; report the need for reconciliation.
+
 On successful processed completion report receipt and self-retire via the oats
 skill. A no-change result is processed, not an invented PR. On failure leave
 home/work/evidence intact and report retry/reconciliation needs. Never delete

@@ -58,7 +58,7 @@
       "kind": "view",
       "command": "inspect",
       "context": "home",
-      "description": "Inspect durable capture, processing and delivery receipts, bindings and scheduler health."
+      "description": "Inspect matching live working-memory documents, durable receipts, bindings, registered view freshness and scheduler health."
     },
     "harvest": {
       "kind": "action",

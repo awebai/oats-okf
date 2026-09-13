@@ -55,8 +55,10 @@ else {console.error('unknown fixture call '+JSON.stringify(a));process.exit(90);
   put(gh,`#!${process.execPath}
 import * as fs from 'node:fs';import {join} from 'node:path';import {execFileSync} from 'node:child_process';
 const a=process.argv.slice(2),val=k=>a[a.indexOf(k)+1],root=process.env.FIXTURE_ROOT,p=join(root,'pr.json');
-if(a[1]==='list') {if(fs.existsSync(join(root,'gh-unavailable'))) process.exit(45);console.log(fs.existsSync(p)?fs.readFileSync(p,'utf8'):'[]');}
-else if(a[1]==='create') {if(fs.existsSync(join(root,'gh-fail'))) process.exit(42);const branch=val('--head'),oid=execFileSync('git',['ls-remote','origin','refs/heads/'+branch],{encoding:'utf8'}).trim().split(/\\s/)[0];fs.writeFileSync(p,JSON.stringify([{number:1,url:'https://github.com/fixture/knowledge/pull/1',state:'OPEN',headRefName:branch,headRefOid:oid,baseRefName:val('--base'),mergedAt:null,mergeCommit:null}]));if(fs.existsSync(join(root,'gh-uncertain'))) process.exit(43);console.log('https://github.com/fixture/knowledge/pull/1');}
+fs.appendFileSync(join(root,'gh-calls.jsonl'),JSON.stringify(a)+'\\n');
+if(a[1]==='list') {if(fs.existsSync(join(root,'gh-unavailable'))) process.exit(45);console.log(JSON.stringify((fs.existsSync(p)?JSON.parse(fs.readFileSync(p,'utf8')):[]).filter(pr=>pr.headRefName===val('--head') && (!a.includes('--base') || pr.baseRefName===val('--base')))));}
+else if(a[1]==='view') {if(fs.existsSync(join(root,'gh-unavailable'))) process.exit(45);const pr=(fs.existsSync(p)?JSON.parse(fs.readFileSync(p,'utf8')):[]).find(pr=>pr.number===Number(a[2]));if(!pr) {console.error('known PR missing');process.exit(46);}console.log(JSON.stringify(pr));}
+else if(a[1]==='create') {if(fs.existsSync(join(root,'gh-fail'))) process.exit(42);const branch=val('--head'),oid=execFileSync('git',['ls-remote','origin','refs/heads/'+branch],{encoding:'utf8'}).trim().split(/\\s/)[0];const rows=fs.existsSync(p)?JSON.parse(fs.readFileSync(p,'utf8')):[],number=rows.length+1;rows.push({number,url:'https://github.com/fixture/knowledge/pull/'+number,state:'OPEN',headRefName:branch,headRefOid:oid,baseRefName:val('--base'),mergedAt:null,mergeCommit:null});fs.writeFileSync(p,JSON.stringify(rows));if(fs.existsSync(join(root,'gh-uncertain'))) process.exit(43);console.log('https://github.com/fixture/knowledge/pull/1');}
 else process.exit(44);
 `);fs.chmodSync(gh,0o755);
   const repo=join(dir,'accepted-repo'); const base=kind==='directory'?{id:'base-1',kind,path:'base'}:{id:'base-1',kind,repository:repo,root,acceptedBranch:'main',pr:{repository:'fixture/knowledge'}};
@@ -76,7 +78,7 @@ else process.exit(44);
   fs.symlinkSync(soul,join(home,'soul'));save(join(home,'instance.json'),{instance:'source-one',agent:'source',repo:context,work:'directory',launched:true});
   Object.assign(process.env,{OATS_HOME:home,OATS_INSTANCE_HOME:home,OATS_INSTANCE:'source-one',OATS_AGENT:'source',OATS_SOUL:soul,OATS_CONTEXT:context});
   const source=()=>register(home);
-  const cli=(cmd,args=[],env={})=>{const r=spawnSync(process.execPath,[CLI,cmd,...args,'--json'],{cwd:home,env:{...process.env,...env},encoding:'utf8',timeout:30000});let out;try{out=JSON.parse(r.stdout);}catch{}return {...r,out};};
+  const cli=(cmd,args=[],env={})=>{const r=spawnSync(process.execPath,[CLI,cmd,...args,'--json'],{cwd:home,env:{...process.env,...env},encoding:'utf8',timeout:30000,maxBuffer:16*1024*1024});let out;try{out=JSON.parse(r.stdout);}catch{}return {...r,out};};
   return {dir,home,soul,bindings,bindingFile,repo,source,cli,calls,context,base:bindings.bases.project};
 }
 function git(repo,args) {return execFileSync('git',['-C',repo,...args],{encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();}
@@ -94,6 +96,8 @@ function judgment(f,s,run,{drop=false,base='project',node='expert',secret=false}
 }
 
 test('exported payload version, floor, required hooks and complete command inventory',()=>{
+  for(const obsolete of ['oats.json','bin','agents','skills','injects']) assert.equal(fs.existsSync(join(ROOT,'oats-package',obsolete)),false,`obsolete unenumerated root payload: ${obsolete}`);
+  assert.ok(fs.statSync(join(ROOT,'oats-package/LICENSE')).isFile());
   assert.equal(fs.readlinkSync(join(CAP,'agents/memory-harvest/CLAUDE.md')),'AGENTS.md','source compatibility alias preserves one canonical instruction file');
   const m=readJSON(join(CAP,'oats.json'));assert.equal(m.version,'2.0.0');assert.equal(m.compatibility.oats,'>=0.23.0');assert.equal(m.hooks.spawn.required,true);
   for(const c of ['harvest','inspect','setup','run-source','complete','retry','migrate','read','refresh','init']) assert.ok(m.commands[c]);
@@ -218,7 +222,7 @@ function declaredRun(f,name,args=[],operation=false) {
   if(operation) {assert.ok(manifest.operations?.[name],`missing operation ${name}`);name=manifest.operations[name].command;}
   assert.ok(Object.hasOwn(manifest.commands,name),`missing command ${name}`);
   const [entry,...fixed]=manifest.commands[name].trim().split(/\s+/);
-  const r=spawnSync(process.execPath,[join(CAP,entry),...fixed,...args,'--json'],{cwd:f.home,env:process.env,encoding:'utf8',timeout:10000});
+  const r=spawnSync(process.execPath,[join(CAP,entry),...fixed,...args,'--json'],{cwd:f.home,env:process.env,encoding:'utf8',timeout:10000,maxBuffer:16*1024*1024});
   assert.equal(r.status,0,r.stdout+r.stderr);return JSON.parse(r.stdout);
 }
 test('baseline exports the readable okf and memory-harvest skill closure',()=>{
@@ -237,7 +241,19 @@ test('baseline harvest operation dispatches its declared command without a hook 
 });
 for(const operation of [false,true]) test(`baseline inspect ${operation?'operation':'command'} returns provider receipts through declared dispatch`,t=>{
   const f=fixture(t);const s=f.source();const status=loadStatus(s);status.diagnostic='large α receipt\n'.repeat(10000);saveStatus(s,status);
-  const r=declaredRun(f,'inspect',[],operation);assert.equal(r.schemaVersion,1);assert.equal(r.ok,true);assert.equal(r.result.source,s.file);assert.equal(r.result.status.diagnostic,status.diagnostic);assert.ok(r.result.documents.length);
+  const state='# State\n'+'Large live α state\n'.repeat(10000),log='# Log\n'+'Observed β limitation\n'.repeat(9000);
+  put(join(f.home,'STATE.md'),state);put(join(f.home,'log.md'),log);put(join(f.home,'notes/b.md'),'second note\n');put(join(f.home,'notes/a.md'),'first note\n');put(join(f.home,'notes/nested/c.md'),'nested note\n');put(join(f.home,'notes/skip.txt'),'not Markdown');
+  const before=fs.readFileSync(join(dirname(s.file),'status.json'),'utf8');
+  const r=declaredRun(f,'inspect',[],operation);assert.equal(r.schemaVersion,1);assert.equal(r.ok,true);assert.equal(r.result.source,s.file);assert.equal(r.result.status.diagnostic,status.diagnostic);
+  assert.deepEqual(r.result.documents.map(d=>[d.label,d.kind,d.path]),[
+    ['Working state (STATE.md)','markdown',join(f.home,'STATE.md')],['Log (log.md)','markdown',join(f.home,'log.md')],
+    ...['a.md','b.md','nested/c.md'].map(n=>[`Pending note: ${n}`,'markdown',join(f.home,'notes',n)]),
+    ['Durable processing receipts','text',join(dirname(s.file),'status.json')]
+  ]);
+  assert.deepEqual(r.result.documents.slice(0,5).map(d=>d.text),[state,log,'first note\n','second note\n','nested note\n']);
+  assert.equal(r.result.documents[0].truncated,undefined);assert.equal(r.result.liveMemory.available,true);
+  assert.deepEqual(r.result.acceptedView,s.acceptedView);assert.deepEqual(r.result.bases,s.bindings.bases);
+  assert.equal(fs.readFileSync(join(dirname(s.file),'status.json'),'utf8'),before,'inspection never changes receipts');
 });
 
 test('capture interleaved with directory completion preserves both cursors',t=>{
@@ -906,4 +922,353 @@ test('custody R3 exact content staging supports deletion and literal metacharact
   const r=complete(s,run.id,j);assert.equal(r.processed,true);
   assert.equal(git(f.repo,['ls-tree','-r','--name-only',r.receipts.project.commit]).includes('knowledge/'+old),false);
   assert.match(git(f.repo,['show',`${r.receipts.project.commit}:knowledge/${next}`]),/Evidence: OKF input/);
+});
+
+// Inspection-only compatibility. No capture/worker protocol changes.
+function externalView(f,cmd,args=[]) {
+  const r=spawnSync(process.execPath,[CLI,cmd,...args,'--json'],{cwd:f.context,env:{...process.env,OATS_HOME:f.context,OATS_INSTANCE_HOME:f.context},encoding:'utf8',timeout:30000,maxBuffer:16*1024*1024});
+  assert.equal(r.status,0,r.stdout+r.stderr);const out=JSON.parse(r.stdout);assert.equal(out.ok,true);return out.result;
+}
+test('inspect preserves the explicit 256 KiB document preview and UTF-8 boundary contract',t=>{
+  const f=fixture(t);f.source();const text='x'.repeat(256*1024-1)+'α trailing bytes';put(join(f.home,'STATE.md'),text);
+  const r=f.cli('inspect');assert.equal(r.status,0,r.stdout);const d=r.out.result.documents[0];
+  assert.equal(d.text,'x'.repeat(256*1024-1));assert.equal(d.truncated,true);assert.equal(d.bytes,Buffer.byteLength(text));
+  assert.doesNotMatch(d.text,/\uFFFD/);assert.equal(r.out.result.documents.at(-1).label,'Durable processing receipts');
+});
+for(const mode of ['retired','missing-home','missing-marker','reused-marker','reused-metadata','invalid-marker','invalid-metadata','symlink-home']) test(`inspect keeps durable receipts without exposing ${mode} live memory`,t=>{
+  const f=fixture(t),s=f.source();note(f);capture(s,{final:mode==='retired'});
+  if(mode==='missing-home') fs.rmSync(f.home,{recursive:true});
+  else if(mode==='missing-marker') fs.unlinkSync(join(f.home,'.okf-source.json'));
+  else if(mode==='reused-marker') save(join(f.home,'.okf-source.json'),{version:1,id:'00000000-0000-0000-0000-000000000000',source:join(f.dir,'untrusted.json')});
+  else if(mode==='reused-metadata') save(join(f.home,'instance.json'),{agent:'other',instance:s.instance});
+  else if(mode==='invalid-marker') put(join(f.home,'.okf-source.json'),'DO_NOT_EXPOSE_REPLACEMENT_OR_RETIRED_HOME');
+  else if(mode==='invalid-metadata') put(join(f.home,'instance.json'),'DO_NOT_EXPOSE_REPLACEMENT_OR_RETIRED_HOME');
+  else if(mode==='symlink-home') {fs.renameSync(f.home,join(f.context,'moved-home'));fs.symlinkSync(join(f.context,'moved-home'),f.home);}
+  if(mode!=='missing-home') put(join(f.home,'STATE.md'),'DO_NOT_EXPOSE_REPLACEMENT_OR_RETIRED_HOME');
+  const r=externalView(f,'inspect',['--source',s.file]);assert.equal(r.liveMemory.available,false);
+  assert.equal(r.status.captured.inputs.length,1);assert.equal(r.documents.length,1);assert.equal(r.documents[0].kind,'text');
+  assert.deepEqual(r.status,loadStatus(s));assert.deepEqual(r.acceptedView,s.acceptedView);assert.deepEqual(r.bases,s.bindings.bases);
+  assert.doesNotMatch(JSON.stringify(r),/DO_NOT_EXPOSE_REPLACEMENT_OR_RETIRED_HOME/);
+  assert.match(r.summary,/live memory unavailable/);
+});
+for(const mode of ['state-symlink','state-hardlink','state-directory','note-symlink','notes-symlink','note-hardlink','notes-file']) test(`inspect fails explicitly for unsafe live documents: ${mode}`,t=>{
+  const f=fixture(t),s=f.source(),secret=join(f.dir,'secret');put(secret,'DO_NOT_EXPOSE_UNSAFE_DOCUMENT');
+  const state=join(f.home,'STATE.md'),notes=join(f.home,'notes');
+  if(mode.startsWith('state-')) {
+    fs.unlinkSync(state);
+    if(mode==='state-symlink') fs.symlinkSync(secret,state);
+    else if(mode==='state-hardlink') fs.linkSync(secret,state);
+    else fs.mkdirSync(state);
+  } else if(mode==='note-symlink') fs.symlinkSync(secret,join(notes,'secret.md'));
+  else if(mode==='note-hardlink') fs.linkSync(secret,join(notes,'secret.md'));
+  else {fs.rmSync(notes,{recursive:true});if(mode==='notes-symlink') fs.symlinkSync(f.dir,notes);else put(notes,'not a directory');}
+  const r=f.cli('inspect',['--source',s.file]);assert.equal(r.status,1,r.stdout);assert.equal(r.out.ok,false);
+  assert.equal(r.out.error.code,mode==='notes-file'?'E_INSPECT_FAILED':'E_PATH');assert.equal(r.out.result,undefined);
+  assert.doesNotMatch(r.stdout,/DO_NOT_EXPOSE_UNSAFE_DOCUMENT/);assert.equal(loadStatus(s).processed.length,0);
+});
+test('inspect tolerates absent live documents, but not a malformed durable descriptor',t=>{
+  const f=fixture(t),s=f.source();for(const p of ['STATE.md','log.md','notes']) fs.rmSync(join(f.home,p),{recursive:true});
+  const r=f.cli('inspect');assert.equal(r.status,0,r.stdout);assert.equal(r.out.result.liveMemory.available,true);assert.equal(r.out.result.documents.length,1);
+  const bad=join(f.dir,'bad-source.json');save(bad,{version:1,id:s.id,bindings:s.bindings});
+  const broken=f.cli('inspect',['--source',bad]);assert.equal(broken.status,1);assert.equal(broken.out.error.code,'E_SOURCE');
+  const ambiguous=f.cli('inspect',['--source',s.file,'--home',f.home]);assert.equal(ambiguous.status,1);assert.equal(ambiguous.out.error.code,'E_USAGE');
+});
+test('inspect drops every live document if the matching home is replaced during the read',async t=>{
+  const f=fixture(t),s=f.source();put(join(f.home,'notes/a.md'),'original note');
+  const {workingDocuments}=await mod('inspection'),native=await import('node:fs');const original=native.default.readdirSync;
+  native.default.readdirSync=function(path,...args) {
+    if(path===join(f.home,'notes')) {
+      fs.renameSync(f.home,join(f.context,'old-home'));fs.mkdirSync(join(f.home,'notes'),{recursive:true});
+      save(join(f.home,'.okf-source.json'),{version:1,id:s.id,source:s.file});
+      put(join(f.home,'notes/replacement.md'),'DO_NOT_EXPOSE_RACING_REPLACEMENT');
+    }
+    return original(path,...args);
+  };syncBuiltinESMExports();
+  try {const result=workingDocuments(s);assert.equal(result.liveMemory.reason,'home-changed');assert.deepEqual(result.documents,[]);}
+  finally {native.default.readdirSync=original;syncBuiltinESMExports();}
+});
+for(const mode of ['live','retired','missing','reused']) test(`descriptor-selected read/refresh put views only in durable state: ${mode}`,t=>{
+  const f=fixture(t),s=f.source();
+  if(mode==='retired') capture(s,{final:true});
+  if(mode==='missing' || mode==='reused') fs.rmSync(f.home,{recursive:true});
+  if(mode==='reused') {put(join(f.home,'STATE.md'),'replacement home');save(join(f.home,'.okf-source.json'),{version:1,id:'replacement',source:'untrusted'});}
+  const before=fs.readdirSync(f.context).sort(),homeFiles=fs.existsSync(f.home)?fs.readdirSync(f.home).sort():null;
+  const refresh=externalView(f,'refresh',['--source',s.file]);assert.equal(dirname(refresh.path),join(dirname(s.file),'views'));assertView(refresh.path,'project');
+  const read=externalView(f,'read',['--source',s.file,'--base','project','--path','expert/index.md']);
+  assert.ok(read.path.startsWith(join(dirname(s.file),'views')+'/'));assert.equal(read.text,fs.readFileSync(join(f.base.path,'expert/index.md'),'utf8'));
+  assert.deepEqual(fs.readdirSync(f.context).sort(),before);assert.deepEqual(fs.existsSync(f.home)?fs.readdirSync(f.home).sort():null,homeFiles);
+  assert.equal(fs.readdirSync(join(dirname(s.file),'views')).length,2);
+});
+test('descriptor-selected reads still reject traversal and non-Markdown paths',t=>{
+  const f=fixture(t),s=f.source();capture(s,{final:true});
+  for(const path of ['../../../../status.json','../view.json','okf-base.json']) {const r=f.cli('read',['--source',s.file,'--base','project','--path',path]);assert.equal(r.status,1);assert.equal(r.out.error.code,'E_PATH');}
+  assert.equal(fs.readdirSync(f.home).some(p=>p.startsWith('knowledge-view-')),false);
+});
+
+function descriptorCLI(f,cmd,args=[]) {
+  const r=spawnSync(process.execPath,[CLI,cmd,...args,'--json'],{cwd:f.context,env:process.env,encoding:'utf8',timeout:30000,maxBuffer:16*1024*1024});
+  return {...r,out:JSON.parse(r.stdout)};
+}
+
+test('closed proposal recovery: delivered then worker/source deleted then later closed can explicitly rejudge retained evidence',t=>{
+  const f=fixture(t,{kind:'git'});note(f);const {s,run}=prepared(f);
+  capture(s,{final:true});
+  const delivered=complete(s,run.id,judgment(f,s,run));assert.equal(delivered.receipts.project.status,'delivered');
+  assert.equal(loadStatus(s).activeRun,null);assert.deepEqual(loadStatus(s).processed,run.inputs);
+  fs.rmSync(run.worker.home,{recursive:true});fs.rmSync(f.home,{recursive:true});
+  const prs=readJSON(join(f.dir,'pr.json'));prs[0].state='CLOSED';save(join(f.dir,'pr.json'),prs);
+  const reconcile=descriptorCLI(f,'complete',['--source',s.file,'--run',run.id]);assert.equal(reconcile.status,1);assert.match(reconcile.out.error.message,/closed without merge/);
+  assert.equal(readRun(s,run.id).receipts.project.status,'rejected');
+  const automatic=descriptorCLI(f,'retry',['--source',s.file]);assert.equal(automatic.status,0);assert.equal(automatic.out.result.status,'empty','ordinary retry never automatically resubmits rejected input');
+  const recovered=descriptorCLI(f,'retry',['--source',s.file,'--run',run.id,'--rejudge']);
+  assert.equal(recovered.status,0,recovered.stdout+recovered.stderr);assert.equal(recovered.out.result.status,'ready');
+  assert.notEqual(recovered.out.result.run,run.id);
+  const result=recovered.out.result,next=readRun(s,result.run),previous=readRun(s,run.id);
+  assert.deepEqual(next.inputs,run.inputs);assert.equal(next.recoveryOf,run.id);assert.equal(next.noLaunch,true);
+  assert.deepEqual(readJSON(join(next.worker.home,'work/input.json')).inputs.map(i=>i.id),run.inputs);
+  assert.deepEqual(readJSON(join(next.worker.home,'work/previous.json')),previous);
+  assert.equal(fs.existsSync(join(next.stages.project.root,'expert/decision.md')),false,'rejected content is not restored to fresh staging');
+  const proposal=fs.readFileSync(previous.receipts.project.proposal),oldReceipt=structuredClone(previous.receipts.project);
+  const evidence=tree(join(dirname(s.file),'runs',run.id,'receipt-history'));
+  assert.ok(Object.values(evidence).map(v=>JSON.parse(Buffer.from(v,'base64'))).some(r=>r.status==='delivered'));
+  assert.ok(Object.values(evidence).map(v=>JSON.parse(Buffer.from(v,'base64'))).some(r=>r.status==='rejected'));
+  assert.equal(readJSON(join(f.dir,'pr.json')).length,1,'recovery only scaffolds; no publication without fresh judgment');
+  const repeated=descriptorCLI(f,'retry',['--source',s.file,'--run',run.id,'--rejudge']);assert.equal(repeated.status,0);assert.equal(repeated.out.result.run,next.id);assert.equal(repeated.out.result.existing,true);
+  const j=judgment(f,s,next);fs.appendFileSync(join(next.stages.project.root,'expert/decision.md'),'Fresh human-reviewed correction, not automatic replay.\n');
+  const completed=descriptorCLI(f,'complete',['--source',s.file,'--run',next.id,'--judgment',j]);assert.equal(completed.status,0,completed.stdout);assert.equal(completed.out.result.processed,true);
+  const receipt=completed.out.result.receipts.project;assert.equal(receipt.status,'delivered');assert.notEqual(receipt.branch,oldReceipt.branch);assert.notEqual(receipt.commit,oldReceipt.commit);
+  assert.equal(readJSON(join(f.dir,'pr.json')).length,2);assert.equal(git(f.repo,['rev-parse',oldReceipt.branch]),oldReceipt.commit);
+  assert.deepEqual(readRun(s,run.id),previous);assert.deepEqual(fs.readFileSync(oldReceipt.proposal),proposal);assert.deepEqual(tree(join(dirname(s.file),'runs',run.id,'receipt-history')),evidence);
+  assert.equal(loadStatus(s).activeRun,null);assert.deepEqual(loadStatus(s).processed,run.inputs);
+  assert.equal(descriptorCLI(f,'retry',['--source',s.file,'--run',run.id,'--rejudge']).out.result.run,next.id,'a settled successor is not duplicated either');
+  assert.equal(descriptorCLI(f,'complete',['--source',s.file,'--run',run.id]).out.error.code,'E_RECOVERY','old completion cannot republish a superseded proposal');
+});
+
+function closePR(f,number,state='CLOSED') {const rows=readJSON(join(f.dir,'pr.json'));rows.find(p=>p.number===number).state=state;save(join(f.dir,'pr.json'),rows);}
+function closedOriginal(t,{withSettled=false}={}) {
+  const f=fixture(t,{kind:'git'});if(withSettled) secondDirectory(f);note(f);const {s,run}=prepared(f);capture(s,{final:true});
+  complete(s,run.id,judgment(f,s,run));fs.rmSync(f.home,{recursive:true});fs.rmSync(run.worker.home,{recursive:true});closePR(f,1);
+  const recovered=retry(s,{run:run.id,rejudge:true});return {f,s,original:readRun(s,run.id),next:readRun(s,recovered.run)};
+}
+test('closed proposal recovery: partial rejudgment guards every intermediate PR, not only the original',t=>{
+  const {f,s,next}=closedOriginal(t,{withSettled:true});
+  put(join(f.dir,'gh-uncertain'),'1');assert.throws(()=>complete(s,next.id,judgment(f,s,next)),/failed/);fs.rmSync(join(f.dir,'gh-uncertain'));
+  assert.equal(readRun(s,next.id).receipts.project.status,'pr-unknown');closePR(f,2);
+  assert.deepEqual(retry(s,{rejudge:true}).settled,['secondary']);const partial=readRun(s,next.id);
+  assert.equal(partial.history.length,1);assert.equal(partial.recoveryGuards.length,2);
+  closePR(f,2,'OPEN');assert.throws(()=>complete(s,partial.id,judgment(f,s,partial)),/open\/merged PR/);
+  assert.equal(readJSON(join(f.dir,'pr.json')).length,2);assert.equal(readRun(s,next.id).judgment,undefined);
+});
+for(const boundary of ['proposal','push']) test(`closed proposal recovery: rechecks ancestor after ${boundary} before new PR creation`,t=>{
+  const {f,s,next}=closedOriginal(t);const j=judgment(f,s,next);let reopened=false;
+  const rename=fs.default.renameSync;
+  fs.default.renameSync=(from,to)=>{
+    const result=rename(from,to);
+    if(!reopened && ((boundary==='proposal' && to===join(dirname(s.file),'runs',next.id,'project-proposal.json')) || (boundary==='push' && to===join(dirname(s.file),'runs',next.id,'run.json') && readJSON(to).receipts.project?.status==='pushed'))) {closePR(f,1,'OPEN');reopened=true;}
+    return result;
+  };syncBuiltinESMExports();
+  try {assert.throws(()=>complete(s,next.id,j),/open\/merged PR/);} finally {fs.default.renameSync=rename;syncBuiltinESMExports();}
+  assert.equal(reopened,true);assert.equal(readJSON(join(f.dir,'pr.json')).length,1);
+});
+test('closed proposal recovery: abandon and ordinary rerun retain replacement lineage',t=>{
+  const f=fixture(t,{kind:'git'});note(f);const {s,run}=prepared(f);
+  put(join(f.dir,'gh-fail'),'1');assert.throws(()=>complete(s,run.id,judgment(f,s,run)),/failed/);fs.rmSync(join(f.dir,'gh-fail'));
+  assert.equal(retry(s,{rejudge:true}).status,'abandoned');assert.throws(()=>retry(s,{run:run.id,rejudge:true}),/pending-input processing/);
+  const requested=runSource(s,{manual:true,noLaunch:true}),successor=readRun(s,requested.run);
+  assert.deepEqual(successor.inputs,run.inputs);assert.equal(successor.recoveryOf,run.id);assert.equal(successor.recoveryGuards.length,1);
+  assert.equal(complete(s,successor.id,judgment(f,s,successor)).processed,true);
+  const repeated=retry(s,{run:run.id,rejudge:true});assert.equal(repeated.existing,true);assert.equal(repeated.run,successor.id);
+  assert.equal(readJSON(join(f.dir,'pr.json')).length,1);assert.equal(loadStatus(s).pendingRejudgment,undefined);
+});
+test('closed proposal recovery: another active run cannot be clobbered by historical rejudgment',t=>{
+  const f=fixture(t,{kind:'git'});note(f);const {s,run}=prepared(f);complete(s,run.id,judgment(f,s,run));
+  note(f,'later.md','Another human-accepted rationale captured after delivery.');const active=runSource(s,{manual:true,noLaunch:true});assert.notEqual(active.run,run.id);
+  closePR(f,1);assert.throws(()=>complete(s,run.id),/closed without merge/);assert.equal(loadStatus(s).activeRun,active.run);
+  fs.rmSync(run.worker.home,{recursive:true});capture(s,{final:true});fs.rmSync(f.home,{recursive:true});
+  const before=tree(join(dirname(s.file),'runs')),status=loadStatus(s),calls=fs.readFileSync(f.calls,'utf8');
+  const result=descriptorCLI(f,'retry',['--source',s.file,'--run',run.id,'--rejudge']);assert.equal(result.status,1);assert.match(result.out.error.message,/another active run/);
+  assert.deepEqual(tree(join(dirname(s.file),'runs')),before);assert.deepEqual(loadStatus(s),status);assert.equal(fs.readFileSync(f.calls,'utf8'),calls);
+});
+test('closed proposal recovery: deleted worker preserves accepted and no-change destinations, including later baseline advances',t=>{
+  const f=fixture(t,{kind:'git'});secondDirectory(f,{owned:true});
+  const raw=readJSON(f.bindingFile);raw.bases.unchanged={id:'base-3',kind:'directory',path:'unchanged-base'};save(f.bindingFile,raw);
+  const bindings=loadBindings();initBase(bindings,'unchanged',join(f.dir,'nodes.json'),undefined,{confirm:true});
+  note(f);const {s,run}=prepared(f),j=judgment(f,s,run),doc=readJSON(j);
+  judgment(f,s,run,{base:'secondary'});doc.outcomes[0].concepts.push(...readJSON(j).outcomes[0].concepts);save(j,doc);
+  capture(s,{final:true});const delivered=complete(s,run.id,j);assert.equal(delivered.receipts.secondary.status,'accepted');assert.equal(delivered.receipts.unchanged.status,'no-change');
+  fs.rmSync(f.home,{recursive:true});fs.rmSync(run.worker.home,{recursive:true});closePR(f,1);assert.throws(()=>complete(s,run.id),/closed without merge/);
+  for(const alias of ['secondary','unchanged']) fs.appendFileSync(join(bindings.bases[alias].path,'peer/log.md'),'Later accepted observation, outside recovery.\n');
+  const accepted=tree(bindings.bases.secondary.path),unchanged=tree(bindings.bases.unchanged.path),previous=readRun(s,run.id),snapshots=Object.fromEntries(Object.entries(previous.receipts).map(([a,r])=>[a,fs.readFileSync(r.proposal)]));
+  const requested=retry(s,{run:run.id,rejudge:true}),next=readRun(s,requested.run);
+  assert.deepEqual(requested.outstanding,['project']);assert.deepEqual(requested.settled,['secondary','unchanged']);
+  const map=readJSON(join(next.worker.home,'work/staging.json'));
+  for(const alias of requested.settled) {assert.equal(map[alias].settled,true);assert.equal(map[alias].root,undefined);assert.deepEqual(map[alias].owned,[]);assert.deepEqual(map[alias].receipt,previous.receipts[alias]);}
+  // A new all-drop judgment explicitly resolves the rejected destination. It
+  // neither republishes its rejected bytes nor retracts the accepted promotion.
+  const done=complete(s,next.id,judgment(f,s,next,{drop:true}));assert.equal(done.processed,true);assert.equal(done.receipts.project.status,'no-change');
+  for(const alias of requested.settled) assert.deepEqual(done.receipts[alias],previous.receipts[alias]);
+  assert.equal(readJSON(join(f.dir,'pr.json')).length,1);assert.deepEqual(tree(bindings.bases.secondary.path),accepted);assert.deepEqual(tree(bindings.bases.unchanged.path),unchanged);
+  assert.deepEqual(readRun(s,run.id),previous);for(const [a,r] of Object.entries(previous.receipts)) assert.deepEqual(fs.readFileSync(r.proposal),snapshots[a]);
+  assert.deepEqual(loadStatus(s).processed,run.inputs);assert.equal(loadStatus(s).activeRun,null);
+});
+for(const disposition of ['open','accepted','unknown','missing','wrong-head']) test(`closed proposal recovery: ${disposition} Git identity cannot authorize a duplicate`,t=>{
+  const f=fixture(t,{kind:'git'});note(f);const {s,run}=prepared(f);capture(s,{final:true});const delivered=complete(s,run.id,judgment(f,s,run));
+  fs.rmSync(run.worker.home,{recursive:true});fs.rmSync(f.home,{recursive:true});
+  if(disposition==='accepted') {
+    const r=delivered.receipts.project;git(f.repo,['merge','--ff-only',r.branch]);const rows=readJSON(join(f.dir,'pr.json'));rows[0].state='MERGED';rows[0].mergedAt='2026-09-13T12:00:00Z';rows[0].mergeCommit={oid:r.commit};save(join(f.dir,'pr.json'),rows);
+    assert.equal(complete(s,run.id).receipts.project.status,'accepted');
+  } else if(disposition==='unknown') put(join(f.dir,'gh-unavailable'),'1');
+  else if(disposition==='missing') save(join(f.dir,'pr.json'),[]);
+  else if(disposition==='wrong-head') {const rows=readJSON(join(f.dir,'pr.json'));rows[0].state='CLOSED';rows[0].headRefOid='a'.repeat(40);save(join(f.dir,'pr.json'),rows);}
+  const before=readRun(s,run.id),status=loadStatus(s),calls=fs.readFileSync(f.calls,'utf8');
+  const r=descriptorCLI(f,'retry',['--source',s.file,'--run',run.id,'--rejudge']);assert.equal(r.status,1);
+  assert.deepEqual(readRun(s,run.id),before);assert.deepEqual(loadStatus(s),status);assert.equal(fs.readFileSync(f.calls,'utf8'),calls);
+});
+test('closed proposal recovery: explicit run requires explicit rejudgment and rejects ambiguous adoption',t=>{
+  const f=fixture(t);const s=f.source();
+  for(const args of [['--run','invalid'],['--run','invalid','--rejudge','--adopt-home',f.home]]) {
+    const r=f.cli('retry',['--source',s.file,...args]);assert.equal(r.status,1);assert.equal(r.out.error.code,'E_USAGE');
+  }
+});
+test('closed proposal recovery: all-unsettled fresh baseline conflict retains processed evidence and successor history',t=>{
+  const {f,s,next,original}=closedOriginal(t);const j=judgment(f,s,next);
+  fs.appendFileSync(join(f.repo,'knowledge/peer/log.md'),'New accepted context\n');git(f.repo,['add','.']);git(f.repo,['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','new accepted context']);
+  assert.throws(()=>complete(s,next.id,j),/accepted base changed/);
+  const requested=retry(s,{rejudge:true}),fresh=readRun(s,requested.run);assert.notEqual(fresh.id,next.id);assert.deepEqual(fresh.inputs,original.inputs);assert.equal(fresh.recoveryOf,next.id);
+  assert.match(fs.readFileSync(join(fresh.stages.project.root,'peer/log.md'),'utf8'),/New accepted context/);
+  assert.equal(complete(s,fresh.id,judgment(f,s,fresh,{drop:true})).processed,true);assert.equal(readJSON(join(f.dir,'pr.json')).length,1);
+});
+for(const otherState of ['open','accepted']) test(`closed proposal recovery: settled ${otherState} Git destination stays on its original PR`,t=>{
+  const f=fixture(t,{kind:'git'}),otherRepo=join(f.dir,'other-repo');git(f.dir,['clone','-q',f.repo,otherRepo]);
+  const metaFile=join(otherRepo,'knowledge/okf-base.json'),meta=readJSON(metaFile);meta.id='base-2';save(metaFile,meta);
+  git(otherRepo,['add','.']);git(otherRepo,['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','other base identity']);
+  const raw=readJSON(f.bindingFile);raw.bases.secondary={...raw.bases.project,id:'base-2',repository:otherRepo,pr:{repository:'fixture/other'}};save(f.bindingFile,raw);
+  const decl=readJSON(join(f.soul,'okf.json'));decl.owns.push('secondary/expert');save(join(f.soul,'okf.json'),decl);
+  note(f);const {s,run}=prepared(f),j=judgment(f,s,run),doc=readJSON(j);judgment(f,s,run,{base:'secondary'});doc.outcomes[0].concepts.push(...readJSON(j).outcomes[0].concepts);save(j,doc);
+  capture(s,{final:true});let delivered=complete(s,run.id,j);
+  if(otherState==='accepted') {
+    const r=delivered.receipts.secondary;git(otherRepo,['merge','--ff-only',r.branch]);const rows=readJSON(join(f.dir,'pr.json'));rows[1].state='MERGED';rows[1].mergedAt='2026-09-13T12:00:00Z';rows[1].mergeCommit={oid:r.commit};save(join(f.dir,'pr.json'),rows);delivered=complete(s,run.id);
+  }
+  const settled=structuredClone(delivered.receipts.secondary),branches=git(otherRepo,['for-each-ref','--format=%(refname):%(objectname)','refs/heads']);
+  fs.rmSync(run.worker.home,{recursive:true});fs.rmSync(f.home,{recursive:true});closePR(f,1);assert.throws(()=>complete(s,run.id),/closed without merge/);
+  const requested=retry(s,{run:run.id,rejudge:true}),next=readRun(s,requested.run);assert.deepEqual(requested.settled,['secondary']);assert.deepEqual(requested.outstanding,['project']);
+  const result=complete(s,next.id,judgment(f,s,next,{drop:true}));assert.equal(result.processed,true);assert.deepEqual(result.receipts.secondary,settled);
+  assert.equal(readJSON(join(f.dir,'pr.json')).length,2);assert.equal(git(otherRepo,['for-each-ref','--format=%(refname):%(objectname)','refs/heads']),branches);
+});
+test('closed proposal recovery: stale completion during abandon-to-successor interval cannot block later inputs',t=>{
+  const f=fixture(t,{kind:'git'});note(f);const {s,run}=prepared(f);
+  put(join(f.dir,'gh-fail'),'1');assert.throws(()=>complete(s,run.id,judgment(f,s,run)),/failed/);fs.rmSync(join(f.dir,'gh-fail'));
+  assert.equal(retry(s,{rejudge:true}).status,'abandoned');const previous=readRun(s,run.id),status=loadStatus(s);
+  const stale=descriptorCLI(f,'complete',['--source',s.file,'--run',run.id]);assert.equal(stale.status,1);assert.match(stale.out.error.message,/abandoned run cannot complete/);
+  assert.deepEqual(readRun(s,run.id),previous);assert.deepEqual(loadStatus(s),status);assert.equal(fs.existsSync(join(f.dir,'pr.json')),false);
+  note(f,'new.md','Separate rationale learned after abandonment.');capture(s);
+  const replacement=readRun(s,runSource(s,{manual:true,noLaunch:true}).run);assert.deepEqual(replacement.inputs,run.inputs);
+  assert.equal(complete(s,replacement.id,judgment(f,s,replacement,{drop:true})).processed,true);
+  const later=readRun(s,runSource(s,{manual:true,noLaunch:true}).run);assert.equal(later.inputs.length,1);assert.ok(!run.inputs.includes(later.inputs[0]));
+  assert.equal(complete(s,later.id,judgment(f,s,later,{drop:true})).processed,true);assert.equal(loadStatus(s).activeRun,null);
+});
+test('closed proposal recovery: uncertain replacement spawn is linked once and exact-home adoption recovers without respawning',t=>{
+  const f=fixture(t,{kind:'git'});note(f);const {s,run}=prepared(f);capture(s,{final:true});complete(s,run.id,judgment(f,s,run));
+  fs.rmSync(f.home,{recursive:true});fs.rmSync(run.worker.home,{recursive:true});closePR(f,1);
+  const fake=process.env.OATS_CLI_BIN;put(fake,fs.readFileSync(fake,'utf8').replace('out({instance,home,work:', 'process.exit(48);out({instance,home,work:'));
+  assert.throws(()=>retry(s,{run:run.id,rejudge:true}),/failed/);
+  const next=readRun(s,loadStatus(s).activeRun);assert.equal(next.status,'spawn-intent');assert.equal(loadStatus(s).recoveries[run.id],next.id);
+  assert.equal(retry(s,{run:run.id,rejudge:true}).run,next.id);
+  assert.throws(()=>retry(s,{rejudge:true}),/uncertain worker/);assert.throws(()=>retry(s,{run:next.id,rejudge:true}),/unjudged worker/);
+  const home=join(f.dir,'workers',`memory-harvest-okf-${next.id}`);assert.equal(retry(s,{adoptHome:home}).status,'ready');
+  const calls=fs.readFileSync(f.calls,'utf8').trim().split('\n').map(JSON.parse);assert.equal(calls.filter(c=>c.a[0]==='spawn').length,2);
+  assert.equal(complete(s,next.id,judgment(f,s,readRun(s,next.id),{drop:true})).processed,true);assert.equal(readJSON(join(f.dir,'pr.json')).length,1);
+});
+
+function recoveryObservations(s) {return Object.values(tree(join(dirname(s.file),'recovery-observations'))).map(v=>JSON.parse(Buffer.from(v,'base64')));}
+function uncertainClosed(t,{settled=false,absent=false}={}) {
+  const f=fixture(t,{kind:'git'});if(settled) secondDirectory(f);note(f);const {s,run}=prepared(f);capture(s,{final:true});
+  const fault=join(f.dir,absent?'gh-fail':'gh-uncertain');put(fault,'1');
+  const result=descriptorCLI(f,'complete',['--source',s.file,'--run',run.id,'--judgment',judgment(f,s,run)]);
+  assert.equal(result.status,1,result.stdout);fs.rmSync(fault);
+  const previous=readRun(s,run.id);assert.equal(previous.receipts.project.status,'pr-unknown');assert.equal(previous.receipts.project.pr,undefined);
+  if(!absent) closePR(f,1);
+  fs.rmSync(f.home,{recursive:true});return {f,s,run:previous};
+}
+for(const mode of ['explicit','abandon','partial']) test(`recovery identity observation: uncertain create retains identity through ${mode} and rejects disappearance/drift`,t=>{
+  const {f,s,run}=uncertainClosed(t,{settled:mode==='partial'});
+  if(mode!=='partial') fs.rmSync(run.worker.home,{recursive:true});
+  const receipt=structuredClone(run.receipts.project),proposal=fs.readFileSync(receipt.proposal),history=tree(join(dirname(s.file),'runs',run.id,'receipt-history'));
+  const requested=descriptorCLI(f,'retry',['--source',s.file,...(mode==='explicit'?['--run',run.id]:[]),'--rejudge']);
+  assert.equal(requested.status,0,requested.stdout);
+  const observations=recoveryObservations(s);assert.equal(observations.length,1);
+  assert.equal(observations[0].pr.number,1);assert.equal(observations[0].pr.url,'https://github.com/fixture/knowledge/pull/1');
+  assert.equal(observations[0].publication.branch,receipt.branch);assert.equal(observations[0].publication.commit,receipt.commit);
+  let next;
+  if(mode==='abandon') {
+    assert.equal(requested.out.result.status,'abandoned');
+    next=readRun(s,runSource(s,{manual:true,noLaunch:true}).run);
+  } else next=readRun(s,requested.out.result.run);
+  assert.equal(next.recoveryGuards.length,1);assert.deepEqual(next.recoveryGuards[0].receipt,receipt,'observation never alters the receipt in a guard');
+  if(mode==='explicit') assert.deepEqual(readRun(s,run.id),run);
+  else if(mode==='partial') {
+    assert.deepEqual(requested.out.result.settled,['secondary']);assert.deepEqual(readJSON(next.history[0]).receipts,run.receipts);
+  } else assert.deepEqual(readRun(s,run.id).receipts,run.receipts);
+  const j=judgment(f,s,next),closed=readJSON(join(f.dir,'pr.json'))[0];
+  const states={
+    'reopened and retargeted':[{...closed,state:'OPEN',baseRefName:'release'}],
+    'closed but retargeted':[{...closed,baseRefName:'release'}],
+    reopened:[{...closed,state:'OPEN'}],
+    merged:[{...closed,state:'MERGED',mergedAt:'2026-09-13T12:00:00Z',mergeCommit:{oid:receipt.commit}}],
+    missing:[],number:[{...closed,number:2}],url:[{...closed,url:closed.url+'-different'}],
+    head:[{...closed,headRefOid:'a'.repeat(40)}],branch:[{...closed,headRefName:'changed-branch'}]
+  };
+  for(const [label,rows] of Object.entries(states)) {
+    save(join(f.dir,'pr.json'),rows);
+    const before=readRun(s,next.id),status=loadStatus(s);
+    const failed=descriptorCLI(f,'complete',['--source',s.file,'--run',next.id,'--judgment',j]);
+    assert.equal(failed.status,1,label+': '+failed.stdout);assert.match(failed.out.error.message,/identity|known PR missing|open\/merged PR/,label);
+    const queries=fs.readFileSync(join(f.dir,'gh-calls.jsonl'),'utf8').trim().split('\n').map(JSON.parse);
+    assert.deepEqual(queries.at(-1).slice(0,5),['pr','view','1','--repo','fixture/knowledge'],label);
+    assert.deepEqual(readJSON(join(f.dir,'pr.json')),rows,'no duplicate publication: '+label);
+    assert.deepEqual(readRun(s,next.id),before);assert.deepEqual(loadStatus(s),status);assert.deepEqual(recoveryObservations(s),observations);
+  }
+  save(join(f.dir,'pr.json'),[closed]);
+  const done=descriptorCLI(f,'complete',['--source',s.file,'--run',next.id,'--judgment',j]);assert.equal(done.status,0,done.stdout);
+  assert.equal(readJSON(join(f.dir,'pr.json')).filter(pr=>['OPEN','MERGED'].includes(pr.state)).length,1);
+  assert.deepEqual(fs.readFileSync(receipt.proposal),proposal);
+  const retained=tree(join(dirname(s.file),'runs',run.id,'receipt-history'));
+  for(const [path,bytes] of Object.entries(history)) assert.equal(retained[path],bytes,'historical receipt bytes unchanged');
+  if(mode!=='partial') assert.deepEqual(retained,history);
+  assert.deepEqual(loadStatus(s).processed,run.inputs);assert.equal(loadStatus(s).activeRun,null);
+});
+
+test('recovery identity observation: first discovery during an ancestor check survives failed completion and further rejudgment',t=>{
+  const {f,s,run}=uncertainClosed(t,{absent:true});fs.rmSync(run.worker.home,{recursive:true});
+  const next=readRun(s,retry(s,{run:run.id,rejudge:true}).run);assert.equal(fs.existsSync(join(dirname(s.file),'recovery-observations')),false);
+  const receipt=run.receipts.project;
+  const pr={number:1,url:'https://github.com/fixture/knowledge/pull/1',state:'CLOSED',headRefName:receipt.branch,headRefOid:receipt.commit,baseRefName:'main',mergedAt:null,mergeCommit:null};
+  save(join(f.dir,'pr.json'),[pr]);
+  const j=join(next.worker.home,'work/invalid.json');save(j,{version:1});
+  assert.throws(()=>complete(s,next.id,j),/judgment requires/);
+  assert.equal(recoveryObservations(s)[0].pr.number,1);assert.deepEqual(readRun(s,run.id),run);
+  pr.state='OPEN';pr.baseRefName='release';save(join(f.dir,'pr.json'),[pr]);
+  for(const args of [
+    ['complete',['--source',s.file,'--run',next.id,'--judgment',j]],
+    ['retry',['--source',s.file,'--run',next.id,'--rejudge']],
+    ['retry',['--source',s.file,'--rejudge']]
+  ]) {const result=descriptorCLI(f,...args);assert.equal(result.status,1,result.stdout);assert.match(result.out.error.message,/identity\/head\/base/);}
+  assert.equal(readJSON(join(f.dir,'pr.json')).length,1);assert.equal(loadStatus(s).activeRun,next.id);
+});
+
+test('recovery identity observation: failed recovery retains discovery before a later destination blocks it',t=>{
+  const {f,s,run}=uncertainClosed(t,{settled:true});fs.rmSync(run.worker.home,{recursive:true});
+  const journal=journalPath(s.bindings.bases.secondary);save(journal,{fixture:'pending publication'});
+  const attempt=()=>descriptorCLI(f,'retry',['--source',s.file,'--run',run.id,'--rejudge']);
+  let result=attempt();assert.equal(result.status,1,result.stdout);assert.match(result.out.error.message,/directory publication pending/);
+  assert.equal(recoveryObservations(s)[0].pr.number,1);assert.deepEqual(readRun(s,run.id),run);assert.equal(loadStatus(s).recoveries?.[run.id],undefined);
+  fs.rmSync(journal);const rows=readJSON(join(f.dir,'pr.json'));rows[0].state='OPEN';rows[0].baseRefName='release';save(join(f.dir,'pr.json'),rows);
+  result=attempt();assert.equal(result.status,1,result.stdout);assert.match(result.out.error.message,/identity\/head\/base/);
+  assert.deepEqual(readRun(s,run.id),run);assert.equal(loadStatus(s).activeRun,run.id);
+  // Ordinary publication retry must also use the identity learned by the failed
+  // recovery, not list the original base and create a second PR.
+  result=descriptorCLI(f,'retry',['--source',s.file]);assert.equal(result.status,1,result.stdout);
+  assert.equal(readJSON(join(f.dir,'pr.json')).length,1);
+  const queries=fs.readFileSync(join(f.dir,'gh-calls.jsonl'),'utf8').trim().split('\n').map(JSON.parse);
+  assert.equal(queries.filter(q=>q[1]==='create').length,1);assert.equal(queries.at(-1)[1],'view');
 });

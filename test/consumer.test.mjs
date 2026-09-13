@@ -11,7 +11,7 @@ const cli=process.env.OATS_OKF_CONSUMER_CLI;
 const root=fileURLToPath(new URL('../',import.meta.url));
 function write(p,text) {fs.mkdirSync(dirname(p),{recursive:true});fs.writeFileSync(p,text);}
 function json(p,v) {write(p,JSON.stringify(v,null,2)+'\n');}
-test('public CLI consumer: targeted hooks, directory worker, retirement and post-source complete dispatch',{skip:!cli},t=>{
+test('public CLI consumer: live inspection, durable external views, targeted hooks and post-source completion',{skip:!cli},t=>{
   assert.ok(cli.startsWith('/'),'OATS_OKF_CONSUMER_CLI must be absolute');
   const base=fs.realpathSync(fs.mkdtempSync(join(tmpdir(),'okf-consumer-')));
   t.after(()=>fs.rmSync(base,{recursive:true,force:true}));
@@ -38,8 +38,40 @@ test('public CLI consumer: targeted hooks, directory worker, retirement and post
   assert.equal(source.launched,false);assert.equal(fs.lstatSync(join(source.home,'work')).isSymbolicLink(),false);
   const instructions=fs.readFileSync(join(source.home,'AGENTS.md'),'utf8');assert.doesNotMatch(instructions,/run `oats okf harvest`|harvester exists/);
   const marker=JSON.parse(fs.readFileSync(join(source.home,'.okf-source.json'),'utf8'));
+  const largeState='# Working state\n'+'Live state α, not a processing receipt.\n'.repeat(5000);
+  const largeLog='# Log\n'+'Observed β limitation in the source.\n'.repeat(5000);
+  assert.ok(Buffer.byteLength(largeState)>128*1024 && Buffer.byteLength(largeState)<256*1024);
+  write(join(source.home,'STATE.md'),largeState);write(join(source.home,'log.md'),largeLog);
+  const largeNote='# Pending note\n'+'A live γ note for inspection.\n'.repeat(6000);write(join(source.home,'notes/live.md'),largeNote);
+  const inspectSource=()=>run(['okf','inspect','--source',marker.source,'--soul','source','--json']);
+  const discovered=run(['inspect','--home',source.home,'--json']);
+  assert.equal(discovered.knowledge.provider,'oats.okf');assert.equal(discovered.knowledge.operations.find(o=>o.name==='inspect').available,true);
+  for(const result of [run(['okf','inspect','--home',source.home,'--soul','source','--json']),run(['operation','run','knowledge:inspect','--home',source.home,'--json']).result,inspectSource()]) {
+    assert.equal(result.liveMemory.available,true);assert.deepEqual(result.documents.slice(0,2).map(d=>[d.label,d.kind,d.text,d.truncated]),[
+      ['Working state (STATE.md)','markdown',largeState,undefined],['Log (log.md)','markdown',largeLog,undefined]
+    ]);
+    assert.deepEqual(result.documents[2],{label:'Pending note: live.md',kind:'markdown',path:join(source.home,'notes/live.md'),text:largeNote});
+    assert.equal(result.documents.at(-1).label,'Durable processing receipts');assert.ok(result.acceptedView.project.digest);
+  }
+  // Keep source-targeted inspection usable after unexpected disappearance,
+  // without exposing a different instance subsequently occupying the name.
+  fs.unlinkSync(join(source.home,'notes/live.md'));
+  const preserved=join(base,'preserved-home');fs.renameSync(source.home,preserved);
+  let missing=inspectSource();assert.equal(missing.liveMemory.reason,'missing-home');assert.equal(missing.documents.length,1);assert.equal(missing.status.retired,false);
+  fs.mkdirSync(source.home);write(join(source.home,'STATE.md'),'DO_NOT_EXPOSE_REUSED_HOME');
+  json(join(source.home,'.okf-source.json'),{version:1,id:'00000000-0000-0000-0000-000000000000',source:marker.source});
+  const reused=inspectSource();assert.equal(reused.liveMemory.reason,'identity-mismatch');assert.equal(reused.documents.length,1);assert.doesNotMatch(JSON.stringify(reused),/DO_NOT_EXPOSE_REUSED_HOME/);
+  fs.rmSync(source.home,{recursive:true});fs.renameSync(preserved,source.home);
   write(join(source.home,'notes','decision.md'),'---\ntype: Decision\ntitle: Explicit custody\ndescription: Why explicit custody was chosen.\n---\n\nHuman accepted explicit custody to avoid silent fallback.\n');
   const retired=run(['retire',source.instance,'--json']);assert.equal(retired.removedDir,true);assert.equal(fs.existsSync(source.home),false);
+  const durable=inspectSource();assert.equal(durable.liveMemory.reason,'retired');assert.equal(durable.status.retired,true);assert.equal(durable.documents.length,1);
+  const contextFiles=fs.readdirSync(context).sort();
+  const refresh=run(['okf','refresh','--source',marker.source,'--soul','source','--json']);
+  assert.equal(dirname(refresh.path),join(dirname(marker.source),'views'));
+  assert.equal(JSON.parse(fs.readFileSync(join(refresh.path,'view.json'),'utf8')).bases.project.digest,refresh.receipts.project.digest);
+  const read=run(['okf','read','--source',marker.source,'--base','project','--path','expert/index.md','--soul','source','--json']);
+  assert.ok(read.path.startsWith(join(dirname(marker.source),'views')+'/'));assert.equal(read.text,fs.readFileSync(join(base,'accepted/expert/index.md'),'utf8'));
+  assert.deepEqual(fs.readdirSync(context).sort(),contextFiles);assert.equal(fs.existsSync(source.home),false);
   const requested=run(['okf','run-source','--source',marker.source,'--manual','--no-launch','--soul','source','--json']);
   assert.equal(requested.status,'ready');const work=join(requested.home,'work');
   assert.equal(fs.existsSync(join(requested.home,'.okf-source.json')),false);
