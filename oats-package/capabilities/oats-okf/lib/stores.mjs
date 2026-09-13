@@ -157,8 +157,17 @@ export function directoryPublish(base, proposal, receipt, persist, { afterWrite 
   });
 }
 function syncParent(p) { const fd=fs.openSync(dirname(p),'r'); try {fs.fsyncSync(fd);} finally {fs.closeSync(fd);} }
-function prRows(base,branch,cwd) {
-  const raw=exec('gh',['pr','list','--repo',base.pr.repository,'--head',branch,'--base',base.acceptedBranch,'--state','all','--json','number,url,state,headRefOid,baseRefName,headRefName,mergedAt,mergeCommit'],{cwd,env:gitEnv()});
+function prRows(base,branch,cwd,{identity,allBases=false}={}) {
+  const fields='number,url,state,headRefOid,baseRefName,headRefName,mergedAt,mergeCommit';
+  // Once observed, a PR is addressed by repository + number, never a mutable
+  // head/base filter. A missing/inaccessible identity is an error, not absence.
+  if(identity) {
+    if(!Number.isInteger(identity.number) || identity.number<1 || !/^https:\/\//.test(identity.url)) fail('E_RECOVERY','invalid recorded PR identity');
+    const pr=JSON.parse(exec('gh',['pr','view',String(identity.number),'--repo',base.pr.repository,'--json',fields],{cwd,env:gitEnv()}));
+    if(!pr || Array.isArray(pr) || typeof pr!=='object') fail('E_RECOVERY','known PR missing; reconcile custody before rejudging');
+    return [pr];
+  }
+  const raw=exec('gh',['pr','list','--repo',base.pr.repository,'--head',branch,...(allBases?[]:['--base',base.acceptedBranch]),'--state','all','--json',fields],{cwd,env:gitEnv()});
   const rows=JSON.parse(raw); if(!Array.isArray(rows)) fail('E_PR','invalid gh PR list'); return rows;
 }
 function verifyRemote(base,cwd) {
@@ -208,7 +217,7 @@ function immutableCommit(cwd,oid) {
   const header=git(cwd,['cat-file','commit',oid]).split('\n\n')[0].split('\n');
   return {tree:header.find(l=>l.startsWith('tree '))?.slice(5),parents:header.filter(l=>l.startsWith('parent ')).map(l=>l.slice(7))};
 }
-export function gitPublish(base, stage, proposal, receipt, persist) {
+export function gitPublish(base, stage, proposal, receipt, persist, {beforePublish=()=>{},prIdentity=receipt.pr}={}) {
   const cwd=stage.checkout, branch=`okf/${proposal.attempt || proposal.run}-${base.id}`;
   verifyRemote(base,cwd);
   const baseline=immutableCommit(cwd,stage.head);
@@ -219,7 +228,7 @@ export function gitPublish(base, stage, proposal, receipt, persist) {
   if(accepted!==stage.head) {
     // A known or uncertain previously created PR may be reconciled, but a
     // committed/pushed proposal alone does not authorize a NEW stale-base PR.
-    const prior=receipt.commit?prRows(base,branch,cwd).filter(p=>p.headRefOid===receipt.commit && p.headRefName===branch && p.baseRefName===base.acceptedBranch):[];
+    const prior=receipt.commit?prRows(base,branch,cwd,{identity:prIdentity}).filter(p=>p.headRefOid===receipt.commit && p.headRefName===branch && p.baseRefName===base.acceptedBranch):[];
     if(prior.length!==1) fail('E_BASELINE','accepted Git head changed before verified PR delivery; explicit rejudgment required');
   }
   if(!receipt.commit) {
@@ -228,6 +237,7 @@ export function gitPublish(base, stage, proposal, receipt, persist) {
     // are reconstructed below, not authorized by the mutable worktree.
     verifyGitScope(base,cwd,stage.head,{checkModes:false});
     if(digest(tree(stage.root,{git:base.root==='.'}))!==digest(proposal.after)) fail('E_BASELINE','staged proposal changed after validation');
+    beforePublish();
     receipt.status='commit-intent'; receipt.branch=branch; persist();
     // Never trust the model's index. Start a private publication index from
     // the frozen accepted commit, and leave the worker's own index intact.
@@ -264,6 +274,7 @@ export function gitPublish(base, stage, proposal, receipt, persist) {
   let tip=remoteTip();
   if(tip && tip!==receipt.commit) fail('E_PR','publication branch has unexpected commit; never force push');
   if(tip!==receipt.commit) {
+    beforePublish();
     receipt.status='push-intent'; persist();
     try { verifyRemote(base,cwd);git(cwd,['push','--no-follow-tags','--recurse-submodules=no','origin',`${receipt.commit}:refs/heads/${branch}`]); }
     catch(e) { receipt.status='push-unknown'; receipt.error=e.message; persist(); throw e; }
@@ -271,14 +282,15 @@ export function gitPublish(base, stage, proposal, receipt, persist) {
   }
   receipt.status='pushed'; persist();
   let rows;
-  try {rows=prRows(base,branch,cwd);} catch(e) {receipt.status='pr-unknown';receipt.error=e.message;persist();throw e;}
+  try {rows=prRows(base,branch,cwd,{identity:prIdentity});} catch(e) {receipt.status='pr-unknown';receipt.error=e.message;persist();throw e;}
   if(!rows.length) {
+    beforePublish();
     receipt.status='pr-intent'; persist();
     try { exec('gh',['pr','create','--repo',base.pr.repository,'--head',branch,'--base',base.acceptedBranch,'--title',`memory-harvest: ${proposal.run}`,'--body',`Knowledge-only proposal from durable OKF input ${proposal.run}. Review provenance and promotion judgment.`],{cwd,env:gitEnv()}); }
     catch(e) {receipt.status='pr-unknown';receipt.error=e.message;persist();throw e;}
     rows=prRows(base,branch,cwd);
   }
-  const matching=rows.filter(p=>p.headRefOid===receipt.commit && p.headRefName===branch && p.baseRefName===base.acceptedBranch && Number.isInteger(p.number) && /^https:\/\//.test(p.url));
+  const matching=rows.filter(p=>p.headRefOid===receipt.commit && p.headRefName===branch && p.baseRefName===base.acceptedBranch && Number.isInteger(p.number) && /^https:\/\//.test(p.url) && (!prIdentity || (p.number===prIdentity.number && p.url===prIdentity.url)));
   if(matching.length!==1 || rows.length!==1) {receipt.status='pr-unknown';persist();fail('E_PR','actual PR identity/head/base could not be uniquely verified');}
   const pr=matching[0];receipt.pr=pr;receipt.status='delivered';receipt.deliveredAt ||= new Date().toISOString();persist();
   if(pr.state==='CLOSED' && !pr.mergedAt) {receipt.status='rejected';persist();fail('E_PR','PR closed without merge; retained proposal requires operator review');}
@@ -301,12 +313,19 @@ export function recoveryStage(base, stage, proposal, dest) {
   return {...stage,root,checkout:dest};
 }
 
-export function mayAbandonGit(base,receipt,cwd) {
-  if(!receipt.branch) return true; // no Git side effect was authorized
-  if(git(cwd,['remote','get-url','origin'])!==base.repository) fail('E_OWNER','changed remote');
-  const rows=prRows(base,receipt.branch,cwd);
-  if(rows.some(p=>p.state!=='CLOSED' || p.mergedAt)) fail('E_RECOVERY','an open/merged PR exists; reconcile it, never create duplicate delivery');
-  // Known absent or closed-unmerged PRs may be explicitly superseded. Keep the
-  // old remote branch; this command never deletes or force-updates it.
-  return true;
+// Remote-read-only recovery gate. --repo makes this independent of any deleted
+// worker checkout. The caller durably saves first observations separately from
+// historical receipts, even if a later gate prevents recovery from completing.
+export function gitRecoveryState(base,receipt,cwd,{identity=receipt.pr,onObserve=()=>{}}={}) {
+  if(['accepted','no-change'].includes(receipt.status)) return 'settled';
+  if(!receipt.branch) return 'unresolved';
+  const rows=prRows(base,receipt.branch,cwd,{identity,allBases:true});
+  if(!rows.length) {
+    if(identity || ['delivered','rejected'].includes(receipt.status)) fail('E_RECOVERY','known PR missing; reconcile custody before rejudging');
+    return 'unresolved';
+  }
+  const pr=rows[0];
+  if(rows.length!==1 || pr.headRefOid!==receipt.commit || pr.headRefName!==receipt.branch || pr.baseRefName!==base.acceptedBranch || !Number.isInteger(pr.number) || pr.number<1 || !/^https:\/\//.test(pr.url) || [identity,receipt.pr].some(known=>known && (pr.number!==known.number || pr.url!==known.url)) || !['OPEN','CLOSED','MERGED'].includes(pr.state) || (pr.state==='MERGED' && !pr.mergedAt)) fail('E_RECOVERY','actual PR identity/head/base could not be uniquely verified for recovery');
+  onObserve(pr);
+  return pr.state==='CLOSED' && !pr.mergedAt?'unresolved':'settled';
 }

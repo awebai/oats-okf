@@ -10,7 +10,7 @@ const HELP=`oats okf inspect [--home PATH | --source FILE] [--json]
 oats okf harvest [--home PATH] [--no-launch] [--json]
 oats okf run-source --source FILE [--manual] [--no-launch] [--json]
 oats okf complete --source FILE --run ID --judgment FILE [--json]
-oats okf retry --source FILE [--rejudge | --launch | --adopt-home PATH] [--json]
+oats okf retry --source FILE [--run ID --rejudge | --rejudge | --launch | --adopt-home PATH] [--json]
 oats okf read [--home PATH | --source FILE] --base ALIAS [--path node/index.md] [--json]
 oats okf refresh [--home PATH | --source FILE] [--json]
 oats okf setup --source FILE [--enable | --disable] [--install-host] [--json]
@@ -19,6 +19,9 @@ oats okf migrate --legacy PATH --base ALIAS --node NODE --output PATH [--json]
 oats okf migrate --deliver FILE | --cutover FILE --soul-dir PATH [--json]
 oats okf migrate --source-home PATH [--json]
 oats okf unlock --lock PATH --token TOKEN [--json]
+Explicit retry --run ID requires --rejudge; add --launch only for operator-approved launch.
+Closed-PR recovery uses retained evidence and a fresh run; complete its returned ID.
+Settled destinations and old proposals/receipts are preserved; another active run blocks recovery.
 All settings use one absolute bindings-file. Setup host installation is explicit.
 `;
 const args=process.argv.slice(2);
@@ -39,7 +42,7 @@ else {
       spawn:[],retire:['home'], 'soul-scaffold':[],
       harvest:['home','no-launch'],inspect:['home','source'],
       'run-source':['source','manual','no-launch'],complete:['source','run','judgment'],
-      retry:['source','rejudge','launch','adopt-home'],read:['home','source','base','path'],refresh:['home','source'],
+      retry:['source','run','rejudge','launch','adopt-home'],read:['home','source','base','path'],refresh:['home','source'],
       setup:['source','enable','disable','install-host'],init:['base','nodes','output','confirm'],
       migrate:['source-home','legacy','base','node','output','deliver','cutover','soul-dir'],unlock:['lock','token']
     };
@@ -71,7 +74,7 @@ else {
       result=s.skipped?{status:'skipped',reason:'service'}:runSource(s,{manual:true,noLaunch:!!flags['no-launch']});
     } else if(event==='run-source') result=runSource(src(),{manual:!!flags.manual,noLaunch:!!flags['no-launch']});
     else if(event==='complete') result=complete(src(),flags.run,flags.judgment && resolve(flags.judgment));
-    else if(event==='retry') result=retry(src(),{rejudge:!!flags.rejudge,launch:!!flags.launch,adoptHome:flags['adopt-home']});
+    else if(event==='retry') result=retry(src(),{run:flags.run,rejudge:!!flags.rejudge,launch:!!flags.launch,adoptHome:flags['adopt-home']});
     else if(event==='inspect') result=inspect(src());
     else if(event==='setup') {
       const s=src();if(flags.enable && flags.disable) fail('E_USAGE','choose enable or disable');
