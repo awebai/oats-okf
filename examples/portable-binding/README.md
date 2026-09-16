@@ -1,7 +1,11 @@
 # Portable OKF binding examples
 
 These are data examples for the **planned, unreleased OATS 0.24.0 provider-binding
-protocol**. They are not commands to run against OATS 0.23.x.
+protocol**. They are not commands to run against OATS 0.23.x. The source
+`knowledge` envelope is covered by `schemas/okf-portable-declaration.schema.json`;
+the provider-owned `payload` in ProviderBinding1 is covered by
+`schemas/okf-portable-payload.schema.json`. Generic wire/lifecycle envelopes stay
+kernel-owned.
 
 - `normalize-request.json` shows decoded source, workspace, adoption and operator
   inputs. The source fixes a public store, supplies a rebindable local default,

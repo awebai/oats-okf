@@ -88,7 +88,10 @@ is an ACL. Every configured base is discoverable and readable. Missing explicit
 configuration, base metadata, ownership, or indexes fails required spawn safely;
 reads never silently bootstrap empty knowledge.
 
-JSON Schemas are in `schemas/` in the capability and repository. Runtime also
+JSON Schemas are in `schemas/` in the capability and repository. The provider-
+specific portable forms are `okf-portable-declaration.schema.json` and
+`okf-portable-payload.schema.json`; the generic ProviderBinding1 and lifecycle
+receipt envelopes remain kernel contracts. Runtime also
 checks filesystem containment, identities, overlap, base metadata and complete
 OKF conformance; schema validation alone cannot establish these properties.
 

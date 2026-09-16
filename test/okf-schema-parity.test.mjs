@@ -5,33 +5,39 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validateBindings, validateDeclaration, metadata, settings } from '../oats-package/capabilities/oats-okf/lib/config.mjs';
+import { normalizeKnowledgeDeclaration } from '../oats-package/capabilities/oats-okf/lib/portable-binding.mjs';
+import { sourceRuntimeFromKnowledgeBinding } from '../oats-package/capabilities/oats-okf/lib/binding-wire.mjs';
 const root=fileURLToPath(new URL('../',import.meta.url));
 const capability=join(root,'oats-package',JSON.parse(fs.readFileSync(join(root,'oats-package/oats-package.json'),'utf8')).capabilities[0]);
-const schemas=Object.fromEntries(['bindings','soul','base'].map(name=>[name,JSON.parse(fs.readFileSync(join(capability,`schemas/okf-${name}.schema.json`),'utf8'))]));
+const schemas=Object.fromEntries(['bindings','soul','base','portable-declaration','portable-payload'].map(name=>[name,JSON.parse(fs.readFileSync(join(capability,`schemas/okf-${name}.schema.json`),'utf8'))]));
 // Exercise the actual shipped constraints, not copies of their property lists.
 // Refuse unsupported keywords so extending a schema cannot make this checker
 // silently skip validation. Filesystem/custody checks remain runtime-only.
-function conforms(value,schema) {
-  const supported=['$schema','$id','type','required','properties','additionalProperties','propertyNames','oneOf','const','pattern','minLength','minProperties','minItems','items','uniqueItems','default','description'];
+function conforms(value,schema,rootSchema=schema) {
+  const supported=['$schema','$id','$defs','$ref','title','type','required','properties','additionalProperties','propertyNames','oneOf','const','pattern','minLength','minProperties','minItems','items','uniqueItems','default','description'];
   for(const key of Object.keys(schema)) assert.ok(supported.includes(key),`unimplemented schema keyword: ${key}`);
+  if(schema.$ref) {
+    const parts=schema.$ref.match(/^#\/\$defs\/([^/]+)$/);assert.ok(parts,`unsupported schema ref: ${schema.$ref}`);
+    return conforms(value,rootSchema.$defs[parts[1]],rootSchema);
+  }
   if(Object.hasOwn(schema,'const') && value!==schema.const) return false;
   const type=Array.isArray(value)?'array':value===null?'null':typeof value;
   if(schema.type && schema.type!==type) return false;
-  if(schema.oneOf && schema.oneOf.filter(s=>conforms(value,s)).length!==1) return false;
+  if(schema.oneOf && schema.oneOf.filter(s=>conforms(value,s,rootSchema)).length!==1) return false;
   if(type==='string' && ((schema.minLength!==undefined && value.length<schema.minLength) || (schema.pattern && !new RegExp(schema.pattern).test(value)))) return false;
   if(type==='array') {
     if(schema.minItems!==undefined && value.length<schema.minItems) return false;
     if(schema.uniqueItems && new Set(value.map(v=>JSON.stringify(v))).size!==value.length) return false;
-    if(schema.items && !value.every(v=>conforms(v,schema.items))) return false;
+    if(schema.items && !value.every(v=>conforms(v,schema.items,rootSchema))) return false;
   }
   if(type==='object') {
     if(schema.minProperties!==undefined && Object.keys(value).length<schema.minProperties) return false;
     if((schema.required || []).some(k=>!Object.hasOwn(value,k))) return false;
     for(const [key,v] of Object.entries(value)) {
-      if(schema.propertyNames && !conforms(key,schema.propertyNames)) return false;
-      if(Object.hasOwn(schema.properties || {},key)) {if(!conforms(v,schema.properties[key])) return false;}
+      if(schema.propertyNames && !conforms(key,schema.propertyNames,rootSchema)) return false;
+      if(Object.hasOwn(schema.properties || {},key)) {if(!conforms(v,schema.properties[key],rootSchema)) return false;}
       else if(schema.additionalProperties===false) return false;
-      else if(typeof schema.additionalProperties==='object' && !conforms(v,schema.additionalProperties)) return false;
+      else if(typeof schema.additionalProperties==='object' && !conforms(v,schema.additionalProperties,rootSchema)) return false;
     }
   }
   return true;
@@ -82,6 +88,19 @@ test('R1 configuration runtime and shipped schemas agree on accepted keys and ma
   expect('soul',{...soul,reads:['project/expert','project/expert']},false,'duplicate reads');
   expect('base',{...base,nodes:{}},false,'empty nodes');
 });
+test('portable declaration and effective payload schemas match provider codecs and examples',()=>{
+  const normalize=JSON.parse(fs.readFileSync(join(root,'examples/portable-binding/normalize-request.json'),'utf8'));
+  const declaration=normalize.input.declarations.find(entry=>entry.kind==='soul').value.knowledge;
+  const binding=JSON.parse(fs.readFileSync(join(root,'examples/portable-binding/provider-binding.json'),'utf8'));
+  assert.equal(conforms(declaration,schemas['portable-declaration']),true);assert.doesNotThrow(()=>normalizeKnowledgeDeclaration(declaration,{origin:normalize.input.declarations[0].origin}));
+  assert.equal(conforms(binding.payload,schemas['portable-payload']),true);assert.doesNotThrow(()=>sourceRuntimeFromKnowledgeBinding(binding));
+
+  const unknown=structuredClone(declaration);unknown.payload.typo=true;assert.equal(conforms(unknown,schemas['portable-declaration']),false);assert.throws(()=>normalizeKnowledgeDeclaration(unknown,{origin:normalize.input.declarations[0].origin}));
+  const duplicate=structuredClone(declaration);duplicate.payload.reads.push(structuredClone(duplicate.payload.reads[0]));assert.equal(conforms(duplicate,schemas['portable-declaration']),false);assert.throws(()=>normalizeKnowledgeDeclaration(duplicate,{origin:normalize.input.declarations[0].origin}));
+  const changed=structuredClone(binding);changed.payload.runtime.declaration.owner='another-owner';assert.equal(conforms(changed.payload,schemas['portable-payload']),true,'schema covers shape; cross-field identity remains runtime custody');assert.throws(()=>sourceRuntimeFromKnowledgeBinding(changed));
+  changed.payload.typo=true;assert.equal(conforms(changed.payload,schemas['portable-payload']),false);assert.throws(()=>sourceRuntimeFromKnowledgeBinding(changed));
+});
+
 test('R1 settings reject unknown properties using the exported manifest setting names',t=>{
   const prior=process.env.OATS_SETTINGS;t.after(()=>{if(prior===undefined) delete process.env.OATS_SETTINGS;else process.env.OATS_SETTINGS=prior;});
   const manifest=JSON.parse(fs.readFileSync(join(capability,'oats.json'),'utf8'));

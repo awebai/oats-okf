@@ -38,7 +38,8 @@ The suite exercises the v2 implementation, not legacy harvest-branch behavior:
   dispatch and skill closure against the enumerated payload.
 - **OKF configuration schemas:** `test/okf-schema-parity.test.mjs` compares the
   root and exported `okf-bindings`, `okf-soul` and `okf-base` schema files
-  byte-for-byte. Accepted/malformed fixtures exercise both the shipped schema
+  byte-for-byte, including the provider-owned portable declaration/effective-
+  payload schemas. Accepted/malformed examples exercise both the shipped schema
   constraints and runtime validators, including unknown properties, reserved
   identities, node references and settings. Its deliberately small schema
   checker refuses unsupported keywords. Filesystem, ownership and custody
