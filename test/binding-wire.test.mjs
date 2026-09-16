@@ -137,6 +137,7 @@ test('OATS_BINDING_FILE loads one frozen provider envelope and never falls back'
   fs.writeFileSync(snapshot,'{"schemaVersion":1,"schemaVersion":1}');assert.throws(()=>loadInvocationKnowledgeBinding({OATS_BINDING_FILE:snapshot}),{code:'E_BINDING'});
   fs.writeFileSync(snapshot,canonical(binding));const link=join(f.root,'binding-link.json');fs.symlinkSync(snapshot,link);
   assert.throws(()=>loadInvocationKnowledgeBinding({OATS_BINDING_FILE:link}),{code:'E_BINDING'});
+  fs.chmodSync(snapshot,0o644);assert.throws(()=>loadInvocationKnowledgeBinding({OATS_BINDING_FILE:snapshot}),{code:'E_BINDING'});fs.chmodSync(snapshot,0o600);
 
   const oldBinding=process.env.OATS_BINDING_FILE,oldSettings=process.env.OATS_SETTINGS;
   t.after(()=>{if(oldBinding===undefined) delete process.env.OATS_BINDING_FILE;else process.env.OATS_BINDING_FILE=oldBinding;if(oldSettings===undefined) delete process.env.OATS_SETTINGS;else process.env.OATS_SETTINGS=oldSettings;});
@@ -151,8 +152,8 @@ test('OATS_BINDING_FILE loads one frozen provider envelope and never falls back'
   fs.mkdirSync(dirname(sourceFile),{recursive:true});fs.writeFileSync(sourceFile,JSON.stringify(descriptor));
   fs.rmSync(snapshot);delete process.env.OATS_BINDING_FILE;
   assert.equal(loadSource(sourceFile).owner,'expert-owner','frozen descriptor survives transient snapshot deletion');
-  fs.writeFileSync(snapshot,canonical(binding));process.env.OATS_BINDING_FILE=snapshot;assert.equal(loadSource(sourceFile).id,id);
-  const changed=structuredClone(binding);changed.payload.execution.model='other/model';fs.writeFileSync(snapshot,canonical(changed));
+  fs.writeFileSync(snapshot,canonical(binding),{mode:0o600});process.env.OATS_BINDING_FILE=snapshot;assert.equal(loadSource(sourceFile).id,id);
+  const changed=structuredClone(binding);changed.payload.execution.model='other/model';fs.writeFileSync(snapshot,canonical(changed),{mode:0o600});
   assert.throws(()=>loadSource(sourceFile),error=>error.code==='E_SOURCE' && /differs from frozen source/.test(error.message));
 });
 

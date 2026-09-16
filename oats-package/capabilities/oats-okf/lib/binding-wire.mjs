@@ -176,11 +176,11 @@ export function readPrivateInvocationJson(file) {
   let fd;
   try {
     if(safePath(file)!==file) invocationError();
-    const before=fs.lstatSync(file);
-    if(!before.isFile() || before.nlink!==1 || before.size>BINDING_WIRE_LIMITS.bytes) invocationError();
+    const before=fs.lstatSync(file),uid=typeof process.getuid==='function'?process.getuid():null;
+    if(!before.isFile() || before.nlink!==1 || before.size>BINDING_WIRE_LIMITS.bytes || (before.mode&0o077)!==0 || (uid!==null && before.uid!==uid)) invocationError();
     fd=fs.openSync(file,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW|fs.constants.O_NONBLOCK);
     const opened=fs.fstatSync(fd);
-    if(!opened.isFile() || opened.nlink!==1 || opened.dev!==before.dev || opened.ino!==before.ino || opened.size>BINDING_WIRE_LIMITS.bytes) invocationError();
+    if(!opened.isFile() || opened.nlink!==1 || opened.dev!==before.dev || opened.ino!==before.ino || opened.size>BINDING_WIRE_LIMITS.bytes || (opened.mode&0o077)!==0 || (uid!==null && opened.uid!==uid)) invocationError();
     const bytes=Buffer.alloc(Math.min(BINDING_WIRE_LIMITS.bytes+1,opened.size+1));let length=0;
     while(length<bytes.length) {const count=fs.readSync(fd,bytes,length,bytes.length-length,null);if(!count) break;length+=count;}
     const after=fs.fstatSync(fd);
