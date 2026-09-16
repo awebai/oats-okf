@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { invocationFor, helperSubject } from './helpers/invocation-fixture.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -170,6 +171,20 @@ test('wire is strict, bounded, duplicate-safe and returns typed nonsecret errors
   const unknown=call('normalize',{...base,secret:'must-not-echo'});assert.equal(unknown.response.ok,false);assert.equal(unknown.response.error.code,'invalid-binding');assert.doesNotMatch(unknown.stdout,/must-not-echo/);
   const missing=call('normalize',request('normalize',{'bindings-file':f.descriptorFile},{declarations:f.declarations,context:{}}));assert.equal(missing.response.error.code,'needs-configuration');
   assert.throws(()=>parseBindingJson(Buffer.from('[[[[0]]]]'),{bytes:100,depth:3,entries:20}),{wireCode:'invalid-binding'});
+});
+
+test('check accepts optional full-subject invocation without changing scope checks or source receipts',t=>{
+  const {binding}=prepareBinding(t),context={kind:'standalone',key:'fixture-context'},action={kind:'hook',capability:'oats.okf',name:'soul-scaffold'};
+  const value=invocationFor({binding,context,action});
+  for(const invocation of [value,{...value,subject:helperSubject(),instance:{...value.instance,agent:'helper'}}]) {
+    const checked=call('check',request('check',{}, {binding,context,action,invocation}),{OATS_INVOCATION_CONTEXT_FILE:'/missing/must-not-read-context',OATS_SOURCE_RECEIPT_FILE:'/missing/must-not-read-source'});
+    assert.equal(checked.status,0);assert.deepEqual(checked.response.result,{status:'ready',problems:[]});
+  }
+  assert.deepEqual(call('check',request('check',{}, {binding,context,action})).response.result,{status:'ready',problems:[]});
+  for(const invocation of [null,{...value,capability:'oats.aweb'},{...value,context:{kind:'standalone',key:'wrong'}},{...value,action:{...action,name:'retire'}},{...value,subject:{kind:'helper',identity:null,alias:'helper'}},{...value,priorReceipt:'x'.repeat(128*1024)}]) {
+    const checked=call('check',request('check',{}, {binding,context,action,invocation}));
+    assert.equal(checked.status,0);assert.deepEqual(checked.response.error,{code:'invalid-binding'});
+  }
 });
 
 test('manifest owns all three binding phase commands',()=>{

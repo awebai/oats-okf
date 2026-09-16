@@ -1,4 +1,5 @@
 import { TextDecoder } from 'node:util';
+import { validateInvocationShape } from './invocation-shape.mjs';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import { fs, safePath } from './io.mjs';
@@ -206,8 +207,9 @@ function providerActionName(action) {
   return null;
 }
 function checkPhase(req) {
-  keys(req.input,['binding','context','action'],['binding','context','action'],'check input');
+  keys(req.input,['binding','context','action','invocation'],['binding','context','action'],'check input');
   if(!obj(req.input.context) || !obj(req.input.action)) wireError('invalid-binding');
+  if(Object.hasOwn(req.input,'invocation')) validateInvocationShape(req.input.invocation,{capability:CAPABILITY,context:req.input.context,action:req.input.action});
   const {runtime}=bindingPayload(req.input.binding),action=req.input.action,name=providerActionName(action);
   if(name && unsupportedCapturedCommands.has(name)) return {status:'needs-configuration',problems:[problem('provider-not-qualified')]};
   if(action.kind==='hook' && action.name==='soul-scaffold') return {status:'ready',problems:[]};
