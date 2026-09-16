@@ -220,6 +220,11 @@ candidates: summarize both accepted and rejected candidates in its reason and
 list every promoted/merged concept. `merge` has the same concept/provenance
 requirements as `promote`. A legitimate all-drop run needs no file edits.
 
+Captured worker launch currently refuses until the kernel's qualified retained-
+helper API is available. Do not bypass that gate with live spawn-by-name. The
+captured completion generator is tested for existing-run recovery; it is not
+proof of captured helper-launch readiness.
+
 Run the completion command from TASK.md exactly, substituting only your absolute
 judgment file path using proper shell quoting. A captured source command already
 contains explicit deployment/resolution selectors; a legacy descriptor may still

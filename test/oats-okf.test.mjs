@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { randomUUID } from 'node:crypto';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -13,7 +14,7 @@ const mod=p=>import(new URL(`../oats-package/capabilities/oats-okf/lib/${p}.mjs`
 const {loadBindings,metadata,validateBindings,validateDeclaration}=await mod('config');
 const {tree,save,readJSON,atomic,digest,withLock,baseLock:unused,quote,command,hash}=await mod('io');
 const {register,registerCaptured,capture,input,loadStatus,loadSource,saveStatus,views,scheduleSource}=await mod('sources');
-const {runSource,readRun,complete,retry}=await mod('worker');
+const {runSource,readRun,complete,retry,completionArgv,completionCommand}=await mod('worker');
 const {initBase,migrate,deliverMigration,cutoverMigration}=await mod('migration');
 const {stageBase,baseLock,journalPath,directoryPublish}=await mod('stores');
 const {inspect:inspectSource,capturedAuthority}=await mod('inspection');
@@ -36,6 +37,14 @@ fs.appendFileSync(process.env.FIXTURE_CALLS,JSON.stringify({a,cwd:process.cwd(),
 const val=k=>a[a.indexOf(k)+1];const out=result=>console.log(JSON.stringify({schemaVersion:1,ok:true,result}));
 if(a[0]==='capture') {const p=join(root,'capture.json');console.log(fs.existsSync(p)?fs.readFileSync(p,'utf8'):JSON.stringify({status:'complete',complete:true,sessions:[],ignored:0}));}
 else if(a[0]==='recall') {const all=JSON.parse(fs.readFileSync(join(root,'turns.json')));const start=a.includes('--after')?all.findIndex(t=>t.id===val('--after'))+1:0;const end=all.findIndex(t=>t.id===val('--until'))+1;const turns=all.slice(start,Math.min(end,start+Number(val('--limit'))));const result=a.includes('--ids-only')?turns.map(({text,...t})=>({...t,bytes:Buffer.byteLength(JSON.stringify({...t,text},null,2))+8})):turns;const fault=join(root,'recall-fail');if(!a.includes('--ids-only') && fs.existsSync(fault) && turns.some(t=>t.id===fs.readFileSync(fault,'utf8'))) process.exit(47);console.log(JSON.stringify({turns:result,remaining:end-start-turns.length}));}
+else if(a[0]==='--deployment') {
+  const target=JSON.parse(fs.readFileSync(join(root,'captured-dispatch.json'),'utf8'));
+  const inherited=['OATS_DEPLOYMENT','OATS_RESOLUTION','OATS_BINDING_FILE','OATS_SOURCE_RECEIPT_FILE','OATS_INVOCATION_CONTEXT_FILE'];
+  if(a[1]!==target.deployment || a[2]!=='--resolution' || a[3]!==target.resolution || a[4]!=='okf' || a[5]!=='complete' || a.includes('--soul') || inherited.some(key=>process.env[key]!==undefined)) process.exit(93);
+  const {spawnSync}=await import('node:child_process');
+  const r=spawnSync(process.execPath,[target.cli,...a.slice(5)],{env:{...process.env,OATS_BINDING_FILE:target.bindingFile},encoding:'utf8'});
+  process.stdout.write(r.stdout);process.stderr.write(r.stderr);process.exit(r.status ?? 94);
+}
 else if(a[0]==='spawn') {const instance='memory-harvest-'+val('--purpose'),home=join(root,'workers',instance);fs.mkdirSync(join(home,'work'),{recursive:true});fs.writeFileSync(join(home,'instance.json'),JSON.stringify({instance,agent:'memory-harvest',work:'directory',repo:val('--repo'),kind:'capability',launched:false}));fs.copyFileSync(val('--task-file'),join(home,'TASK.md'));out({instance,home,work:'directory',launched:false});}
 else if(a[0]==='session') {console.error('NO MODEL SESSIONS IN FIXTURES');process.exit(91);}
 else if(a[0]==='schedule') {
@@ -230,10 +239,29 @@ test('captured registration freezes qualified identity, binding and v2 schedule 
   note(f);const retired=f.cli('retire',[],capturedEnv);assert.equal(retired.status,0,retired.stdout);assert.equal(retired.out.meta.retired,true,'captured retire uses the exact registered source');
   fs.rmSync(f.home,{recursive:true});fs.rmSync(f.soul,{recursive:true});fs.rmSync(f.bindingFile);process.env.OATS_SETTINGS=JSON.stringify({'bindings-file':join(f.dir,'poison.json'),'state-dir':join(f.dir,'poison-state')});
   const frozen=loadSource(s.file);assert.equal(frozen.id,s.id);assert.equal(fs.existsSync(join(f.dir,'poison-state')),false);assert.deepEqual(inspectSource(frozen).authority,inspected.out.result.authority,'source deletion and poisoned config do not alter captured authority');
-  const run=readRun(frozen,runSource(frozen,{manual:true,noLaunch:true}).run);assert.equal(complete(frozen,run.id,judgment(f,frozen,run,{drop:true})).processed,true);
+  const before=tree(f.bindings.stateDir),beforeCalls=fs.readFileSync(f.calls);
+  assert.throws(()=>runSource(frozen,{manual:true,noLaunch:true}),{code:'E_CAPTURED_HELPER'});
+  assert.deepEqual(tree(f.bindings.stateDir),before);assert.deepEqual(fs.readFileSync(f.calls),beforeCalls,'captured source cannot reach legacy worker spawn');
   schedules[`okf-${s.id}`]={...spec,argv:['oats','poison'],attempt:{executionId:'retained-attempt'}};save(join(f.dir,'schedules.json'),schedules);
   assert.throws(()=>scheduleSource(s),/definition differs/);assert.deepEqual(readJSON(join(f.dir,'schedules.json'))[`okf-${s.id}`].attempt,{executionId:'retained-attempt'});
 });
+test('captured completion command binds saved selectors and public provider completion after source deletion',t=>{
+  const f=fixture(t),receipt=capturedReceipt(f),s=registerCaptured(f.home,receipt);note(f);capture(s,{final:true});
+  const id=randomUUID(),home=join(f.dir,'retained-worker'),alias=f.base.id;fs.mkdirSync(join(home,'work'),{recursive:true});
+  save(join(home,'instance.json'),{instance:'retained-worker',agent:'memory-harvest',work:'directory'});
+  const staged=stageBase(f.base,join(home,'work','base')),run={version:1,id,source:s.id,created:'2026-09-16T00:00:00.000Z',inputs:loadStatus(s).captured.inputs,status:'ready',worker:{instance:'retained-worker',home},stages:{[alias]:{root:staged.root,baseline:staged.files,digest:staged.digest,owned:['expert']}},receipts:{}};
+  save(join(dirname(s.file),'runs',id,'run.json'),run);const status=loadStatus(s);status.activeRun=id;saveStatus(s,status);
+  const judgmentFile=judgment(f,s,run,{drop:true,base:alias}),snapshot=join(f.dir,'completion-binding.json');save(snapshot,receipt.binding);
+  save(join(f.dir,'captured-dispatch.json'),{deployment:s.executionBinding.deployment,resolution:s.executionBinding.resolution.id,cli:CLI,bindingFile:snapshot});
+  const argv=completionArgv(s,id,judgmentFile);assert.deepEqual(argv.slice(0,4),['--deployment',f.context,'--resolution',receipt.executionBinding.resolution.id]);assert.equal(argv.includes('--soul'),false);
+  fs.rmSync(f.home,{recursive:true});fs.rmSync(f.soul,{recursive:true});fs.rmSync(f.bindingFile);
+  fs.symlinkSync('/usr/bin/env',join(f.dir,'bin','env'));
+  const env={...process.env,OATS_DEPLOYMENT:'/poison',OATS_RESOLUTION:'poison',OATS_BINDING_FILE:'/poison',OATS_SOURCE_RECEIPT_FILE:'/poison',OATS_INVOCATION_CONTEXT_FILE:'/poison'};
+  const result=spawnSync('/bin/sh',['-c',completionCommand(s,id,judgmentFile)],{env,encoding:'utf8'});
+  assert.equal(result.status,0,result.stderr+result.stdout);assert.equal(JSON.parse(result.stdout).result.processed,true);assert.equal(loadStatus(s).processed.length,run.inputs.length);
+  assert.equal(fs.existsSync(join(f.dir,'workers')),false,'no fake legacy spawn occurred; this proves public provider completion, not a qualified kernel helper launch');
+});
+
 test('captured helper skips ownership and legacy owner evidence requires explicit migration',t=>{
   const helper=fixture(t),helperReceipt=capturedReceipt(helper,{kind:'helper'}),bindingFile=join(helper.dir,'helper-binding.json'),receiptFile=join(helper.dir,'helper-receipt.json');save(bindingFile,helperReceipt.binding);save(receiptFile,helperReceipt);
   const helperSpawn=helper.cli('spawn',[],{OATS_BINDING_FILE:bindingFile,OATS_SOURCE_RECEIPT_FILE:receiptFile});assert.equal(helperSpawn.status,0);assert.equal(helperSpawn.out.meta.memory,'none');assert.equal(fs.existsSync(join(helper.bindings.stateDir,'owners.json')),false);

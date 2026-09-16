@@ -211,7 +211,7 @@ function checkPhase(req) {
   if(!obj(req.input.context) || !obj(req.input.action)) wireError('invalid-binding');
   if(Object.hasOwn(req.input,'invocation')) validateInvocationShape(req.input.invocation,{capability:CAPABILITY,context:req.input.context,action:req.input.action});
   const {runtime}=bindingPayload(req.input.binding),action=req.input.action,name=providerActionName(action);
-  if(name && unsupportedCapturedCommands.has(name)) return {status:'needs-configuration',problems:[problem('provider-not-qualified')]};
+  if(name && (unsupportedCapturedCommands.has(name) || name==='run-source' || name==='harvest')) return {status:'needs-configuration',problems:[problem('provider-not-qualified')]};
   if(action.kind==='hook' && action.name==='soul-scaffold') return {status:'ready',problems:[]};
   let bindings;try{bindings=validateBindings(runtime.bindings,runtime.descriptorFile);}catch{return {status:'needs-configuration',problems:[problem('needs-configuration')]};}
   const accepted={},gitBases=Object.entries(bindings.bases).filter(([,base])=>base.kind==='git');

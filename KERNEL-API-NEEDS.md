@@ -28,8 +28,16 @@ The public dispatcher supplies the absolute `OATS_CLI_BIN`, effective
 authored CLI path, invokes it with argv-safe subprocesses, and clears source
 identity from child command environments. It does not discover a kernel root,
 search PATH for oats, call `oats root`, or import private kernel modules.
-Generated completion commands quote every shell argument. Worker task files are
-owner-only temporary files removed on every outcome.
+Generated completion commands quote every shell argument and explicitly scrub
+inherited selectors/snapshots. Captured completion uses saved source execution
+selectors without --soul. Worker task files are owner-only temporary files.
+
+**Open captured-worker gate:** the legacy spawn-by-name CLI below is not a
+qualified captured-helper interface. Captured run-source/harvest and
+worker-creating retry/rejudge/relaunch paths refuse before locks, run intent,
+helper staging or spawn effects until the generic API supplies exact retained
+helper/software selection. Existing source-free data and legacy delivery tests
+are not proof of captured helper launch. No ambient helper fallback is allowed.
 
 ## Required public surfaces
 

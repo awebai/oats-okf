@@ -194,9 +194,13 @@ messaging was disabled; a missing value is unknown and refuses.
 New captured persistent sources receive a schedule with
 `definitionVersion: 2`, `recurrencePolicy: "capture"`, explicit saved
 `--deployment`/`--resolution` selectors and `--json`. It omits legacy `--soul`
-selection. Subsequent read, refresh, inspect, harvest, run-source, complete and
-retry use the exact frozen descriptor and existing view/worker/publication
-machinery after source/config deletion. Captured `setup`, `init`, `migrate` and
+selection. Read, refresh, inspect and existing-run completion use the exact frozen
+descriptor after source/config deletion. **Captured worker launch is gated:**
+run-source/harvest and worker-creating/relaunch/rejudge retry paths refuse until a
+qualified generic captured-helper API can carry retained helper/software authority.
+They never fall back to live `memory-harvest` selection, including --no-launch.
+The data-custody tests alone are not captured helper-dispatch qualification.
+Captured `setup`, `init`, `migrate` and
 `unlock` deliberately return non-ready/refuse before mutation; run those only as
 separate explicit operator administration on the legacy/provisioning boundary.
 
@@ -394,7 +398,10 @@ oats okf run-source --source /absolute/state/sources/UUID/source.json --manual -
 
 ## Independent worker and completion
 
-Workers spawn through the supported CLI with `--work directory --no-launch`:
+Legacy-source workers spawn through the CLI with `--work directory --no-launch`.
+Captured-source worker creation remains refused pending the qualified retained
+helper API; no model or scaffold may use legacy helper lookup for captured work.
+For the existing legacy worker path:
 source work modes and branches never determine custody. Each worker stages
 under its OWN `./work/bases/<alias>/` (Git roots may be nested beneath that
 checkout), separate from `input.json`, `staging.json` and `judgment.json`. Only
@@ -420,7 +427,12 @@ IDs). Optional explicit `removals: [{base,path,reason}]` records deleted files;
 unexplained deletions are refused. Do not edit source notes or soul skills.
 
 The generated completion command safely quotes executable and all paths and
-clears home identity before source-targeted dispatch. It validates touched scope,
+clears inherited home identity, deployment/resolution and snapshot pointers before
+source-targeted dispatch. Captured completion argv carries the source's saved
+--deployment/--resolution and omits --soul; legacy descriptors keep their literal
+--soul route. Public-provider completion tests execute that generated command
+through a selector-checking fixture dispatcher, not a qualified kernel helper
+launch. It validates touched scope,
 base navigation/history, every staged base, accepted baseline, concept provenance,
 explicit judgment and common credential-shaped outputs. Classification and the
 broader secret/verbatim exclusion still require the worker's judgment: pattern
