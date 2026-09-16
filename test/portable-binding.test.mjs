@@ -51,6 +51,20 @@ test('workspace/adoption/operator bindings become candidates for the shared reso
   assert.equal(Object.hasOwn(workspace[0],'selected'),false,'provider emits candidates, not a hidden precedence decision');
 });
 
+test('dotted store aliases use a lossless key for default and owned destination rebind',()=>{
+  for(const alias of ['team.kb','team..kb','team.kb.']) {
+    const a=directory('source-default','/srv/a'),b=directory('operator-target','/srv/b');
+    const model=normalizeKnowledgeDeclaration(declaration({owner:'expert-owner',stores:{[alias]:{default:a}},reads:[],owns:[{node:'expert',destination:alias}]}),{origin:origin()});
+    const [candidate]=normalizeKnowledgeBindingCandidates({bindings:{[`stores.${alias}`]:b},kind:'operator',origin:origin('/operator')});
+    assert.equal(candidate.key,storeChoiceKey(alias));assert.equal(candidate.key,model.candidates[0].key);
+    const bound=bindKnowledgeDomain({model,choices:{[candidate.key]:{value:candidate.value,selectedBy:candidate.origin}}});
+    assert.deepEqual(bound.payload.owns,[{store:'operator-target',node:'expert',steward:'expert-owner'}]);assert.equal(bound.payload.stores['operator-target'].path,'/srv/b');
+    assert.equal(Object.hasOwn(bound.payload.stores,'source-default'),false);
+  }
+  assert.equal(bindingChoiceKey('write.default'),'/bindings/knowledge/write/default');
+  assert.notEqual(bindingChoiceKey('stores.team.kb'),'/bindings/knowledge/stores/team/kb');
+});
+
 test('binding renders stable store identities, multiple stores and explicit write routing',()=>{
   const model=normalizeKnowledgeDeclaration(declaration({owner:'expert-owner',stores:{
     public:{fixed:git('public-base')}, local:{default:directory('local-base','/srv/knowledge')}, adopted:{inherit:'write.default'},

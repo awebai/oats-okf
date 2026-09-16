@@ -35,6 +35,13 @@ workspace/adoption/operator binding map into candidates for that same resolver.
 The caller supplies origins; this module neither parses YAML nor fabricates source
 provenance.
 
+Binding-key grammar reserves `stores.<alias>` for one complete store alias:
+`stores.team.kb` addresses `/bindings/knowledge/stores/team.kb`, exactly the same
+field emitted by a declaration whose alias is `team.kb`. Every dot after the
+`stores.` prefix is literal, including repeated/trailing dots allowed by the
+identifier schema. Other dotted binding names (for example `write.default`)
+retain their path-segment grammar. No fuzzy matching or extra resolver is used.
+
 `bindKnowledgeDomain()` consumes the shared resolver's selected choices. It emits
 nonsecret provider data with concrete stores keyed by stable store ID, store-ID
 qualified reads, write destinations carrying the stable steward ID, and retained

@@ -17,10 +17,17 @@ function keys(value,allowed,required,label) {
   return value;
 }
 function bindingKey(value) {
-  if(typeof value!=='string' || !value.split('.').length || value.split('.').some(part=>{try{identifier(part);return false;}catch{return true;}})) fail('E_CONFIG',`invalid knowledge binding key: ${value}`);
+  if(typeof value!=='string') fail('E_CONFIG','invalid knowledge binding key');
+  // Reserved stores.<alias> addresses ONE legal alias; dots inside that suffix
+  // are literal identity characters, never another hierarchy or fuzzy match.
+  const parts=value.startsWith('stores.')?[value.slice(7)]:value.split('.');
+  if(parts.some(part=>{try{identifier(part);return false;}catch{return true;}})) fail('E_CONFIG','invalid knowledge binding key');
   return value;
 }
-export const bindingChoiceKey=value=>`/bindings/knowledge/${bindingKey(value).split('.').map(pointerKey).join('/')}`;
+export const bindingChoiceKey=value=>{
+  bindingKey(value);
+  return value.startsWith('stores.')?storeChoiceKey(value.slice(7)):`/bindings/knowledge/${value.split('.').map(pointerKey).join('/')}`;
+};
 export const storeChoiceKey=alias=>`/bindings/knowledge/stores/${pointerKey(identifier(alias))}`;
 function originAt({origins={},origin=null,pointer},suffix,kind) {
   const at=`${pointer}${suffix}`,specific=origins[at],found=specific ?? origin;
