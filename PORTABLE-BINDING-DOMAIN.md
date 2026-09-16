@@ -76,5 +76,8 @@ then binds only the selected choices.
 
 The binding payload captures the nonsecret domain and rendered runtime documents.
 Check validates that immutable relationship before read-only custody and accepted-
-base checks. It never reloads source/config YAML or JSON, initializes a base,
-enrolls a provider, starts a worker, or publishes.
+base checks. Directory bases are read in place. Git bases use the existing
+`stageBase` path in a fresh private OS-temporary checkout, which is removed on
+success and ordinary failure; accepted repositories/remotes are never mutated.
+Check never reloads source/config YAML or JSON, initializes a base, enrolls a
+provider, starts a worker, creates a PR, or publishes.

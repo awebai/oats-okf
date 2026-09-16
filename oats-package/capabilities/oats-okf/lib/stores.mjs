@@ -23,6 +23,7 @@ function clone(base, dest) {
   git(dest,['fetch','origin',`refs/heads/${base.acceptedBranch}`]);
   const head=git(dest,['rev-parse','FETCH_HEAD']);
   git(dest,['checkout','--detach',head]);
+  verifyRemote(base,dest);
   // Reject a linked bundle even if Git happily checked the link out.
   safePath(join(dest,base.root));
   return head;

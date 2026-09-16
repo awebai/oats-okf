@@ -16,8 +16,8 @@ const CLI=join(ROOT,'oats-package/capabilities/oats-okf/bin/oats-okf-binding.mjs
 const contract='oats.okf.locations';
 const origin=(kind,pointer)=>({kind,document:{kind:'source',source:'git:https://example.test/source.git',revision:'a'.repeat(40),path:'soul.yaml',integrity:{format:'oats.bytes.v1',value:`sha256-${'b'.repeat(64)}`}},pointer});
 const locator=(id,path)=>({id,kind:'directory',path:`path:${path}`});
-const call=(phase,request)=>{
-  const result=spawnSync(process.execPath,[CLI,phase],{input:Buffer.isBuffer(request)?request:JSON.stringify(request),encoding:Buffer.isBuffer(request)?undefined:'utf8',maxBuffer:2*1024*1024});
+const call=(phase,request,env={})=>{
+  const result=spawnSync(process.execPath,[CLI,phase],{input:Buffer.isBuffer(request)?request:JSON.stringify(request),encoding:Buffer.isBuffer(request)?undefined:'utf8',maxBuffer:2*1024*1024,env:{...process.env,...env}});
   const stdout=Buffer.isBuffer(result.stdout)?result.stdout.toString('utf8'):result.stdout;
   return {...result,stdout,response:JSON.parse(stdout)};
 };
@@ -69,7 +69,7 @@ test('normalize preserves separate authority candidates and bind emits the captu
   assert.deepEqual(bound.payload.runtime.declaration,{version:1,owner:'expert-owner',reads:['reference-base/reference'],owns:['private-base/expert']});
 });
 
-test('check validates real directory acceptance read-only and refuses unsupported Git qualification',t=>{
+test('check validates real directory and private-staged Git acceptance read-only',t=>{
   const {f,binding}=prepareBinding(t),bindings=validateBindings(binding.payload.runtime.bindings,f.descriptorFile);
   for(const [alias,nodes] of [['reference-base',{reference:{path:'reference',owner:'reference-owner'}}],['private-base',{expert:{path:'expert',owner:'expert-owner'}}]]) {
     const file=join(f.root,`${alias}-nodes.json`);fs.writeFileSync(file,JSON.stringify(nodes));initBase(bindings,alias,file,undefined,{confirm:true});
@@ -79,10 +79,28 @@ test('check validates real directory acceptance read-only and refuses unsupporte
   assert.equal(checked.status,0);assert.deepEqual(checked.response.result,{status:'ready',problems:[]});
   assert.deepEqual({read:tree(f.readPath),write:tree(f.writePath)},before,'check changes no accepted bytes');assert.equal(fs.existsSync(f.stateDir),false);
 
-  const gitBinding=structuredClone(binding);gitBinding.payload.stores['reference-base']={id:'reference-base',kind:'git',repository:'https://example.test/knowledge.git',root:'knowledge',acceptedBranch:'main',pr:{repository:'example/knowledge'}};
+  const git=(args,cwd=f.readPath)=>{const result=spawnSync('git',['-C',cwd,...args],{encoding:'utf8'});assert.equal(result.status,0,result.stderr);return result.stdout.trim();};
+  git(['init','-q','--initial-branch=main']);git(['add','.']);git(['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','accepted']);
+  const gitHome=join(f.root,'git-home'),scratch=join(f.root,'scratch'),bin=join(f.root,'bin');fs.mkdirSync(gitHome);fs.mkdirSync(scratch);fs.mkdirSync(bin);
+  const ssh=join(bin,'ssh');fs.writeFileSync(ssh,`#!/usr/bin/env node\nconst {spawnSync}=require('node:child_process');\nconst result=spawnSync('git',['upload-pack',process.env.FIXTURE_GIT_REPO],{stdio:'inherit'});\nprocess.exit(result.status ?? 1);\n`);fs.chmodSync(ssh,0o755);
+  const repository='git@example.test:knowledge.git';
+  const gitBinding=structuredClone(binding);gitBinding.payload.stores['reference-base']={id:'reference-base',kind:'git',repository,root:'.',acceptedBranch:'main',pr:{repository:'example/knowledge'}};
   gitBinding.payload.runtime.bindings.bases['reference-base']=gitBinding.payload.stores['reference-base'];
-  const unavailable=call('check',request('check',{}, {binding:gitBinding,context:{},action:{kind:'spawn'}}));
-  assert.equal(unavailable.response.ok,true);assert.deepEqual(unavailable.response.result,{status:'unavailable',problems:[{code:'provider-not-qualified'}]});
+  const remoteBefore=git(['rev-parse','HEAD']);
+  const transport={HOME:gitHome,TMPDIR:scratch,PATH:`${bin}:${process.env.PATH}`,FIXTURE_GIT_REPO:f.readPath};
+  const gitChecked=call('check',request('check',{}, {binding:gitBinding,context:{},action:{kind:'spawn'}}),transport);
+  assert.equal(gitChecked.status,0,gitChecked.stderr);assert.deepEqual(gitChecked.response.result,{status:'ready',problems:[]});
+  assert.equal(git(['rev-parse','HEAD']),remoteBefore);assert.deepEqual(fs.readdirSync(scratch),[],'private Git staging is removed after check');
+  const wrongOwner=structuredClone(gitBinding);wrongOwner.payload.owns.push({store:'reference-base',node:'reference',steward:'expert-owner'});wrongOwner.payload.runtime.declaration.owns.push('reference-base/reference');
+  const refused=call('check',request('check',{}, {binding:wrongOwner,context:{},action:{kind:'spawn'}}),transport);
+  assert.deepEqual(refused.response.result,{status:'needs-configuration',problems:[{code:'provider-not-qualified'}]});
+  assert.equal(git(['rev-parse','HEAD']),remoteBefore);assert.deepEqual(fs.readdirSync(scratch),[],'failed Git qualification also removes private staging');
+
+  const rewriteHome=join(f.root,'rewrite-home');fs.mkdirSync(rewriteHome);fs.writeFileSync(join(rewriteHome,'.gitconfig'),`[url "file://${f.readPath}"]\n\tinsteadOf = https://example.test/knowledge.git\n`);
+  const rewritten=structuredClone(binding);rewritten.payload.stores['reference-base']={...gitBinding.payload.stores['reference-base'],repository:'https://example.test/knowledge.git'};rewritten.payload.runtime.bindings.bases['reference-base']=rewritten.payload.stores['reference-base'];
+  const redirected=call('check',request('check',{}, {binding:rewritten,context:{},action:{kind:'spawn'}}),{HOME:rewriteHome,TMPDIR:scratch});
+  assert.deepEqual(redirected.response.result,{status:'needs-configuration',problems:[{code:'provider-not-qualified'}]},'rewritten effective Git origins do not qualify');
+  assert.deepEqual(fs.readdirSync(scratch),[]);
 });
 
 test('wire is strict, bounded, duplicate-safe and returns typed nonsecret errors',t=>{

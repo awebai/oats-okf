@@ -1,5 +1,7 @@
 import { TextDecoder } from 'node:util';
-import { isAbsolute, resolve } from 'node:path';
+import { tmpdir } from 'node:os';
+import { isAbsolute, join, resolve } from 'node:path';
+import { fs } from './io.mjs';
 import {
   KNOWLEDGE_CONTRACT,
   KNOWLEDGE_CONTRACT_VERSION,
@@ -10,7 +12,7 @@ import {
   renderKnowledgeRuntime,
 } from './portable-binding.mjs';
 import { validateBindings } from './config.mjs';
-import { validateBase } from './stores.mjs';
+import { stageBase, validateBase } from './stores.mjs';
 
 export const BINDING_WIRE_LIMITS=Object.freeze({bytes:1024*1024,depth:32,entries:16384});
 const CAPABILITY='oats.okf',SLOT='knowledge';
@@ -164,14 +166,19 @@ function checkPhase(req) {
   if(!obj(req.input.context) || !obj(req.input.action)) wireError('invalid-binding');
   const {runtime}=bindingPayload(req.input.binding);
   let bindings;try{bindings=validateBindings(runtime.bindings,runtime.descriptorFile);}catch{return {status:'needs-configuration',problems:[problem('needs-configuration')]};}
-  if(Object.values(bindings.bases).some(base=>base.kind!=='directory')) return {status:'unavailable',problems:[problem('provider-not-qualified')]};
-  const accepted={};
+  const accepted={},gitBases=Object.entries(bindings.bases).filter(([,base])=>base.kind==='git');
+  if(gitBases.length>64) return {status:'unavailable',problems:[problem('provider-not-qualified')]};
+  let scratch=null;
   try {
-    for(const [alias,base] of Object.entries(bindings.bases)) accepted[alias]=validateBase(base.path,base).meta;
+    if(gitBases.length) scratch=fs.mkdtempSync(join(fs.realpathSync(tmpdir()),'oats-okf-binding-check-'));
+    for(const [alias,base] of Object.entries(bindings.bases)) accepted[alias]=(base.kind==='directory'?validateBase(base.path,base):stageBase(base,join(scratch,alias))).meta;
     checkKnowledgeRuntime({rendered:runtime,accepted});
   } catch(error) {
-    if(['E_OWNER','E_BASE','E_VALIDATION','E_DIRECTORY_GIT'].includes(error.code)) return {status:'needs-configuration',problems:[problem('provider-not-qualified')]};
+    if(error.code==='E_COMMAND') return {status:'unavailable',problems:[problem('provider-unavailable')]};
+    if(['E_OWNER','E_BASE','E_VALIDATION','E_DIRECTORY_GIT','E_CONFIRM'].includes(error.code)) return {status:'needs-configuration',problems:[problem('provider-not-qualified')]};
     return {status:'unavailable',problems:[problem('provider-unavailable')]};
+  } finally {
+    if(scratch) fs.rmSync(scratch,{recursive:true,force:true});
   }
   return {status:'ready',problems:[]};
 }
