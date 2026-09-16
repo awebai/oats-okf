@@ -341,6 +341,15 @@ inactive timer is not claimed active; scheduler lookup failures are diagnostic,
 not a reason to hide durable receipts. `status.lastCapture` describes the last
 capture attempt, not current source availability.
 
+The additive `authority` summary reports `registration` as `captured`, `legacy`,
+or `invalid`; captured records include only their exact qualified source identity
+and execution binding. Responsible-human state is `disabled`, `specified`, or
+`unknown`—the summary never exposes the human reference itself. Legacy/invalid
+records report unknown capture/migration status and never synthesize identity
+from aliases, paths or current configuration. Full provider bindings,
+provenance, credentials, launch environment and transient snapshot paths are not
+inspection output.
+
 For a **live matching source only**, inspect also restores the v1 labeled
 Markdown `documents`: `Working state (STATE.md)`, `Log (log.md)`, and sorted
 `Pending note: <relative-name>` entries under `notes/` (including nested notes).

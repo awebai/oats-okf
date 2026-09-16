@@ -16,6 +16,7 @@ const {register,registerCaptured,capture,input,loadStatus,loadSource,saveStatus,
 const {runSource,readRun,complete,retry}=await mod('worker');
 const {initBase,migrate,deliverMigration,cutoverMigration}=await mod('migration');
 const {stageBase,baseLock,journalPath,directoryPublish}=await mod('stores');
+const {inspect:inspectSource,capturedAuthority}=await mod('inspection');
 function put(p,text) {fs.mkdirSync(dirname(p),{recursive:true});fs.writeFileSync(p,text);}
 const hostPath=process.env.PATH;
 function fixture(t,{kind='directory',root='knowledge',nodes={expert:{path:'expert',owner:'owner-1'},peer:{path:'peer',owner:'owner-2'}}}={}) {
@@ -192,6 +193,20 @@ test('no-launch sources and service workers never trigger scheduled model launch
   const service=f.cli('spawn',[],{OATS_KIND:'capability',OATS_SETTINGS:'{}',OATS_HOME:serviceHome,OATS_INSTANCE_HOME:serviceHome});assert.equal(service.out.meta.memory,'none');assert.equal(fs.readFileSync(f.calls,'utf8'),before);
   capture(s,{final:true});assert.equal(loadStatus(s).auto,false);assert.equal(runSource(s).status,'disabled');
 });
+test('inspect authority distinguishes legacy, invalid, disabled and specified without exposing opaque binding',()=>{
+  assert.deepEqual(capturedAuthority({}),{schemaVersion:1,registration:'legacy',capture:'unknown',migrationRequired:true,responsibleHuman:{status:'unknown'}});
+  assert.deepEqual(capturedAuthority({registration:{schemaVersion:1,kind:'captured'},providerBinding:{},sourceIdentity:{kind:'git-soul'},responsibleHuman:null}),{schemaVersion:1,registration:'invalid',capture:'invalid',migrationRequired:true,responsibleHuman:{status:'unknown'}});
+  const base={registration:{schemaVersion:1,kind:'captured'},providerBinding:{opaque:'never-returned'},sourceIdentity:{kind:'git-soul',repository:{kind:'canonical-remote',remote:'git:https://example.invalid/source.git'},exportPath:'agents/expert'},executionBinding:{schemaVersion:1,deployment:'/srv/oats/example',resolution:{schemaVersion:1,id:`sha256-${'a'.repeat(64)}`}}};
+  const disabled=capturedAuthority({...base,responsibleHuman:null}),specified=capturedAuthority({...base,responsibleHuman:{provider:'example.messaging',id:'human-1'}});
+  assert.equal(disabled.responsibleHuman.status,'disabled');assert.equal(specified.responsibleHuman.status,'specified');
+  for(const result of [disabled,specified]) {assert.equal(Object.hasOwn(result,'providerBinding'),false);assert.doesNotMatch(JSON.stringify(result),/opaque|human-1|OATS_BINDING_FILE/);assert.ok(Buffer.byteLength(JSON.stringify(result))<65536);}
+  assert.equal(capturedAuthority({...base,sourceIdentity:{kind:'git-soul',padding:'x'.repeat(65536)},responsibleHuman:null}).registration,'invalid','authority summary remains bounded');
+});
+test('legacy inspect reports unknown registration authority without changing existing fields',t=>{
+  const f=fixture(t),s=f.source(),result=f.cli('inspect');assert.equal(result.status,0,result.stdout);
+  assert.deepEqual(result.out.result.authority,{schemaVersion:1,registration:'legacy',capture:'unknown',migrationRequired:true,responsibleHuman:{status:'unknown'}});
+  assert.equal(result.out.result.source,s.file);assert.deepEqual(result.out.result.owns,s.decl.owns);assert.deepEqual(result.out.result.reads,s.decl.reads);assert.deepEqual(result.out.result.bases,s.bindings.bases);assert.deepEqual(result.out.result.status,loadStatus(s));
+});
 test('captured registration freezes qualified identity, binding and v2 schedule without live source fallback',t=>{
   const f=fixture(t),receipt=capturedReceipt(f),snapshot=join(f.dir,'invocation-binding.json'),wrong=structuredClone(receipt.binding),priorBinding=process.env.OATS_BINDING_FILE;
   t.after(()=>{if(priorBinding===undefined) delete process.env.OATS_BINDING_FILE;else process.env.OATS_BINDING_FILE=priorBinding;});
@@ -207,12 +222,14 @@ test('captured registration freezes qualified identity, binding and v2 schedule 
   assert.ok(spec.argv.includes('--deployment'));assert.ok(spec.argv.includes('--resolution'));assert.ok(spec.argv.includes('--json'));assert.equal(spec.argv.includes('--soul'),false);
   assert.equal(spec.argv[spec.argv.indexOf('--resolution')+1],receipt.executionBinding.resolution.id);
   save(snapshot,receipt.binding);const capturedEnv={OATS_BINDING_FILE:snapshot,OATS_SETTINGS:JSON.stringify({'bindings-file':join(f.dir,'poison.json'),'state-dir':join(f.dir,'poison-state')})},alias=f.base.id;
-  assert.equal(f.cli('inspect',[],capturedEnv).status,0);assert.equal(f.cli('read',['--base',alias],capturedEnv).status,0);assert.equal(f.cli('refresh',[],capturedEnv).status,0);
+  const inspected=f.cli('inspect',[],capturedEnv);assert.equal(inspected.status,0);assert.deepEqual(inspected.out.result.authority,{schemaVersion:1,registration:'captured',capture:'recorded',migrationRequired:false,sourceIdentity:receipt.sourceIdentity,executionBinding:receipt.executionBinding,responsibleHuman:{status:'disabled'}});
+  for(const [key,value] of [['source',s.file],['owns',s.decl.owns],['reads',s.decl.reads],['bases',s.bindings.bases],['acceptedView',s.acceptedView],['status',loadStatus(s)]]) assert.deepEqual(inspected.out.result[key],value,`existing inspect field ${key} is unchanged`);
+  assert.equal(f.cli('read',['--base',alias],capturedEnv).status,0);assert.equal(f.cli('refresh',[],capturedEnv).status,0);
   const schedulesBefore=fs.readFileSync(join(f.dir,'schedules.json'));const unsupported=f.cli('setup',['--source',s.file],capturedEnv);assert.equal(unsupported.status,1);assert.equal(unsupported.out.error.code,'E_MIGRATION');assert.deepEqual(fs.readFileSync(join(f.dir,'schedules.json')),schedulesBefore);
   save(join(f.home,'instance.json'),{instance:'source-one',agent:'source',kind:'capability',launched:true});assert.equal(f.cli('spawn',[],capturedEnv).out.meta.memory,'okf-v2','captured marker outranks poisoned live service kind');
   note(f);const retired=f.cli('retire',[],capturedEnv);assert.equal(retired.status,0,retired.stdout);assert.equal(retired.out.meta.retired,true,'captured retire uses the exact registered source');
   fs.rmSync(f.home,{recursive:true});fs.rmSync(f.soul,{recursive:true});fs.rmSync(f.bindingFile);process.env.OATS_SETTINGS=JSON.stringify({'bindings-file':join(f.dir,'poison.json'),'state-dir':join(f.dir,'poison-state')});
-  const frozen=loadSource(s.file);assert.equal(frozen.id,s.id);assert.equal(fs.existsSync(join(f.dir,'poison-state')),false);
+  const frozen=loadSource(s.file);assert.equal(frozen.id,s.id);assert.equal(fs.existsSync(join(f.dir,'poison-state')),false);assert.deepEqual(inspectSource(frozen).authority,inspected.out.result.authority,'source deletion and poisoned config do not alter captured authority');
   const run=readRun(frozen,runSource(frozen,{manual:true,noLaunch:true}).run);assert.equal(complete(frozen,run.id,judgment(f,frozen,run,{drop:true})).processed,true);
   schedules[`okf-${s.id}`]={...spec,argv:['oats','poison'],attempt:{executionId:'retained-attempt'}};save(join(f.dir,'schedules.json'),schedules);
   assert.throws(()=>scheduleSource(s),/definition differs/);assert.deepEqual(readJSON(join(f.dir,'schedules.json'))[`okf-${s.id}`].attempt,{executionId:'retained-attempt'});

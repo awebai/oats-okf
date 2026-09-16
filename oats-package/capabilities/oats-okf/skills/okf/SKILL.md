@@ -144,7 +144,14 @@ Those private mode-0600 files exist only for one synchronous captured invocation
 ## External bases and native tools
 
 Ordinary working agents consult `oats okf read --base ALIAS --path node/index.md`
-and `oats okf refresh`. Staged writers use native file tools only under roots
+and `oats okf refresh`. When inspecting a source, treat the additive `authority`
+object literally: `captured` includes recorded qualified identity/execution;
+`legacy` or `invalid` means migration/evidence is still required. A
+responsible-human status of `disabled` comes only from explicit null; `unknown`
+is not permission to assume messaging is off. The summary deliberately omits
+opaque bindings, provenance, credential references and transient snapshot paths.
+
+Staged writers use native file tools only under roots
 listed in work/staging.json. Always validate the WHOLE base, not an isolated
 node: absolute Markdown links can cross node boundaries. Complete performs this
 validation again and refuses any errors or producer warnings.
