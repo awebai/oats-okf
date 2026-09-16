@@ -199,10 +199,10 @@ test('captured registration freezes qualified identity, binding and v2 schedule 
   assert.throws(()=>registerCaptured(f.home,receipt),/differs from invocation snapshot/);assert.equal(fs.existsSync(join(f.home,'.okf-source.json')),false);
   delete process.env.OATS_BINDING_FILE;save(snapshot,receipt.binding);const receiptFile=join(f.dir,'source-receipt.json');save(receiptFile,receipt);
   const lifecycle=f.cli('spawn',[],{OATS_BINDING_FILE:snapshot,OATS_SOURCE_RECEIPT_FILE:receiptFile});assert.equal(lifecycle.status,0,lifecycle.stdout);
-  const s=loadSource(lifecycle.out.meta.source),again=registerCaptured(f.home,receipt);
-  assert.equal(again.id,s.id);assert.equal(s.registration.kind,'captured');assert.deepEqual(s.providerBinding,receipt.binding);assert.deepEqual(s.executionBinding,receipt.executionBinding);assert.equal(s.responsibleHuman,null);
+  const s=loadSource(lifecycle.out.meta.source),schedules=readJSON(join(f.dir,'schedules.json')),spec=schedules[`okf-${s.id}`];
+  const normalized={...spec,execution:{responsibleHuman:null,deployment:receipt.executionBinding.deployment,resolution:receipt.executionBinding.resolution}};delete normalized.responsibleHuman;schedules[`okf-${s.id}`]=normalized;save(join(f.dir,'schedules.json'),schedules);
+  const again=registerCaptured(f.home,receipt);assert.equal(again.id,s.id,'scheduler-normalized explicit null remains idempotent');assert.equal(s.registration.kind,'captured');assert.deepEqual(s.providerBinding,receipt.binding);assert.deepEqual(s.executionBinding,receipt.executionBinding);assert.equal(s.responsibleHuman,null);
   const owner=readJSON(join(f.bindings.stateDir,'owners.json'))['owner-1'];assert.equal(owner.kind,'captured-qualified-soul');assert.deepEqual(owner.identity,receipt.sourceIdentity);
-  const schedules=readJSON(join(f.dir,'schedules.json')),spec=schedules[`okf-${s.id}`];
   assert.equal(spec.definitionVersion,2);assert.equal(spec.recurrencePolicy,'capture');assert.equal(spec.responsibleHuman,null);assert.equal(spec.cwd,f.context);
   assert.ok(spec.argv.includes('--deployment'));assert.ok(spec.argv.includes('--resolution'));assert.ok(spec.argv.includes('--json'));assert.equal(spec.argv.includes('--soul'),false);
   assert.equal(spec.argv[spec.argv.indexOf('--resolution')+1],receipt.executionBinding.resolution.id);

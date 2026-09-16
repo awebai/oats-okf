@@ -359,7 +359,8 @@ export function scheduleSource(source) {
     const actual=result?.schedule;
     if(!actual || typeof actual.enabled!=='boolean' || ['id','kind','cron','tz','cwd','argv','definitionVersion','recurrencePolicy'].some(k=>JSON.stringify(actual[k])!==JSON.stringify(spec[k]))) fail('E_SCHEDULE','source schedule definition differs; inspect and repair explicitly');
     if(captured) {
-      const responsible=actual.execution?.responsibleHuman ?? actual.responsibleHuman;
+      const responsible=actual.execution && Object.hasOwn(actual.execution,'responsibleHuman')?actual.execution.responsibleHuman
+        :Object.hasOwn(actual,'responsibleHuman')?actual.responsibleHuman:undefined;
       if(!sameJson(responsible,spec.responsibleHuman)) fail('E_SCHEDULE','captured source schedule responsible human differs');
       if(actual.execution && (actual.execution.deployment!==source.executionBinding.deployment || actual.execution.resolution?.id!==source.executionBinding.resolution.id)) fail('E_SCHEDULE','captured source schedule execution binding differs');
     }
