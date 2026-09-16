@@ -8,6 +8,8 @@ const candidateKinds=new Set(['workspace-default','import-adoption','operator'])
 const obj=value=>value && typeof value==='object' && !Array.isArray(value);
 const pointerKey=value=>String(value).replace(/~/g,'~0').replace(/\//g,'~1');
 const clone=value=>JSON.parse(JSON.stringify(value));
+const canonicalJson=value=>value===null || typeof value!=='object'?JSON.stringify(value):Array.isArray(value)?`[${value.map(canonicalJson).join(',')}]`:`{${Object.keys(value).sort().map(key=>`${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`;
+export const sameJson=(a,b)=>canonicalJson(a)===canonicalJson(b);
 function keys(value,allowed,required,label) {
   if(!obj(value)) fail('E_CONFIG',`${label} must be an object`);
   for(const key of Object.keys(value)) if(!allowed.includes(key)) fail('E_CONFIG',`unknown ${label} property: ${key}`);
@@ -25,7 +27,6 @@ function originAt({origins={},origin=null,pointer},suffix,kind) {
   if(!obj(found)) fail('E_CONFIG',`missing origin for ${at}`);
   return clone({...found,kind});
 }
-function same(a,b) {return JSON.stringify(a)===JSON.stringify(b);}
 
 /** Portable, non-secret store locator. Filesystem existence/custody and remote
  * identity are checked later by bind/check; this function performs no I/O. */
@@ -119,7 +120,7 @@ export function bindKnowledgeDomain({model,choices}) {
   const aliases={},stores={},provenance=[];
   const add=(locator,choiceKey)=>{
     const rendered=runtimeStore(locator);
-    if(Object.hasOwn(stores,locator.id) && !same(stores[locator.id],rendered)) fail('E_CONFIG',`store identity ${locator.id} resolves to conflicting locations`);
+    if(Object.hasOwn(stores,locator.id) && !sameJson(stores[locator.id],rendered)) fail('E_CONFIG',`store identity ${locator.id} resolves to conflicting locations`);
     stores[locator.id]=rendered;
     const selectedBy=choices[choiceKey]?.selectedBy;if(obj(selectedBy)) provenance.push(clone(selectedBy));
     return locator.id;
@@ -134,7 +135,7 @@ export function bindKnowledgeDomain({model,choices}) {
   });
   const ownKeys=new Set();for(const entry of owns) {const key=`${entry.store}/${entry.node}`;if(ownKeys.has(key)) fail('E_OWNER',`duplicate resolved knowledge steward: ${key}`);ownKeys.add(key);}
   for(const entry of [...model.reads,...model.owns]) provenance.push(clone(entry.origin));
-  const unique=[];for(const item of provenance) if(!unique.some(prior=>same(prior,item))) unique.push(item);
+  const unique=[];for(const item of provenance) if(!unique.some(prior=>sameJson(prior,item))) unique.push(item);
   return {contract:KNOWLEDGE_CONTRACT,version:KNOWLEDGE_CONTRACT_VERSION,payload:{owner:model.owner,stores,reads,owns},credentialRefs:{},provenance:unique};
 }
 

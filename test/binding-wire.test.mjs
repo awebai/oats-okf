@@ -16,8 +16,10 @@ const CLI=join(ROOT,'oats-package/capabilities/oats-okf/bin/oats-okf-binding.mjs
 const contract='oats.okf.locations';
 const origin=(kind,pointer)=>({kind,document:{kind:'source',source:'git:https://example.test/source.git',revision:'a'.repeat(40),path:'soul.yaml',integrity:{format:'oats.bytes.v1',value:`sha256-${'b'.repeat(64)}`}},pointer});
 const locator=(id,path)=>({id,kind:'directory',path:`path:${path}`});
+const canonical=value=>value===null || typeof value!=='object'?JSON.stringify(value):Array.isArray(value)?`[${value.map(canonical).join(',')}]`:`{${Object.keys(value).sort().map(key=>`${JSON.stringify(key)}:${canonical(value[key])}`).join(',')}}`;
 const call=(phase,request,env={})=>{
-  const result=spawnSync(process.execPath,[CLI,phase],{input:Buffer.isBuffer(request)?request:JSON.stringify(request),encoding:Buffer.isBuffer(request)?undefined:'utf8',maxBuffer:2*1024*1024,env:{...process.env,...env}});
+  const bytes=Buffer.isBuffer(request)?request:typeof request==='string'?request:JSON.stringify(request);
+  const result=spawnSync(process.execPath,[CLI,phase],{input:bytes,encoding:Buffer.isBuffer(bytes)?undefined:'utf8',maxBuffer:2*1024*1024,env:{...process.env,...env}});
   const stdout=Buffer.isBuffer(result.stdout)?result.stdout.toString('utf8'):result.stdout;
   return {...result,stdout,response:JSON.parse(stdout)};
 };
@@ -75,6 +77,8 @@ test('normalize preserves separate authority candidates and bind emits the captu
   });
   const canonicalOrder=structuredClone(complete);canonicalOrder.payload.runtime={bindings:canonicalOrder.payload.runtime.bindings,declaration:canonicalOrder.payload.runtime.declaration,descriptorFile:canonicalOrder.payload.runtime.descriptorFile};canonicalOrder.payload.execution={model:'fixture/model',runtime:'pi'};
   assert.doesNotThrow(()=>sourceRuntimeFromKnowledgeBinding(canonicalOrder),'canonical transport key order does not change binding identity');
+  const canonicalCheck=call('check',canonical(request('check',{}, {binding:complete,context:{kind:'standalone',key:'fixture'},action:{kind:'spawn'}})));
+  assert.equal(canonicalCheck.response.ok,true,'real canonical-order wire must not change structural payload equality');
 });
 
 test('check validates real directory and private-staged Git acceptance read-only',t=>{

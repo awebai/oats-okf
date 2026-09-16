@@ -11,6 +11,7 @@ import {
   normalizeKnowledgeBindingCandidates,
   normalizeKnowledgeDeclaration,
   renderKnowledgeRuntime,
+  sameJson,
   storeChoiceKey,
   validateStoreLocator,
 } from '../oats-package/capabilities/oats-okf/lib/portable-binding.mjs';
@@ -65,7 +66,7 @@ test('binding renders stable store identities, multiple stores and explicit writ
   assert.equal(result.payload.stores['private-base'].path,'/srv/private');
   assert.deepEqual(result.payload.reads,[{store:'public-base',node:'reference'},{store:'local-base',node:'shared'}]);
   assert.deepEqual(result.payload.owns,[{store:'private-base',node:'expert',steward:'expert-owner'},{store:'local-base',node:'journal',steward:'expert-owner'}]);
-  assert.deepEqual(result.credentialRefs,{});assert.ok(result.provenance.length>=4);
+  assert.deepEqual(result.credentialRefs,{});assert.deepEqual(result.provenance,[{...origin(),kind:'soul-requirement'}],'reused supplied witness is retained once');
   assert.doesNotThrow(()=>validateBindings({version:1,stateDir:'/srv/okf-state',bases:result.payload.stores},'/srv/okf-bindings.json'),"rendered stores retain the existing provider runtime contract");
 });
 
@@ -117,6 +118,11 @@ test('runtime adapter requires explicit host custody and stable aliases',()=>{
   assert.throws(()=>renderKnowledgeRuntime({domain:{...domain,stores:{alias:{...domain.stores.base}}},stateDir:'/srv/state',descriptorFile:'/srv/bindings.json'}),/alias must equal stable store identity/);
   assert.throws(()=>renderKnowledgeRuntime({domain:{...domain,owns:[{store:'base',node:'expert',steward:'someone-else'}]},stateDir:'/srv/state',descriptorFile:'/srv/bindings.json'}),/steward mismatch/);
   assert.throws(()=>renderKnowledgeRuntime({domain:{...domain,owns:[{node:'expert',steward:'expert-owner'}]},stateDir:'/srv/state',descriptorFile:'/srv/bindings.json'}),/requires store/);
+});
+
+test('semantic JSON equality ignores object key order and preserves array order',()=>{
+  assert.equal(sameJson({b:2,a:{y:1,x:0}},{a:{x:0,y:1},b:2}),true);
+  assert.equal(sameJson({a:[1,2]},{a:[2,1]}),false);
 });
 
 test('stable identities, destinations and nonsecret locators fail closed',()=>{
