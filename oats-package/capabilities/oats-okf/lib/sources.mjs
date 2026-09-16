@@ -134,7 +134,7 @@ function finishRegistration(source) {
 function capturedOwner(bindings,owner,identity) {
   const file=join(bindings.stateDir,'owners.json'),row={schemaVersion:1,kind:'captured-qualified-soul',identity};
   withLock(join(bindings.stateDir,'owners.lock'),()=>{
-    const owners=fs.existsSync(file)?readJSON(file):{};if(!obj(owners)) fail('E_OWNER','invalid owner registry');const prior=owners[owner];
+    const owners=fs.existsSync(file)?readJSON(file):{};if(!obj(owners)) fail('E_OWNER','invalid owner registry');const prior=Object.hasOwn(owners,owner)?owners[owner]:undefined;
     if(typeof prior==='string') fail('E_MIGRATION','legacy owner registry evidence requires explicit qualified-identity migration');
     if(prior!==undefined && (!obj(prior) || prior.schemaVersion!==1 || prior.kind!=='captured-qualified-soul' || !sameJson(prior.identity,identity))) fail('E_OWNER','stable owner ID already identifies a different qualified soul');
     if(prior===undefined) {owners[owner]=row;save(file,owners);}

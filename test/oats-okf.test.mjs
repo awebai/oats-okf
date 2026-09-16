@@ -272,6 +272,19 @@ test('malformed captured source remote is refused by public inspect without secr
   const result=f.cli('inspect',[],{OATS_BINDING_FILE:snapshot});assert.equal(result.status,1);assert.equal(result.out.error.code,'E_SOURCE');assert.doesNotMatch(result.stdout+result.stderr,/SYNTHETIC_SECRET/);
 });
 
+test('captured owner registry accepts legal prototype-named owners and replays its own row',t=>{
+  for(const owner of ['hasOwnProperty','isPrototypeOf']) {
+    const f=fixture(t,{nodes:{expert:{path:'expert',owner},peer:{path:'peer',owner:'owner-2'}}}),receipt=capturedReceipt(f);
+    receipt.binding.payload.owner=owner;receipt.binding.payload.owns[0].steward=owner;receipt.binding.payload.runtime.declaration.owner=owner;
+    const first=registerCaptured(f.home,receipt),file=join(f.bindings.stateDir,'owners.json'),owners=readJSON(file);
+    assert.equal(Object.hasOwn(owners,owner),true);assert.deepEqual(owners[owner].identity,receipt.sourceIdentity);
+    assert.equal(registerCaptured(f.home,receipt).id,first.id);
+    const home=join(f.context,'second-home');fs.mkdirSync(join(home,'work'),{recursive:true});
+    const second=registerCaptured(home,{...receipt,home,work:join(home,'work'),instance:'source-two'});
+    assert.notEqual(second.id,first.id);assert.deepEqual(readJSON(file),owners,'another incarnation with same qualified owner does not rewrite ownership');
+  }
+});
+
 test('captured helper skips ownership and legacy owner evidence requires explicit migration',t=>{
   const helper=fixture(t),helperReceipt=capturedReceipt(helper,{kind:'helper'}),bindingFile=join(helper.dir,'helper-binding.json'),receiptFile=join(helper.dir,'helper-receipt.json');save(bindingFile,helperReceipt.binding);save(receiptFile,helperReceipt);
   const helperSpawn=helper.cli('spawn',[],{OATS_BINDING_FILE:bindingFile,OATS_SOURCE_RECEIPT_FILE:receiptFile});assert.equal(helperSpawn.status,0);assert.equal(helperSpawn.out.meta.memory,'none');assert.equal(fs.existsSync(join(helper.bindings.stateDir,'owners.json')),false);
