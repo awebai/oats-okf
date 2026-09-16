@@ -23,7 +23,7 @@ export const storeChoiceKey=alias=>`/bindings/knowledge/stores/${pointerKey(iden
 function originAt({origins={},origin=null,pointer},suffix,kind) {
   const at=`${pointer}${suffix}`,specific=origins[at],found=specific ?? origin;
   if(!obj(found)) fail('E_CONFIG',`missing origin for ${at}`);
-  return clone({...found,kind,pointer:specific?.pointer ?? at});
+  return clone({...found,kind});
 }
 function same(a,b) {return JSON.stringify(a)===JSON.stringify(b);}
 

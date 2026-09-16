@@ -58,6 +58,7 @@ function prepareBinding(t) {
 test('normalize preserves separate authority candidates and bind emits the captured runtime payload',t=>{
   const {f,normalized,bound}=prepareBinding(t);
   assert.deepEqual(normalized.requirements.map(({key,kind})=>[key,kind]),[[storeChoiceKey('reference'),'equals'],[bindingChoiceKey('write.default'),'required']]);
+  assert.ok(normalized.requirements.every(entry=>entry.origin.pointer==='/knowledge'),'fallback origins preserve a supplied witness rather than inventing a field pointer');
   assert.deepEqual(normalized.candidates.map(({key,kind})=>[key,kind]),[
     [bindingChoiceKey('write.default'),'workspace-default'],[bindingChoiceKey('write.default'),'import-adoption'],[bindingChoiceKey('write.default'),'operator'],
   ]);
@@ -68,9 +69,12 @@ test('normalize preserves separate authority candidates and bind emits the captu
   }});
   assert.deepEqual(bound.payload.runtime.declaration,{version:1,owner:'expert-owner',reads:['reference-base/reference'],owns:['private-base/expert']});
   assert.deepEqual(bound.payload.execution,{runtime:'pi',model:'fixture/model'});
-  assert.deepEqual(sourceRuntimeFromKnowledgeBinding({schemaVersion:1,capability:'oats.okf',...bound}),{
+  const complete={schemaVersion:1,capability:'oats.okf',...bound};
+  assert.deepEqual(sourceRuntimeFromKnowledgeBinding(complete),{
     owner:'expert-owner',bindings:{file:f.descriptorFile,...bound.payload.runtime.bindings},decl:bound.payload.runtime.declaration,execution:{runtime:'pi',model:'fixture/model'},
   });
+  const canonicalOrder=structuredClone(complete);canonicalOrder.payload.runtime={bindings:canonicalOrder.payload.runtime.bindings,declaration:canonicalOrder.payload.runtime.declaration,descriptorFile:canonicalOrder.payload.runtime.descriptorFile};canonicalOrder.payload.execution={model:'fixture/model',runtime:'pi'};
+  assert.doesNotThrow(()=>sourceRuntimeFromKnowledgeBinding(canonicalOrder),'canonical transport key order does not change binding identity');
 });
 
 test('check validates real directory and private-staged Git acceptance read-only',t=>{

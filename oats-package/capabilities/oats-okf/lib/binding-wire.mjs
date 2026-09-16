@@ -20,7 +20,8 @@ const phases=new Set(['normalize','bind','check']);
 const declarationKinds=new Set(['soul','workspace','adoption','operator']);
 const errorCodes=new Set(['needs-configuration','requirement-conflict','invalid-binding','authorization-required','host-requirement-missing','provider-unavailable','provider-not-qualified']);
 const obj=value=>value!==null && typeof value==='object' && !Array.isArray(value);
-const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
+const canonical=value=>value===null || typeof value!=='object'?JSON.stringify(value):Array.isArray(value)?`[${value.map(canonical).join(',')}]`:`{${Object.keys(value).sort().map(key=>`${JSON.stringify(key)}:${canonical(value[key])}`).join(',')}}`;
+const same=(a,b)=>canonical(a)===canonical(b);
 const wireError=code=>{throw Object.assign(new Error(code),{wireCode:code});};
 function keys(value,allowed,required,label) {
   if(!obj(value)) wireError('invalid-binding');
