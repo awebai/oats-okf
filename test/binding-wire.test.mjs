@@ -140,7 +140,7 @@ test('OATS_BINDING_FILE loads one frozen provider envelope and never falls back'
 
   const frozen=sourceRuntimeFromKnowledgeBinding(binding),id='00000000-0000-4000-8000-000000000001',sourceFile=join(f.stateDir,'sources',id,'source.json'),{file:bindingsFile,...bindingsDoc}=frozen.bindings;
   const checked=validateBindings(bindingsDoc,bindingsFile,{sourceHome:home,sourceWork:join(home,'work')});
-  const descriptor={version:1,id,home,work:join(home,'work'),context:f.root,agent:'fixture',instance:'fixture',owner:frozen.owner,decl:frozen.decl,role:'fixture',bindings:{file:frozen.bindings.file,...checked},bindingFingerprint:bindingFingerprint(checked),execution:frozen.execution,providerBinding:binding};
+  const descriptor={version:1,id,home,work:join(home,'work'),context:f.root,agent:'fixture',instance:'fixture',owner:frozen.owner,decl:frozen.decl,role:'fixture',bindings:{file:frozen.bindings.file,...checked},bindingFingerprint:bindingFingerprint(checked),execution:frozen.execution,providerBinding:binding,registration:{schemaVersion:1,kind:'captured'},sourceIdentity:{kind:'git-soul',repository:{kind:'canonical-remote',remote:'git:https://example.test/source.git'},exportPath:'agents/expert'},executionBinding:{schemaVersion:1,deployment:f.root,resolution:{schemaVersion:1,id:`sha256-${'c'.repeat(64)}`}},responsibleHuman:null};
   fs.mkdirSync(dirname(sourceFile),{recursive:true});fs.writeFileSync(sourceFile,JSON.stringify(descriptor));
   fs.rmSync(snapshot);delete process.env.OATS_BINDING_FILE;
   assert.equal(loadSource(sourceFile).owner,'expert-owner','frozen descriptor survives transient snapshot deletion');

@@ -91,3 +91,13 @@ the same 1 MiB strict duplicate-safe codec and projects its frozen runtime data.
 Any present-file defect refuses; it never falls through to `OATS_SETTINGS` or a
 live soul. Absence remains an explicit legacy path. Durable source descriptors
 store the complete binding and projected documents, never this transient path.
+
+`registerCaptured(home, receipt)` consumes the parent-qualified lifecycle receipt
+directly. Persistent receipts write the existing source/status/view/marker layout
+with the complete binding, execution binding, responsible human, retained role,
+and qualified soul identity. Helpers return `skipped: service` and create no owner
+or source. Captured owner-registry rows are versioned qualified identities; legacy
+owner-to-path evidence returns migration-required rather than converting. New
+captured sources receive a v2 `capture` command schedule with saved deployment/
+resolution selectors and `--json`; legacy source schedules retain their literal
+`--soul` behavior. Worker staging/judgment/delivery remains the existing engine.

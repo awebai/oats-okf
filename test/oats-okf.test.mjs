@@ -12,7 +12,7 @@ const CLI=join(CAP,'bin/oats-okf.mjs');
 const mod=p=>import(new URL(`../oats-package/capabilities/oats-okf/lib/${p}.mjs`,import.meta.url));
 const {loadBindings,metadata,validateBindings,validateDeclaration}=await mod('config');
 const {tree,save,readJSON,atomic,digest,withLock,baseLock:unused,quote,command,hash}=await mod('io');
-const {register,capture,input,loadStatus,loadSource,saveStatus,views,scheduleSource}=await mod('sources');
+const {register,registerCaptured,capture,input,loadStatus,loadSource,saveStatus,views,scheduleSource}=await mod('sources');
 const {runSource,readRun,complete,retry}=await mod('worker');
 const {initBase,migrate,deliverMigration,cutoverMigration}=await mod('migration');
 const {stageBase,baseLock,journalPath,directoryPublish}=await mod('stores');
@@ -80,6 +80,15 @@ else process.exit(44);
   const source=()=>register(home);
   const cli=(cmd,args=[],env={})=>{const r=spawnSync(process.execPath,[CLI,cmd,...args,'--json'],{cwd:home,env:{...process.env,...env},encoding:'utf8',timeout:30000,maxBuffer:16*1024*1024});let out;try{out=JSON.parse(r.stdout);}catch{}return {...r,out};};
   return {dir,home,soul,bindings,bindingFile,repo,source,cli,calls,context,base:bindings.bases.project};
+}
+function capturedBinding(f) {
+  const base={...f.base,path:f.base.path},alias=base.id,decl={version:1,owner:'owner-1',owns:[`${alias}/expert`],reads:[`${alias}/peer`]};
+  return {schemaVersion:1,capability:'oats.okf',payloadContract:'oats.okf.locations',payloadVersion:1,payload:{owner:'owner-1',stores:{[alias]:base},owns:[{store:alias,node:'expert',steward:'owner-1'}],reads:[{store:alias,node:'peer'}],runtime:{descriptorFile:f.bindingFile,bindings:{version:1,stateDir:f.bindings.stateDir,bases:{[alias]:base}},declaration:decl},execution:{runtime:'pi',model:null}},credentialRefs:{},provenance:[]};
+}
+function capturedReceipt(f,{kind='persistent',binding=capturedBinding(f)}={}) {
+  return {schemaVersion:1,kind,home:f.home,work:join(f.home,'work'),context:f.context,agent:'source',instance:'source-one',
+    sourceIdentity:kind==='helper'?null:{kind:'git-soul',repository:{kind:'canonical-remote',remote:'git:https://example.test/source.git'},exportPath:'agents/source'},
+    role:'# Captured source\n',executionBinding:{schemaVersion:1,deployment:f.context,resolution:{schemaVersion:1,id:`sha256-${'a'.repeat(64)}`}},responsibleHuman:null,binding};
 }
 function git(repo,args) {return execFileSync('git',['-C',repo,...args],{encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();}
 function note(f,name='decision.md',text='The human chose explicit custody because hidden fallbacks conceal delivery failures.') {put(join(f.home,'notes',name),`---\ntype: Decision\ntitle: Explicit custody\ndescription: Why custody is explicit.\n---\n\n${text}\n`);}
@@ -182,6 +191,33 @@ test('no-launch sources and service workers never trigger scheduled model launch
   const serviceHome=join(f.dir,'service-home');fs.mkdirSync(serviceHome);
   const service=f.cli('spawn',[],{OATS_KIND:'capability',OATS_SETTINGS:'{}',OATS_HOME:serviceHome,OATS_INSTANCE_HOME:serviceHome});assert.equal(service.out.meta.memory,'none');assert.equal(fs.readFileSync(f.calls,'utf8'),before);
   capture(s,{final:true});assert.equal(loadStatus(s).auto,false);assert.equal(runSource(s).status,'disabled');
+});
+test('captured registration freezes qualified identity, binding and v2 schedule without live source fallback',t=>{
+  const f=fixture(t),receipt=capturedReceipt(f),s=registerCaptured(f.home,receipt),again=registerCaptured(f.home,receipt);
+  assert.equal(again.id,s.id);assert.equal(s.registration.kind,'captured');assert.deepEqual(s.providerBinding,receipt.binding);assert.deepEqual(s.executionBinding,receipt.executionBinding);assert.equal(s.responsibleHuman,null);
+  const owner=readJSON(join(f.bindings.stateDir,'owners.json'))['owner-1'];assert.equal(owner.kind,'captured-qualified-soul');assert.deepEqual(owner.identity,receipt.sourceIdentity);
+  const schedules=readJSON(join(f.dir,'schedules.json')),spec=schedules[`okf-${s.id}`];
+  assert.equal(spec.definitionVersion,2);assert.equal(spec.recurrencePolicy,'capture');assert.equal(spec.responsibleHuman,null);assert.equal(spec.cwd,f.context);
+  assert.ok(spec.argv.includes('--deployment'));assert.ok(spec.argv.includes('--resolution'));assert.ok(spec.argv.includes('--json'));assert.equal(spec.argv.includes('--soul'),false);
+  assert.equal(spec.argv[spec.argv.indexOf('--resolution')+1],receipt.executionBinding.resolution.id);
+  fs.rmSync(f.soul,{recursive:true});fs.rmSync(f.bindingFile);process.env.OATS_SETTINGS=JSON.stringify({'bindings-file':join(f.dir,'poison.json'),'state-dir':join(f.dir,'poison-state')});
+  assert.equal(loadSource(s.file).id,s.id);assert.equal(fs.existsSync(join(f.dir,'poison-state')),false);
+  schedules[`okf-${s.id}`]={...spec,argv:['oats','poison'],attempt:{executionId:'retained-attempt'}};save(join(f.dir,'schedules.json'),schedules);
+  assert.throws(()=>scheduleSource(s),/definition differs/);assert.deepEqual(readJSON(join(f.dir,'schedules.json'))[`okf-${s.id}`].attempt,{executionId:'retained-attempt'});
+});
+test('captured helper skips ownership and legacy owner evidence requires explicit migration',t=>{
+  const helper=fixture(t),helperReceipt=capturedReceipt(helper,{kind:'helper'});assert.deepEqual(registerCaptured(helper.home,helperReceipt),{skipped:'service'});assert.equal(fs.existsSync(join(helper.bindings.stateDir,'owners.json')),false);
+  for(const changed of [
+    {...helperReceipt,home:join(helper.dir,'other-home')},
+    {...helperReceipt,work:'relative'},
+    {...helperReceipt,context:join(helper.dir,'other-deployment')},
+    {...helperReceipt,sourceIdentity:{kind:'local-soul',source:`path:${helper.soul}`,exportPath:'.'}},
+    {...helperReceipt,role:'x'.repeat(128*1024+1)},
+    {...helperReceipt,responsibleHuman:{provider:'fixture'}},
+  ]) assert.throws(()=>registerCaptured(helper.home,changed));
+  const legacy=fixture(t);fs.mkdirSync(legacy.bindings.stateDir,{recursive:true});save(join(legacy.bindings.stateDir,'owners.json'),{'owner-1':legacy.soul});
+  assert.throws(()=>registerCaptured(legacy.home,capturedReceipt(legacy)),error=>error.code==='E_MIGRATION' && /owner registry evidence/.test(error.message));
+  assert.equal(fs.existsSync(join(legacy.home,'.okf-source.json')),false);assert.equal(fs.existsSync(join(legacy.bindings.stateDir,'sources')),false);
 });
 test('completion rejects invalid judgment and credential-shaped promotion output',t=>{
   const f=fixture(t);note(f);const {s,run}=prepared(f);const j=judgment(f,s,run,{secret:true});assert.throws(()=>complete(s,run.id,j),/credential-shaped/);const doc=readJSON(j);doc.outcomes=[];save(j,doc);assert.throws(()=>complete(s,run.id,j),/exactly one outcome/);assert.equal(loadStatus(s).processed.length,0);
