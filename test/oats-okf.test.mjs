@@ -328,6 +328,21 @@ for(const root of ['knowledge','.']) test(`actual temporary Git ${root==='.'?'de
   assert.equal(receipt.status,'delivered');assert.equal(receipt.pr.number,1);assert.equal(git(f.repo,['rev-parse','main']),before);assert.equal(git(f.repo,['rev-parse',receipt.branch]),receipt.commit);assert.equal(loadStatus(s).processed.length,1);assert.equal(Object.keys(loadStatus(s).accepted).length,0);
   assert.match(git(f.repo,['show',`${receipt.commit}:${root==='.'?'':root+'/'}expert/decision.md`]),/Evidence: OKF input/);
 });
+test('read-only Git staging never executes attribute-selected host smudge or process filters',t=>{
+  const f=fixture(t,{kind:'git'});put(join(f.repo,'.gitattributes'),'knowledge/**/*.md filter=hostprobe\n');git(f.repo,['add','.gitattributes']);git(f.repo,['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','filter selector']);
+  const marker=join(f.dir,'outside-stage-marker'),filter=join(f.dir,'passthrough.mjs');
+  put(filter,`import fs from 'node:fs';fs.writeFileSync(${JSON.stringify(marker)},'ran');process.stdin.pipe(process.stdout);`);
+  const original=tree(join(f.repo,'knowledge'));
+  for(const type of ['smudge','process']) {
+    // Native staging retains normal HOME configuration for authentication, but
+    // repository attributes must never cause this configured executable to run.
+    put(join(process.env.HOME,'.gitconfig'),`[filter "hostprobe"]\n  ${type} = ${process.execPath} ${filter}\n`);
+    const staged=stageBase(f.base,join(f.dir,`filter-free-${type}`));
+    assert.deepEqual(staged.files,original);assert.equal(fs.existsSync(marker),false,`${type} was not executed, not just rejected afterward`);
+    assert.equal(git(staged.checkout,['rev-parse','HEAD']),staged.head);
+  }
+});
+
 test('Git PR failure never falls back; retry verifies an uncertain create without duplication',t=>{
   const f=fixture(t,{kind:'git'});note(f);const {s,run}=prepared(f);put(join(f.dir,'gh-uncertain'),'1');assert.throws(()=>complete(s,run.id,judgment(f,s,run)),/failed/);assert.equal(loadStatus(s).processed.length,0);assert.equal(readRun(s,run.id).receipts.project.status,'pr-unknown');
   fs.rmSync(join(f.dir,'gh-uncertain'));const r=retry(s);assert.equal(r.receipts.project.status,'delivered');assert.equal(readJSON(join(f.dir,'pr.json')).length,1);

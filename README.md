@@ -205,8 +205,10 @@ Captured `setup`, `init`, `migrate` and
 separate explicit operator administration on the legacy/provisioning boundary.
 
 Git locators retain exact accepted-branch and same-repository PR routing. Check
-uses private temporary read staging and verifies the effective remote; knowledge
-publication remains PR-only with no direct-write fallback.
+uses private temporary read staging and verifies the effective remote before
+materializing raw Git objects. It never invokes checkout smudge/process filters
+or working-tree encodings; native clone/fetch authentication remains separate.
+Knowledge publication remains PR-only with no direct-write fallback.
 
 Runnable protocol data is in
 [`examples/portable-binding/`](examples/portable-binding/). Those examples use

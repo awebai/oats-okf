@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { fs, join, dirname, safePath, readJSON, save, atomic, tree, materialize, digest, hash, withLock, exec, cleanEnv, fail, relPath, overlaps, resolve } from './io.mjs';
 import { metadata, noGit } from './config.mjs';
@@ -15,15 +16,41 @@ export function validateBase(root, base) {
   if(result.errors.length || result.warnings.length) fail('E_VALIDATION', [...result.errors,...result.warnings].join('; '));
   return {files,meta,digest:digest(files)};
 }
-function clone(base, dest) {
+function rawBlob(cwd,oid) {
+  const result=spawnSync('git',['--no-replace-objects','-c','core.hooksPath=/dev/null','-C',cwd,'cat-file','blob',oid],{cwd,env:gitEnv(),timeout:30000,maxBuffer:16*1024*1024});
+  if(result.error || result.status!==0) fail('E_COMMAND','Git object read failed');
+  return result.stdout;
+}
+function materializeGitObjects(base,dest,head) {
+  immutableCommit(dest,head);
+  const entries=gitTreeEntries(dest,head);
+  // Preflight paths/modes before materialization. No checkout/smudge/process/
+  // working-tree-encoding conversion: accepted bytes come directly from OIDs.
+  for(const [p,entry] of entries) {
+    relPath(p);const inBase=base.root==='.' || p===base.root || p.startsWith(base.root+'/');
+    if(!['100644','100755','120000','160000'].includes(entry.mode) || (entry.mode==='160000'?entry.type!=='commit':entry.type!=='blob')) fail('E_PATH','unsupported Git tree entry');
+    if(inBase && !['100644','100755'].includes(entry.mode)) fail('E_PATH','symlink or submodule in knowledge base is not allowed');
+  }
+  // Index/HEAD updates do not apply content filters. They preserve the normal
+  // Git worktree needed by existing diff/publication guards without checkout.
+  git(dest,['read-tree',head]);git(dest,['update-ref','--no-deref','HEAD',head]);
+  for(const [p,entry] of entries) {
+    const target=safePath(join(dest,p));fs.mkdirSync(dirname(target),{recursive:true});
+    if(entry.mode==='160000') {fs.mkdirSync(target);continue;}
+    const bytes=rawBlob(dest,entry.oid);
+    if(entry.mode==='120000') fs.symlinkSync(bytes.toString('utf8'),target);
+    else {fs.writeFileSync(target,bytes,{flag:'wx',mode:entry.mode==='100755'?0o755:0o644});fs.chmodSync(target,entry.mode==='100755'?0o755:0o644);}
+  }
+}
+function clone(base, dest, selectedHead) {
   safePath(dest);
   if(fs.existsSync(dest)) fail('E_PATH',`staging destination exists: ${dest}`);
   fs.mkdirSync(dirname(dest),{recursive:true});
   git(dirname(dest),['clone','--no-hardlinks','--no-checkout','--',base.repository,dest]);
   git(dest,['fetch','origin',`refs/heads/${base.acceptedBranch}`]);
-  const head=git(dest,['rev-parse','FETCH_HEAD']);
-  git(dest,['checkout','--detach',head]);
+  const head=selectedHead ?? git(dest,['rev-parse','FETCH_HEAD']);
   verifyRemote(base,dest);
+  materializeGitObjects(base,dest,head);
   // Reject a linked bundle even if Git happily checked the link out.
   safePath(join(dest,base.root));
   return head;
@@ -306,8 +333,7 @@ export function gitPublish(base, stage, proposal, receipt, persist, {beforePubli
 }
 
 export function recoveryStage(base, stage, proposal, dest) {
-  clone(base,dest);
-  git(dest,['checkout','--detach',stage.head]);
+  clone(base,dest,stage.head);
   const root=join(dest,base.root);
   for(const p of Object.keys(proposal.before)) if(!(p in proposal.after)) fs.rmSync(safePath(join(root,p)),{force:true});
   materialize(root,proposal.after);validateBase(root,base);
