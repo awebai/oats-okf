@@ -6,6 +6,15 @@ attached/worktree spawning; floor >=0.19.0) is not the v2 runtime contract.
 No private kernel API or additional knowledge-specific kernel behavior is
 required by this candidate.
 
+The repository also contains the provider half of the **planned, unreleased
+OATS >=0.24.0** portable binding/lifecycle handshake. Publication must raise the
+compatibility floor in coordination with that framework release; this document
+does not claim the current 0.23.x baseline can consume the new manifest field.
+The 0.24 kernel remains provider-neutral: it approves exact retained executable
+bytes, invokes bounded normalize/bind/check commands, runs the single shared
+choice resolver, and supplies private synchronous binding/source-receipt
+snapshots. OKF alone interprets stores, nodes, ownership and its captured runtime.
+
 ## Declared capability and command transport
 
 `oats-package/oats-package.json` enumerates only `capabilities/oats-okf/`.

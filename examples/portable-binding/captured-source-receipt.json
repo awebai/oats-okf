@@ -1,0 +1,158 @@
+{
+  "schemaVersion": 1,
+  "kind": "persistent",
+  "home": "/srv/oats/example/agents/domain-expert/instances/example-run",
+  "work": "/srv/oats/example/worktrees/example-run",
+  "context": "/srv/oats/example",
+  "agent": "domain-expert",
+  "instance": "domain-expert-example-run",
+  "sourceIdentity": {
+    "kind": "git-soul",
+    "repository": {
+      "kind": "canonical-remote",
+      "remote": "git:https://example.invalid/souls.git"
+    },
+    "exportPath": "agents/domain-expert"
+  },
+  "role": "# Domain expert\n\nMaintain accepted domain rationale.\n",
+  "executionBinding": {
+    "schemaVersion": 1,
+    "deployment": "/srv/oats/example",
+    "resolution": {
+      "schemaVersion": 1,
+      "id": "sha256-eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    }
+  },
+  "responsibleHuman": null,
+  "binding": {
+    "schemaVersion": 1,
+    "capability": "oats.okf",
+    "payloadContract": "oats.okf.locations",
+    "payloadVersion": 1,
+    "payload": {
+      "owner": "domain-expert",
+      "stores": {
+        "public-reference": {
+          "id": "public-reference",
+          "kind": "git",
+          "repository": "https://example.invalid/knowledge.git",
+          "root": "knowledge",
+          "acceptedBranch": "main",
+          "pr": {
+            "repository": "example/knowledge"
+          }
+        },
+        "local-notes": {
+          "id": "local-notes",
+          "kind": "directory",
+          "path": "/srv/oats/example/local-notes"
+        },
+        "private-knowledge": {
+          "id": "private-knowledge",
+          "kind": "directory",
+          "path": "/srv/oats/example/private-knowledge"
+        }
+      },
+      "reads": [
+        {
+          "store": "public-reference",
+          "node": "conventions"
+        },
+        {
+          "store": "local-notes",
+          "node": "observations"
+        }
+      ],
+      "owns": [
+        {
+          "store": "private-knowledge",
+          "node": "expert",
+          "steward": "domain-expert"
+        }
+      ],
+      "runtime": {
+        "descriptorFile": "/srv/oats/example/config/okf-bindings.json",
+        "bindings": {
+          "version": 1,
+          "stateDir": "/srv/oats/example/state",
+          "bases": {
+            "public-reference": {
+              "id": "public-reference",
+              "kind": "git",
+              "repository": "https://example.invalid/knowledge.git",
+              "root": "knowledge",
+              "acceptedBranch": "main",
+              "pr": {
+                "repository": "example/knowledge"
+              }
+            },
+            "local-notes": {
+              "id": "local-notes",
+              "kind": "directory",
+              "path": "/srv/oats/example/local-notes"
+            },
+            "private-knowledge": {
+              "id": "private-knowledge",
+              "kind": "directory",
+              "path": "/srv/oats/example/private-knowledge"
+            }
+          }
+        },
+        "declaration": {
+          "version": 1,
+          "owner": "domain-expert",
+          "owns": [
+            "private-knowledge/expert"
+          ],
+          "reads": [
+            "public-reference/conventions",
+            "local-notes/observations"
+          ]
+        }
+      },
+      "execution": {
+        "runtime": "pi",
+        "model": null
+      }
+    },
+    "credentialRefs": {},
+    "provenance": [
+      {
+        "kind": "soul-requirement",
+        "document": {
+          "kind": "source",
+          "source": "git:https://example.invalid/souls.git",
+          "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "path": "agents/domain-expert/soul.yaml",
+          "integrity": {
+            "format": "oats.bytes.v1",
+            "value": "sha256-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+        },
+        "pointer": "/knowledge"
+      },
+      {
+        "kind": "soul-default",
+        "document": {
+          "kind": "source",
+          "source": "git:https://example.invalid/souls.git",
+          "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "path": "agents/domain-expert/soul.yaml",
+          "integrity": {
+            "format": "oats.bytes.v1",
+            "value": "sha256-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+        },
+        "pointer": "/knowledge"
+      },
+      {
+        "kind": "operator",
+        "document": {
+          "kind": "operator",
+          "id": "documented-operator-choice"
+        },
+        "pointer": "/bindings"
+      }
+    ]
+  }
+}

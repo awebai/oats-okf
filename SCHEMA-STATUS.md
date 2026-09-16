@@ -17,6 +17,14 @@ LICENSE and actual exported capability remain; its canonical worker
 obsolete copies from returning. This remains **2.0.0 before tagging**, not a
 published patch.
 
+Portable provider-binding and captured-source support in this branch targets a
+coordinated, still-unreleased **OATS >=0.24.0** framework. The package/version
+and compatibility declarations intentionally remain unchanged until coordinated
+publication; therefore the current 0.23.x consumer probe does not certify the
+new binding manifest/wire. Focused fixtures validate the provider codec,
+private snapshots, captured registration, source-independent worker path and v2
+schedule shape without claiming a published consumer release.
+
 ## What `npm test` and default CI check
 
 `npm test` runs `scripts/validate-manifests.mjs` and **all** `test/*.test.mjs`.

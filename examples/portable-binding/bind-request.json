@@ -1,0 +1,424 @@
+{
+  "schemaVersion": 1,
+  "phase": "bind",
+  "slot": "knowledge",
+  "capability": "oats.okf",
+  "settings": {
+    "bindings-file": "/srv/oats/example/config/okf-bindings.json",
+    "state-dir": "/srv/oats/example/state",
+    "harvest-runtime": "pi"
+  },
+  "input": {
+    "model": {
+      "domain": {
+        "contract": "oats.okf.locations",
+        "version": 1,
+        "owner": "domain-expert",
+        "stores": {
+          "reference": {
+            "mode": "fixed",
+            "choiceKey": "/bindings/knowledge/stores/reference",
+            "origin": {
+              "kind": "soul-requirement",
+              "document": {
+                "kind": "source",
+                "source": "git:https://example.invalid/souls.git",
+                "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "path": "agents/domain-expert/soul.yaml",
+                "integrity": {
+                  "format": "oats.bytes.v1",
+                  "value": "sha256-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                }
+              },
+              "pointer": "/knowledge"
+            }
+          },
+          "local": {
+            "mode": "default",
+            "choiceKey": "/bindings/knowledge/stores/local",
+            "origin": {
+              "kind": "soul-default",
+              "document": {
+                "kind": "source",
+                "source": "git:https://example.invalid/souls.git",
+                "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "path": "agents/domain-expert/soul.yaml",
+                "integrity": {
+                  "format": "oats.bytes.v1",
+                  "value": "sha256-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                }
+              },
+              "pointer": "/knowledge"
+            }
+          },
+          "destination": {
+            "mode": "inherit",
+            "choiceKey": "/bindings/knowledge/write/default",
+            "origin": {
+              "kind": "soul-requirement",
+              "document": {
+                "kind": "source",
+                "source": "git:https://example.invalid/souls.git",
+                "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "path": "agents/domain-expert/soul.yaml",
+                "integrity": {
+                  "format": "oats.bytes.v1",
+                  "value": "sha256-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                }
+              },
+              "pointer": "/knowledge"
+            }
+          }
+        },
+        "reads": [
+          {
+            "store": "reference",
+            "node": "conventions",
+            "origin": {
+              "kind": "soul-requirement",
+              "document": {
+                "kind": "source",
+                "source": "git:https://example.invalid/souls.git",
+                "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "path": "agents/domain-expert/soul.yaml",
+                "integrity": {
+                  "format": "oats.bytes.v1",
+                  "value": "sha256-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                }
+              },
+              "pointer": "/knowledge"
+            }
+          },
+          {
+            "store": "local",
+            "node": "observations",
+            "origin": {
+              "kind": "soul-requirement",
+              "document": {
+                "kind": "source",
+                "source": "git:https://example.invalid/souls.git",
+                "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "path": "agents/domain-expert/soul.yaml",
+                "integrity": {
+                  "format": "oats.bytes.v1",
+                  "value": "sha256-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                }
+              },
+              "pointer": "/knowledge"
+            }
+          }
+        ],
+        "owns": [
+          {
+            "node": "expert",
+            "destination": "destination",
+            "choiceKey": "/bindings/knowledge/write/default",
+            "origin": {
+              "kind": "soul-requirement",
+              "document": {
+                "kind": "source",
+                "source": "git:https://example.invalid/souls.git",
+                "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "path": "agents/domain-expert/soul.yaml",
+                "integrity": {
+                  "format": "oats.bytes.v1",
+                  "value": "sha256-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                }
+              },
+              "pointer": "/knowledge"
+            }
+          }
+        ],
+        "requirements": [
+          {
+            "key": "/bindings/knowledge/stores/reference",
+            "kind": "equals",
+            "value": {
+              "id": "public-reference",
+              "kind": "git",
+              "repository": "https://example.invalid/knowledge.git",
+              "root": "knowledge",
+              "acceptedBranch": "main",
+              "pr": {
+                "repository": "example/knowledge"
+              }
+            },
+            "origin": {
+              "kind": "soul-requirement",
+              "document": {
+                "kind": "source",
+                "source": "git:https://example.invalid/souls.git",
+                "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "path": "agents/domain-expert/soul.yaml",
+                "integrity": {
+                  "format": "oats.bytes.v1",
+                  "value": "sha256-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                }
+              },
+              "pointer": "/knowledge"
+            }
+          },
+          {
+            "key": "/bindings/knowledge/write/default",
+            "kind": "required",
+            "origin": {
+              "kind": "soul-requirement",
+              "document": {
+                "kind": "source",
+                "source": "git:https://example.invalid/souls.git",
+                "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "path": "agents/domain-expert/soul.yaml",
+                "integrity": {
+                  "format": "oats.bytes.v1",
+                  "value": "sha256-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                }
+              },
+              "pointer": "/knowledge"
+            }
+          }
+        ],
+        "candidates": [
+          {
+            "key": "/bindings/knowledge/stores/local",
+            "kind": "soul-default",
+            "value": {
+              "id": "local-notes",
+              "kind": "directory",
+              "path": "path:/srv/oats/example/local-notes"
+            },
+            "origin": {
+              "kind": "soul-default",
+              "document": {
+                "kind": "source",
+                "source": "git:https://example.invalid/souls.git",
+                "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "path": "agents/domain-expert/soul.yaml",
+                "integrity": {
+                  "format": "oats.bytes.v1",
+                  "value": "sha256-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                }
+              },
+              "pointer": "/knowledge"
+            }
+          }
+        ]
+      },
+      "runtime": {
+        "descriptorFile": "/srv/oats/example/config/okf-bindings.json",
+        "stateDir": "/srv/oats/example/state",
+        "execution": {
+          "runtime": "pi",
+          "model": null
+        }
+      }
+    },
+    "choices": {
+      "/bindings/knowledge/stores/local": {
+        "value": {
+          "id": "local-notes",
+          "kind": "directory",
+          "path": "path:/srv/oats/example/local-notes"
+        },
+        "selectedBy": {
+          "kind": "soul-default",
+          "document": {
+            "kind": "source",
+            "source": "git:https://example.invalid/souls.git",
+            "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "path": "agents/domain-expert/soul.yaml",
+            "integrity": {
+              "format": "oats.bytes.v1",
+              "value": "sha256-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            }
+          },
+          "pointer": "/knowledge"
+        },
+        "constraints": [],
+        "considered": [
+          {
+            "kind": "soul-default",
+            "value": {
+              "id": "local-notes",
+              "kind": "directory",
+              "path": "path:/srv/oats/example/local-notes"
+            },
+            "origin": {
+              "kind": "soul-default",
+              "document": {
+                "kind": "source",
+                "source": "git:https://example.invalid/souls.git",
+                "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "path": "agents/domain-expert/soul.yaml",
+                "integrity": {
+                  "format": "oats.bytes.v1",
+                  "value": "sha256-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                }
+              },
+              "pointer": "/knowledge"
+            },
+            "disposition": "selected"
+          }
+        ]
+      },
+      "/bindings/knowledge/stores/reference": {
+        "value": {
+          "id": "public-reference",
+          "kind": "git",
+          "repository": "https://example.invalid/knowledge.git",
+          "root": "knowledge",
+          "acceptedBranch": "main",
+          "pr": {
+            "repository": "example/knowledge"
+          }
+        },
+        "selectedBy": {
+          "kind": "soul-requirement",
+          "document": {
+            "kind": "source",
+            "source": "git:https://example.invalid/souls.git",
+            "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "path": "agents/domain-expert/soul.yaml",
+            "integrity": {
+              "format": "oats.bytes.v1",
+              "value": "sha256-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            }
+          },
+          "pointer": "/knowledge"
+        },
+        "constraints": [
+          {
+            "kind": "equals",
+            "value": {
+              "id": "public-reference",
+              "kind": "git",
+              "repository": "https://example.invalid/knowledge.git",
+              "root": "knowledge",
+              "acceptedBranch": "main",
+              "pr": {
+                "repository": "example/knowledge"
+              }
+            },
+            "origin": {
+              "kind": "soul-requirement",
+              "document": {
+                "kind": "source",
+                "source": "git:https://example.invalid/souls.git",
+                "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "path": "agents/domain-expert/soul.yaml",
+                "integrity": {
+                  "format": "oats.bytes.v1",
+                  "value": "sha256-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                }
+              },
+              "pointer": "/knowledge"
+            }
+          }
+        ],
+        "considered": []
+      },
+      "/bindings/knowledge/write/default": {
+        "value": {
+          "id": "private-knowledge",
+          "kind": "directory",
+          "path": "path:/srv/oats/example/private-knowledge"
+        },
+        "selectedBy": {
+          "kind": "operator",
+          "document": {
+            "kind": "operator",
+            "id": "documented-operator-choice"
+          },
+          "pointer": "/bindings"
+        },
+        "constraints": [
+          {
+            "kind": "required",
+            "origin": {
+              "kind": "soul-requirement",
+              "document": {
+                "kind": "source",
+                "source": "git:https://example.invalid/souls.git",
+                "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "path": "agents/domain-expert/soul.yaml",
+                "integrity": {
+                  "format": "oats.bytes.v1",
+                  "value": "sha256-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                }
+              },
+              "pointer": "/knowledge"
+            }
+          }
+        ],
+        "considered": [
+          {
+            "kind": "workspace-default",
+            "value": {
+              "id": "workspace-knowledge",
+              "kind": "directory",
+              "path": "path:/srv/oats/example/workspace-knowledge"
+            },
+            "origin": {
+              "kind": "workspace-default",
+              "document": {
+                "kind": "source",
+                "source": "git:https://example.invalid/workspace.git",
+                "revision": "cccccccccccccccccccccccccccccccccccccccc",
+                "path": "oats-workspace.yaml",
+                "integrity": {
+                  "format": "oats.bytes.v1",
+                  "value": "sha256-dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+                }
+              },
+              "pointer": "/knowledge"
+            },
+            "disposition": "overridden"
+          },
+          {
+            "kind": "import-adoption",
+            "value": {
+              "id": "adopted-knowledge",
+              "kind": "directory",
+              "path": "path:/srv/oats/example/adopted-knowledge"
+            },
+            "origin": {
+              "kind": "import-adoption",
+              "document": {
+                "kind": "source",
+                "source": "git:https://example.invalid/workspace.git",
+                "revision": "cccccccccccccccccccccccccccccccccccccccc",
+                "path": "oats-workspace.yaml",
+                "integrity": {
+                  "format": "oats.bytes.v1",
+                  "value": "sha256-dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+                }
+              },
+              "pointer": "/imports/0/adoption/bindings"
+            },
+            "disposition": "overridden"
+          },
+          {
+            "kind": "operator",
+            "value": {
+              "id": "private-knowledge",
+              "kind": "directory",
+              "path": "path:/srv/oats/example/private-knowledge"
+            },
+            "origin": {
+              "kind": "operator",
+              "document": {
+                "kind": "operator",
+                "id": "documented-operator-choice"
+              },
+              "pointer": "/bindings"
+            },
+            "disposition": "selected"
+          }
+        ]
+      }
+    },
+    "context": {
+      "kind": "standalone",
+      "key": "documentation-example"
+    }
+  }
+}

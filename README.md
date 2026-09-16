@@ -92,6 +92,119 @@ JSON Schemas are in `schemas/` in the capability and repository. Runtime also
 checks filesystem containment, identities, overlap, base metadata and complete
 OKF conformance; schema validation alone cannot establish these properties.
 
+## Portable source bindings (planned OATS >=0.24.0, unreleased)
+
+The repository contains the provider side of the next portable binding flow, but
+the published package baseline remains OATS 0.23.x. The coordinated framework
+and provider release will require **OATS >=0.24.0**. Until that release, keep
+using the legacy v2 configuration and migration procedures below; do not copy
+internal codec commands into an older installation.
+
+A portable soul owns its knowledge declaration, not the deployment's concrete
+credentials or mutable readiness. Its decoded `knowledge` value uses
+`oats.okf.locations@1`:
+
+```json
+{
+  "contract": "oats.okf.locations",
+  "version": 1,
+  "payload": {
+    "owner": "domain-expert",
+    "stores": {
+      "reference": {"fixed": {"id":"public-reference","kind":"git","repository":"https://example.invalid/knowledge.git","root":"knowledge","acceptedBranch":"main","pr":{"repository":"example/knowledge"}}},
+      "local": {"default": {"id":"local-notes","kind":"directory","path":"path:/srv/oats/example/local-notes"}},
+      "destination": {"inherit": "write.default"}
+    },
+    "reads": [{"store":"reference","node":"conventions"}],
+    "owns": [{"node":"expert","destination":"destination"}]
+  }
+}
+```
+
+`fixed` is a source-owned equality constraint, `default` is a source fallback
+candidate, and `inherit` requires a separately supplied binding. Reads never
+become write destinations. Every owned node names a destination or requires the
+explicit `write.default`; the provider never invents one.
+
+A matching workspace entry carries provider-owned bindings inside its envelope:
+
+```json
+{
+  "knowledge": {
+    "stores": [{
+      "contract": "oats.okf.locations",
+      "version": 1,
+      "payload": {"bindings": {
+        "write.default": {"id":"workspace-knowledge","kind":"directory","path":"path:/srv/oats/example/workspace-knowledge"}
+      }}
+    }]
+  }
+}
+```
+
+Workspace, import-adoption and operator values remain separate candidates. OKF
+does not choose precedence; it emits requirements/candidates under
+`/bindings/knowledge/...` for the kernel's single resolver. Other providers own
+their own payloads—the kernel does not impose the OKF store/node model on them.
+
+Portable preparation selects explicit capability settings:
+
+```json
+{
+  "bindings-file": "/srv/oats/example/config/okf-bindings.json",
+  "state-dir": "/srv/oats/example/state",
+  "harvest-runtime": "pi",
+  "harvest-model": "provider/model-if-explicitly-selected"
+}
+```
+
+`bindings-file` is the host-owned descriptor location used for path custody;
+`state-dir` is independent durable state. Both are normalized physical absolute
+paths and neither is derived from a disposable instance home. `harvest-runtime`
+is selected (manifest default: `pi`); `harvest-model` is optional and is never
+guessed. These nonsecret values are captured into the effective binding.
+
+The manifest exposes broker-owned `binding-normalize`, `binding-bind`, and
+`binding-check` commands. They are bounded JSON protocol entrypoints, not manual
+operator commands. The framework verifies and obtains exact executable approval
+for retained provider bytes **before** running any codec. Normalize emits
+requirements/candidates/model; bind emits nonsecret ProviderBinding1 fields;
+check is read-only and can return `ready`, `needs-configuration`,
+`authorization-required`, or `unavailable`. A binding is not proof of store
+acceptance, credentials, provider enrollment, privacy, or wider-team consent.
+
+Captured command/lifecycle invocation uses short-lived, same-user mode-0600
+snapshots:
+
+- `OATS_BINDING_FILE` contains exactly the retained ProviderBinding1.
+- `OATS_SOURCE_RECEIPT_FILE` additionally carries the parent-qualified persistent
+  or helper lifecycle receipt for captured spawn/retire.
+
+The framework creates them outside source homes and retained artifacts and removes
+them after the synchronous invocation. The provider validates them strictly and
+never stores their paths. A persistent registration freezes the complete binding,
+rendered v1 runtime documents, qualified source identity, role, execution binding
+and explicit responsible human into the existing durable source descriptor. A
+helper registers no owner/source. `responsibleHuman: null` specifically means
+messaging was disabled; a missing value is unknown and refuses.
+
+New captured persistent sources receive a schedule with
+`definitionVersion: 2`, `recurrencePolicy: "capture"`, explicit saved
+`--deployment`/`--resolution` selectors and `--json`. It omits legacy `--soul`
+selection. Subsequent read, refresh, inspect, harvest, run-source, complete and
+retry use the exact frozen descriptor and existing view/worker/publication
+machinery after source/config deletion. Captured `setup`, `init`, `migrate` and
+`unlock` deliberately return non-ready/refuse before mutation; run those only as
+separate explicit operator administration on the legacy/provisioning boundary.
+
+Git locators retain exact accepted-branch and same-repository PR routing. Check
+uses private temporary read staging and verifies the effective remote; knowledge
+publication remains PR-only with no direct-write fallback.
+
+Runnable protocol data is in
+[`examples/portable-binding/`](examples/portable-binding/). Those examples use
+reserved documentation paths and `example.invalid`, not deployment values.
+
 ## Explicit provisioning
 
 Prepare per-base node maps. `/absolute/config/project-nodes.json`:
