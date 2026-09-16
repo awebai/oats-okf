@@ -1,7 +1,7 @@
 import { TextDecoder } from 'node:util';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
-import { fs } from './io.mjs';
+import { fs, safePath } from './io.mjs';
 import {
   KNOWLEDGE_CONTRACT,
   KNOWLEDGE_CONTRACT_VERSION,
@@ -167,6 +167,35 @@ function bindingPayload(binding) {
 export function sourceRuntimeFromKnowledgeBinding(binding) {
   const {domain,runtime,execution}=bindingPayload(binding);
   return {owner:domain.owner,bindings:{file:runtime.descriptorFile,...runtime.bindings},decl:runtime.declaration,execution:{...execution}};
+}
+
+const invocationError=()=>{throw Object.assign(new Error('invalid captured provider binding snapshot'),{code:'E_BINDING'});};
+function readInvocationSnapshot(file) {
+  if(!absolute(file)) invocationError();
+  let fd;
+  try {
+    if(safePath(file)!==file) invocationError();
+    const before=fs.lstatSync(file);
+    if(!before.isFile() || before.nlink!==1 || before.size>BINDING_WIRE_LIMITS.bytes) invocationError();
+    fd=fs.openSync(file,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW|fs.constants.O_NONBLOCK);
+    const opened=fs.fstatSync(fd);
+    if(!opened.isFile() || opened.nlink!==1 || opened.dev!==before.dev || opened.ino!==before.ino || opened.size>BINDING_WIRE_LIMITS.bytes) invocationError();
+    const bytes=Buffer.alloc(Math.min(BINDING_WIRE_LIMITS.bytes+1,opened.size+1));let length=0;
+    while(length<bytes.length) {const count=fs.readSync(fd,bytes,length,bytes.length-length,null);if(!count) break;length+=count;}
+    const after=fs.fstatSync(fd);
+    if(length>BINDING_WIRE_LIMITS.bytes || after.size!==opened.size || after.mtimeMs!==opened.mtimeMs) invocationError();
+    return parseBindingJson(bytes.subarray(0,length));
+  } catch(error) {if(error?.code==='E_BINDING') throw error;invocationError();}
+  finally {if(fd!==undefined) fs.closeSync(fd);}
+}
+
+/** Load only the parent-owned transient ProviderBinding1 snapshot when present.
+ * Absence is an explicit legacy mode; every present-file defect fails closed. */
+export function loadInvocationKnowledgeBinding(env=process.env) {
+  if(!Object.hasOwn(env,'OATS_BINDING_FILE')) return {kind:'legacy'};
+  const file=env.OATS_BINDING_FILE,binding=readInvocationSnapshot(file);
+  let runtime;try{runtime=sourceRuntimeFromKnowledgeBinding(binding);}catch{invocationError();}
+  return {kind:'captured',file,binding,runtime};
 }
 function problem(code) {return {code};}
 function checkPhase(req) {

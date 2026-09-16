@@ -83,3 +83,11 @@ base checks. Directory bases are read in place. Git bases use the existing
 success and ordinary failure; accepted repositories/remotes are never mutated.
 Check never reloads source/config YAML or JSON, initializes a base, enrolls a
 provider, starts a worker, creates a PR, or publishes.
+
+Captured command/lifecycle invocations may supply `OATS_BINDING_FILE`, pointing
+to a private transient snapshot containing exactly ProviderBinding1. The provider
+requires a normalized absolute, non-symlinked single-link regular file, applies
+the same 1 MiB strict duplicate-safe codec and projects its frozen runtime data.
+Any present-file defect refuses; it never falls through to `OATS_SETTINGS` or a
+live soul. Absence remains an explicit legacy path. Durable source descriptors
+store the complete binding and projected documents, never this transient path.

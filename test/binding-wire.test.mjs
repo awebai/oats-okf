@@ -6,9 +6,10 @@ import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { bindingChoiceKey, storeChoiceKey } from '../oats-package/capabilities/oats-okf/lib/portable-binding.mjs';
-import { parseBindingJson, sourceRuntimeFromKnowledgeBinding } from '../oats-package/capabilities/oats-okf/lib/binding-wire.mjs';
-import { validateBindings } from '../oats-package/capabilities/oats-okf/lib/config.mjs';
+import { loadInvocationKnowledgeBinding, parseBindingJson, sourceRuntimeFromKnowledgeBinding } from '../oats-package/capabilities/oats-okf/lib/binding-wire.mjs';
+import { bindingFingerprint, validateBindings } from '../oats-package/capabilities/oats-okf/lib/config.mjs';
 import { initBase } from '../oats-package/capabilities/oats-okf/lib/migration.mjs';
+import { loadSource, register } from '../oats-package/capabilities/oats-okf/lib/sources.mjs';
 import { tree } from '../oats-package/capabilities/oats-okf/lib/io.mjs';
 
 const ROOT=fileURLToPath(new URL('../',import.meta.url));
@@ -113,6 +114,39 @@ test('check validates real directory and private-staged Git acceptance read-only
   const redirected=call('check',request('check',{}, {binding:rewritten,context:{},action:{kind:'spawn'}}),{HOME:rewriteHome,TMPDIR:scratch});
   assert.deepEqual(redirected.response.result,{status:'needs-configuration',problems:[{code:'provider-not-qualified'}]},'rewritten effective Git origins do not qualify');
   assert.deepEqual(fs.readdirSync(scratch),[]);
+});
+
+test('OATS_BINDING_FILE loads one frozen provider envelope and never falls back',t=>{
+  const {f,binding}=prepareBinding(t),snapshot=join(f.root,'invocation-binding.json');fs.writeFileSync(snapshot,canonical(binding),{mode:0o600});
+  assert.deepEqual(loadInvocationKnowledgeBinding({}),{kind:'legacy'});
+  const loaded=loadInvocationKnowledgeBinding({OATS_BINDING_FILE:snapshot});
+  assert.equal(loaded.kind,'captured');assert.equal(loaded.runtime.bindings.stateDir,f.stateDir);assert.deepEqual(loaded.runtime.decl,binding.payload.runtime.declaration);
+
+  for(const [name,value] of [
+    ['relative','relative.json'],['missing',join(f.root,'missing.json')],
+  ]) assert.throws(()=>loadInvocationKnowledgeBinding({OATS_BINDING_FILE:value}),error=>error.code==='E_BINDING',name);
+  const wrong=structuredClone(binding);wrong.capability='other.provider';fs.writeFileSync(snapshot,canonical(wrong));
+  assert.throws(()=>loadInvocationKnowledgeBinding({OATS_BINDING_FILE:snapshot}),{code:'E_BINDING'});
+  fs.writeFileSync(snapshot,'{"schemaVersion":1,"schemaVersion":1}');assert.throws(()=>loadInvocationKnowledgeBinding({OATS_BINDING_FILE:snapshot}),{code:'E_BINDING'});
+  fs.writeFileSync(snapshot,canonical(binding));const link=join(f.root,'binding-link.json');fs.symlinkSync(snapshot,link);
+  assert.throws(()=>loadInvocationKnowledgeBinding({OATS_BINDING_FILE:link}),{code:'E_BINDING'});
+
+  const oldBinding=process.env.OATS_BINDING_FILE,oldSettings=process.env.OATS_SETTINGS;
+  t.after(()=>{if(oldBinding===undefined) delete process.env.OATS_BINDING_FILE;else process.env.OATS_BINDING_FILE=oldBinding;if(oldSettings===undefined) delete process.env.OATS_SETTINGS;else process.env.OATS_SETTINGS=oldSettings;});
+  process.env.OATS_BINDING_FILE=snapshot;process.env.OATS_SETTINGS=JSON.stringify({'bindings-file':join(f.root,'poison-live.json'),'state-dir':join(f.root,'poison-state')});
+  const home=join(f.root,'new-home');fs.mkdirSync(home);fs.writeFileSync(join(home,'instance.json'),JSON.stringify({instance:'fixture',agent:'fixture'}));
+  assert.throws(()=>register(home),error=>error.code==='E_MIGRATION' && /fallback is forbidden/.test(error.message));
+  assert.equal(fs.existsSync(f.stateDir),false);assert.equal(fs.existsSync(join(f.root,'poison-state')),false);
+
+  const frozen=sourceRuntimeFromKnowledgeBinding(binding),id='00000000-0000-4000-8000-000000000001',sourceFile=join(f.stateDir,'sources',id,'source.json'),{file:bindingsFile,...bindingsDoc}=frozen.bindings;
+  const checked=validateBindings(bindingsDoc,bindingsFile,{sourceHome:home,sourceWork:join(home,'work')});
+  const descriptor={version:1,id,home,work:join(home,'work'),context:f.root,agent:'fixture',instance:'fixture',owner:frozen.owner,decl:frozen.decl,role:'fixture',bindings:{file:frozen.bindings.file,...checked},bindingFingerprint:bindingFingerprint(checked),execution:frozen.execution,providerBinding:binding};
+  fs.mkdirSync(dirname(sourceFile),{recursive:true});fs.writeFileSync(sourceFile,JSON.stringify(descriptor));
+  fs.rmSync(snapshot);delete process.env.OATS_BINDING_FILE;
+  assert.equal(loadSource(sourceFile).owner,'expert-owner','frozen descriptor survives transient snapshot deletion');
+  fs.writeFileSync(snapshot,canonical(binding));process.env.OATS_BINDING_FILE=snapshot;assert.equal(loadSource(sourceFile).id,id);
+  const changed=structuredClone(binding);changed.payload.execution.model='other/model';fs.writeFileSync(snapshot,canonical(changed));
+  assert.throws(()=>loadSource(sourceFile),error=>error.code==='E_SOURCE' && /differs from frozen source/.test(error.message));
 });
 
 test('wire is strict, bounded, duplicate-safe and returns typed nonsecret errors',t=>{

@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { fs, join, dirname, resolve, safePath, readJSON, save, atomic, materialize, hash, withLock, oats, fail, tree, overlaps, syncDir } from './io.mjs';
 import { loadBindings, declaration, metadata, resolveNodes, bindingFingerprint, settings, validateBindings } from './config.mjs';
 import { stageBase } from './stores.mjs';
+import { loadInvocationKnowledgeBinding, sourceRuntimeFromKnowledgeBinding } from './binding-wire.mjs';
+import { sameJson } from './portable-binding.mjs';
 export const markerPath = home => join(home,'.okf-source.json');
 export const statusPath = source => join(dirname(source.file),'status.json');
 export const saveStatus = (source,status) => save(statusPath(source),status);
@@ -25,6 +27,16 @@ export function loadSource(file) {
   const {file:bindingsFile,...bindingsDoc}=s.bindings;
   const checked=validateBindings(bindingsDoc,bindingsFile,{sourceHome:s.home,sourceWork:s.work});
   if(bindingFingerprint(checked)!==s.bindingFingerprint) fail('E_SOURCE','frozen bindings fingerprint mismatch');
+  if(s.providerBinding!==undefined) {
+    let frozen;try{frozen=sourceRuntimeFromKnowledgeBinding(s.providerBinding);}catch{fail('E_SOURCE','invalid frozen provider binding');}
+    const actual={owner:s.owner,bindings:{file:bindingsFile,version:checked.version,stateDir:checked.stateDir,bases:checked.bases},decl:s.decl,execution:s.execution};
+    if(!sameJson(frozen,actual)) fail('E_SOURCE','frozen provider binding differs from source runtime');
+  }
+  const invocation=loadInvocationKnowledgeBinding();
+  if(invocation.kind==='captured') {
+    if(s.providerBinding===undefined) fail('E_MIGRATION','legacy source descriptor cannot consume a captured provider binding');
+    if(!sameJson(invocation.binding,s.providerBinding)) fail('E_SOURCE','invocation provider binding differs from frozen source');
+  }
   return {...s,file};
 }
 export function homeSource(home) { const m=readJSON(markerPath(home)); const s=loadSource(m.source); if(s.id!==m.id || s.home!==home) fail('E_SOURCE','home identity does not match durable source');return s; }
@@ -76,8 +88,10 @@ function finishRegistration(source) {
 }
 export function register(home) {
   home=safePath(home);
+  const invocation=loadInvocationKnowledgeBinding();
   if(service(home)) return {skipped:'service'};
   if(fs.existsSync(markerPath(home))) return finishRegistration(homeSource(home));
+  if(invocation.kind==='captured') fail('E_MIGRATION','captured provider binding requires durable captured-source registration; current soul/config fallback is forbidden');
   safePath(join(home,'knowledge'));
   if(fs.existsSync(join(home,'knowledge'))) fail('E_VIEW','unregistered knowledge view exists; preserve it and inspect before registering');
   if(['.okf-harvest-record.json','.okf-harvest-record.next.json'].some(p=>fs.existsSync(join(home,p))) && !fs.existsSync(join(home,'.okf-v1-migration.json'))) fail('E_MIGRATION','legacy source watermarks require explicit oats okf migrate --source-home PATH before v2 registration; no cursor is silently trusted');
