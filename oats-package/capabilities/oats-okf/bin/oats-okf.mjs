@@ -6,6 +6,7 @@ import { register, homeSource, loadSource, loadStatus, saveStatus, updateStatus,
 import { runSource, complete, retry, readRun } from '../lib/worker.mjs';
 import { initBase, migrate, deliverMigration, cutoverMigration, migrateSource } from '../lib/migration.mjs';
 import { inspect } from '../lib/inspection.mjs';
+import { loadInvocationKnowledgeBinding } from '../lib/binding-wire.mjs';
 const HELP=`oats okf inspect [--home PATH | --source FILE] [--json]
 oats okf harvest [--home PATH] [--no-launch] [--json]
 oats okf run-source --source FILE [--manual] [--no-launch] [--json]
@@ -48,8 +49,14 @@ else {
     };
     for(const k of Object.keys(flags)) if(!['json','soul',...(accepted[event] || [])].includes(k)) fail('E_USAGE',`unknown flag --${k} for ${event}`);
     if(flags.source && flags.home) fail('E_USAGE','choose source descriptor OR home');
+    const invocation=loadInvocationKnowledgeBinding(),captured=invocation.kind==='captured';
+    const unsupportedCaptured=new Set(['setup','init','migrate','unlock']);
+    if(captured && unsupportedCaptured.has(event)) fail('E_MIGRATION',`captured ${event} is not supported; use an explicit operator administration path`);
     const home=resolve(flags.home || process.env.OATS_INSTANCE_HOME || process.env.OATS_HOME || process.cwd());
-    const src=()=>flags.source?loadSource(resolve(flags.source)):homeSource(home);
+    const src=()=>{
+      try {return flags.source?loadSource(resolve(flags.source)):homeSource(home);}
+      catch(error) {if(captured && ['ENOENT','ENOTDIR'].includes(error.code)) fail('E_SOURCE','captured command requires its durable registered source descriptor');throw error;}
+    };
     let result;
     if(event==='soul-scaffold') {
       // Souls are portable declarations, never an implicit knowledge store.
@@ -62,6 +69,7 @@ else {
         result={meta:{memory:'okf-v2',source:s.file,schedule},brief:`Knowledge is an immutable accepted snapshot at ./knowledge/. Read knowledge/view.json for base paths under knowledge/bases/<alias>/, then the indexes for ${[...new Set([...s.decl.owns,...s.decl.reads])].join(', ')}. Follow only relevant links. All configured bases are available. Use oats okf read for current accepted text; old views stay stable. Keep STATE.md/log.md/notes/ current; never edit knowledge.`};
       }
     } else if(event==='retire') {
+      if(captured && !fs.existsSync(markerPath(home))) fail('E_MIGRATION','captured retire requires a durable registered source or explicit helper receipt');
       if(service(home)) result={meta:{retired:true}};
       else if(!fs.existsSync(markerPath(home))) {
         if(['STATE.md','log.md','notes','.okf-harvest-record.json','.okf-harvest-record.next.json'].some(p=>fs.existsSync(join(home,p)))) fail('E_MIGRATION','unregistered/legacy source has memory; explicitly migrate/register before retirement');

@@ -92,6 +92,17 @@ Any present-file defect refuses; it never falls through to `OATS_SETTINGS` or a
 live soul. Absence remains an explicit legacy path. Durable source descriptors
 store the complete binding and projected documents, never this transient path.
 
+Captured command authority is explicit:
+
+| Commands / operation route | Captured authority |
+|---|---|
+| `inspect`, `read`, `refresh` | Exact registered source descriptor whose frozen ProviderBinding equals `OATS_BINDING_FILE`; existing immutable/durable view machinery only. |
+| `harvest`, `run-source`, `complete`, `retry` | Same exact frozen descriptor and existing input/run/worker/publication custody; no live bindings or soul declaration. |
+| `spawn`, `retire` | Existing registered source only until the parent supplies the explicit captured lifecycle receipt; missing registration refuses. |
+| `setup`, `init`, `migrate`, `unlock` | Unsupported under captured invocation and refused before scheduler/base/lock mutation. Use a separate explicit operator administration path. |
+| `soul-scaffold`, `--help` | Stateless guidance only; they do not resolve bindings or create knowledge. |
+| No `OATS_BINDING_FILE` | Explicit legacy behavior, unchanged pending migration. |
+
 `registerCaptured(home, receipt)` consumes the parent-qualified lifecycle receipt
 directly. Persistent receipts write the existing source/status/view/marker layout
 with the complete binding, execution binding, responsible human, retained role,

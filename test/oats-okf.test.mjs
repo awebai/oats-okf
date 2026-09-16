@@ -205,6 +205,9 @@ test('captured registration freezes qualified identity, binding and v2 schedule 
   assert.equal(spec.definitionVersion,2);assert.equal(spec.recurrencePolicy,'capture');assert.equal(spec.responsibleHuman,null);assert.equal(spec.cwd,f.context);
   assert.ok(spec.argv.includes('--deployment'));assert.ok(spec.argv.includes('--resolution'));assert.ok(spec.argv.includes('--json'));assert.equal(spec.argv.includes('--soul'),false);
   assert.equal(spec.argv[spec.argv.indexOf('--resolution')+1],receipt.executionBinding.resolution.id);
+  save(snapshot,receipt.binding);const capturedEnv={OATS_BINDING_FILE:snapshot,OATS_SETTINGS:JSON.stringify({'bindings-file':join(f.dir,'poison.json'),'state-dir':join(f.dir,'poison-state')})},alias=f.base.id;
+  assert.equal(f.cli('inspect',[],capturedEnv).status,0);assert.equal(f.cli('read',['--base',alias],capturedEnv).status,0);assert.equal(f.cli('refresh',[],capturedEnv).status,0);
+  const schedulesBefore=fs.readFileSync(join(f.dir,'schedules.json'));const unsupported=f.cli('setup',['--source',s.file],capturedEnv);assert.equal(unsupported.status,1);assert.equal(unsupported.out.error.code,'E_MIGRATION');assert.deepEqual(fs.readFileSync(join(f.dir,'schedules.json')),schedulesBefore);
   note(f);capture(s,{final:true});fs.rmSync(f.home,{recursive:true});fs.rmSync(f.soul,{recursive:true});fs.rmSync(f.bindingFile);process.env.OATS_SETTINGS=JSON.stringify({'bindings-file':join(f.dir,'poison.json'),'state-dir':join(f.dir,'poison-state')});
   const frozen=loadSource(s.file);assert.equal(frozen.id,s.id);assert.equal(fs.existsSync(join(f.dir,'poison-state')),false);
   const run=readRun(frozen,runSource(frozen,{manual:true,noLaunch:true}).run);assert.equal(complete(frozen,run.id,judgment(f,frozen,run,{drop:true})).processed,true);
@@ -224,6 +227,19 @@ test('captured helper skips ownership and legacy owner evidence requires explici
   const legacy=fixture(t);fs.mkdirSync(legacy.bindings.stateDir,{recursive:true});save(join(legacy.bindings.stateDir,'owners.json'),{'owner-1':legacy.soul});
   assert.throws(()=>registerCaptured(legacy.home,capturedReceipt(legacy)),error=>error.code==='E_MIGRATION' && /owner registry evidence/.test(error.message));
   assert.equal(fs.existsSync(join(legacy.home,'.okf-source.json')),false);assert.equal(fs.existsSync(join(legacy.bindings.stateDir,'sources')),false);
+});
+test('captured published commands fail closed on missing source, invalid snapshot and administration',t=>{
+  const f=fixture(t),receipt=capturedReceipt(f),snapshot=join(f.dir,'binding.json'),poison=join(f.dir,'poison-state');save(snapshot,receipt.binding);
+  const env={OATS_BINDING_FILE:snapshot,OATS_SETTINGS:JSON.stringify({'bindings-file':join(f.dir,'poison.json'),'state-dir':poison})};
+  for(const [command,args=[]] of [['inspect'],['read',['--base',f.base.id]],['refresh'],['harvest',['--no-launch']],['retire'],['spawn']]) {
+    const result=f.cli(command,args,env);assert.equal(result.status,1,`${command}: ${result.stdout}`);
+  }
+  for(const [command,args] of [['setup',['--source',join(f.dir,'missing-source.json')]],['init',['--base',f.base.id,'--nodes',join(f.dir,'missing-nodes.json'),'--confirm']],['migrate',['--legacy',join(f.dir,'legacy'),'--base',f.base.id,'--node','expert','--output',join(f.dir,'stage')]],['unlock',['--lock',join(f.dir,'missing-lock'),'--token','no-token']]]) {
+    const result=f.cli(command,args,env);assert.equal(result.status,1);assert.equal(result.out.error.code,'E_MIGRATION',command);
+  }
+  assert.equal(fs.existsSync(poison),false);assert.equal(fs.existsSync(join(f.home,'.okf-source.json')),false);
+  put(snapshot,'{"schemaVersion":1,"schemaVersion":1}');const invalid=f.cli('inspect',[],env);assert.equal(invalid.status,1);assert.equal(invalid.out.error.code,'E_BINDING');assert.equal(fs.existsSync(poison),false);
+  save(snapshot,receipt.binding);assert.equal(f.cli('soul-scaffold',[],env).status,0,'stateless scaffold guidance remains side-effect free');assert.equal(fs.existsSync(poison),false);
 });
 test('completion rejects invalid judgment and credential-shaped promotion output',t=>{
   const f=fixture(t);note(f);const {s,run}=prepared(f);const j=judgment(f,s,run,{secret:true});assert.throws(()=>complete(s,run.id,j),/credential-shaped/);const doc=readJSON(j);doc.outcomes=[];save(j,doc);assert.throws(()=>complete(s,run.id,j),/exactly one outcome/);assert.equal(loadStatus(s).processed.length,0);
