@@ -139,6 +139,13 @@ test('semantic JSON equality ignores object key order and preserves array order'
   assert.equal(sameJson({a:[1,2]},{a:[2,1]}),false);
 });
 
+test('Git locator ingress rejects query and fragment credentials without echoing values',()=>{
+  for(const repository of ['https://example.invalid/kb.git?access_token=SYNTHETIC_SECRET','https://example.invalid/kb.git#SYNTHETIC_SECRET','ssh://git@example.invalid/kb.git?token=SYNTHETIC_SECRET','ssh://git@example.invalid/kb.git#SYNTHETIC_SECRET','git@example.invalid:kb.git?token=SYNTHETIC_SECRET','git@example.invalid:kb.git#SYNTHETIC_SECRET','https://example.invalid/a/../kb.git','https://example.invalid/%2e%2e/kb.git']) {
+    assert.throws(()=>validateStoreLocator({...git('base'),repository}),error=>error.code==='E_CONFIG' && !error.message.includes('SYNTHETIC_SECRET'));
+  }
+  for(const repository of ['https://example.invalid/kb.git','ssh://git@example.invalid/kb.git','ssh://deploy_user@example.invalid/kb.git','git@example.invalid:group/kb.git']) assert.equal(validateStoreLocator({...git('base'),repository}).repository,repository);
+});
+
 test('stable identities, destinations and nonsecret locators fail closed',()=>{
   const base={owner:'expert-owner',stores:{one:{fixed:directory('one','/srv/one')}},reads:[],owns:[]};
   for(const payload of [

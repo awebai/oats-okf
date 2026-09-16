@@ -1,5 +1,6 @@
 import { fs, join, dirname, safePath, fail, oats } from './io.mjs';
 import { markerPath, loadStatus } from './sources.mjs';
+import { qualifiedSoulIdentity } from './source-contract.mjs';
 
 // Keep the v1 labeled-document contract, including its explicit per-document
 // preview cap. The JSON envelope itself must drain in full through stdout.
@@ -92,7 +93,9 @@ export function capturedAuthority(source) {
     && source.providerBinding && typeof source.providerBinding==='object' && identity && typeof identity==='object' && !Array.isArray(identity)
     && binding?.schemaVersion===1 && typeof binding.deployment==='string' && binding.resolution?.schemaVersion===1 && typeof binding.resolution.id==='string'
     && Object.hasOwn(source,'responsibleHuman');
-  if(!complete || Buffer.byteLength(JSON.stringify({identity,binding}))>64*1024) return {...base,registration:'invalid',capture:'invalid',migrationRequired:true,responsibleHuman:{status:'unknown'}};
+  const invalid={...base,registration:'invalid',capture:'invalid',migrationRequired:true,responsibleHuman:{status:'unknown'}};
+  if(!complete) return invalid;
+  try {if(Buffer.byteLength(JSON.stringify({identity,binding}))>64*1024) return invalid;qualifiedSoulIdentity(identity);} catch {return invalid;}
   return {...base,registration:'captured',capture:'recorded',migrationRequired:false,sourceIdentity:JSON.parse(JSON.stringify(identity)),executionBinding:JSON.parse(JSON.stringify(binding)),
     responsibleHuman:{status:source.responsibleHuman===null?'disabled':'specified'}};
 }

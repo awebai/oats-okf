@@ -210,6 +210,10 @@ test('inspect authority distinguishes legacy, invalid, disabled and specified wi
   assert.equal(disabled.responsibleHuman.status,'disabled');assert.equal(specified.responsibleHuman.status,'specified');
   for(const result of [disabled,specified]) {assert.equal(Object.hasOwn(result,'providerBinding'),false);assert.doesNotMatch(JSON.stringify(result),/opaque|human-1|OATS_BINDING_FILE/);assert.ok(Buffer.byteLength(JSON.stringify(result))<65536);}
   assert.equal(capturedAuthority({...base,sourceIdentity:{kind:'git-soul',padding:'x'.repeat(65536)},responsibleHuman:null}).registration,'invalid','authority summary remains bounded');
+  for(const remote of ['git:https://user:SYNTHETIC_SECRET@example.invalid/soul.git','git:https://example.invalid/soul.git?token=SYNTHETIC_SECRET','git:ssh://git@example.invalid/soul.git#SYNTHETIC_SECRET','git:https://','git:https://example.invalid/../soul.git']) {
+    const bad={...base,sourceIdentity:{...base.sourceIdentity,repository:{kind:'canonical-remote',remote}},responsibleHuman:null},result=capturedAuthority(bad);
+    assert.equal(result.registration,'invalid');assert.doesNotMatch(JSON.stringify(result),/SYNTHETIC_SECRET|sourceIdentity/);
+  }
 });
 test('legacy inspect reports unknown registration authority without changing existing fields',t=>{
   const f=fixture(t),s=f.source(),result=f.cli('inspect');assert.equal(result.status,0,result.stdout);
@@ -260,6 +264,12 @@ test('captured completion command binds saved selectors and public provider comp
   const result=spawnSync('/bin/sh',['-c',completionCommand(s,id,judgmentFile)],{env,encoding:'utf8'});
   assert.equal(result.status,0,result.stderr+result.stdout);assert.equal(JSON.parse(result.stdout).result.processed,true);assert.equal(loadStatus(s).processed.length,run.inputs.length);
   assert.equal(fs.existsSync(join(f.dir,'workers')),false,'no fake legacy spawn occurred; this proves public provider completion, not a qualified kernel helper launch');
+});
+
+test('malformed captured source remote is refused by public inspect without secret echo',t=>{
+  const f=fixture(t),receipt=capturedReceipt(f),s=registerCaptured(f.home,receipt),snapshot=join(f.dir,'binding-snapshot.json');save(snapshot,receipt.binding);
+  const malformed=readJSON(s.file);malformed.sourceIdentity.repository.remote='git:https://user:SYNTHETIC_SECRET@example.invalid/source.git';save(s.file,malformed);
+  const result=f.cli('inspect',[],{OATS_BINDING_FILE:snapshot});assert.equal(result.status,1);assert.equal(result.out.error.code,'E_SOURCE');assert.doesNotMatch(result.stdout+result.stderr,/SYNTHETIC_SECRET/);
 });
 
 test('captured helper skips ownership and legacy owner evidence requires explicit migration',t=>{

@@ -1,6 +1,7 @@
 import { isAbsolute, resolve } from 'node:path';
 import { identifier, relPath, fail } from './io.mjs';
 import { resolveNodes, validateBindings, validateDeclaration } from './config.mjs';
+import { validateRepositoryLocator } from './source-contract.mjs';
 
 export const KNOWLEDGE_CONTRACT='oats.okf.locations';
 export const KNOWLEDGE_CONTRACT_VERSION=1;
@@ -46,8 +47,7 @@ export function validateStoreLocator(value) {
     return {id:value.id,kind:value.kind,path:value.path};
   } else if(value.kind==='git') {
     keys(value,['id','kind','repository','root','acceptedBranch','pr'],['id','kind','repository','root','acceptedBranch','pr'],'git store locator');
-    if(typeof value.repository!=='string' || !/^(?:https:\/\/|ssh:\/\/|git@)/.test(value.repository) || /[\r\n\0]/.test(value.repository)) fail('E_CONFIG','portable Git store requires an HTTPS or SSH repository');
-    if(/^(?:https|ssh):\/\//.test(value.repository)) {let url;try{url=new URL(value.repository);}catch{fail('E_CONFIG','invalid Git store repository');}if(url.password || (url.protocol==='https:' && url.username)) fail('E_CONFIG','Git store repository must not contain credentials');}
+    validateRepositoryLocator(value.repository);
     relPath(value.root,true);
     if(typeof value.acceptedBranch!=='string' || !/^[a-zA-Z0-9][a-zA-Z0-9._/-]*$/.test(value.acceptedBranch) || value.acceptedBranch.includes('..') || value.acceptedBranch.endsWith('/') || value.acceptedBranch.endsWith('.lock')) fail('E_CONFIG','invalid acceptedBranch');
     keys(value.pr,['repository'],['repository'],'git PR binding');if(typeof value.pr.repository!=='string' || !/^[\w.-]+\/[\w.-]+$/.test(value.pr.repository)) fail('E_CONFIG','git PR binding requires owner/repo');

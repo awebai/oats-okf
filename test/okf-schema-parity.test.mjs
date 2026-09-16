@@ -101,6 +101,13 @@ test('portable declaration and effective payload schemas match provider codecs a
   changed.payload.typo=true;assert.equal(conforms(changed.payload,schemas['portable-payload']),false);assert.throws(()=>sourceRuntimeFromKnowledgeBinding(changed));
 });
 
+test('portable Git schemas reject credential userinfo, query and fragment fields',()=>{
+  for(const schema of [schemas['portable-declaration'],schemas['portable-payload']]) {
+    for(const repository of ['https://user:SECRET@example.invalid/kb.git','ssh://git:SECRET@example.invalid/kb.git','https://example.invalid/kb.git?token=SECRET','ssh://git@example.invalid/kb.git#SECRET','git@example.invalid:kb.git?token=SECRET']) assert.equal(conforms({...git,repository},schema.$defs.git,schema),false);
+    assert.equal(conforms({...git,repository:'ssh://deploy_user@example.invalid/kb.git'},schema.$defs.git,schema),true);
+  }
+});
+
 test('R1 settings reject unknown properties using the exported manifest setting names',t=>{
   const prior=process.env.OATS_SETTINGS;t.after(()=>{if(prior===undefined) delete process.env.OATS_SETTINGS;else process.env.OATS_SETTINGS=prior;});
   const manifest=JSON.parse(fs.readFileSync(join(capability,'oats.json'),'utf8'));

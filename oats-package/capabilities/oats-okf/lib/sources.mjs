@@ -4,6 +4,7 @@ import { loadBindings, declaration, metadata, resolveNodes, bindingFingerprint, 
 import { stageBase } from './stores.mjs';
 import { loadInvocationKnowledgeBinding, readPrivateInvocationJson, sourceRuntimeFromKnowledgeBinding } from './binding-wire.mjs';
 import { sameJson } from './portable-binding.mjs';
+import { qualifiedSoulIdentity } from './source-contract.mjs';
 
 const obj=value=>value!==null && typeof value==='object' && !Array.isArray(value);
 function exact(value,allowed,required,label) {
@@ -13,20 +14,6 @@ function exact(value,allowed,required,label) {
   return value;
 }
 function absolute(value,label) {if(typeof value!=='string' || !value || resolve(value)!==value) fail('E_SOURCE',`${label} must be a normalized absolute path`);return value;}
-function qualifiedSoulIdentity(value) {
-  exact(value,value?.kind==='git-soul'?['kind','repository','exportPath']:['kind','source','exportPath'],value?.kind==='git-soul'?['kind','repository','exportPath']:['kind','source','exportPath'],'qualified soul identity');
-  if(value.kind==='git-soul') {
-    const repository=value.repository;
-    exact(repository,repository?.kind==='provider-repository'?['kind','provider','host','id']:['kind','remote'],repository?.kind==='provider-repository'?['kind','provider','host','id']:['kind','remote'],'repository identity');
-    if(repository.kind==='provider-repository') {
-      if(typeof repository.provider!=='string' || !/^[a-z][a-z0-9.-]*$/.test(repository.provider) || typeof repository.host!=='string' || !/^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/.test(repository.host) || typeof repository.id!=='string' || !repository.id) fail('E_SOURCE','invalid provider repository identity');
-    } else if(repository.kind!=='canonical-remote' || typeof repository.remote!=='string' || !/^git:(?:https:\/\/|ssh:\/\/|git@)/.test(repository.remote)) fail('E_SOURCE','invalid canonical repository identity');
-  } else if(value.kind==='local-soul') {
-    if(typeof value.source!=='string' || !value.source.startsWith('path:')) fail('E_SOURCE','local soul identity requires explicit path source');
-    absolute(value.source.slice(5),'local soul source');
-  } else fail('E_SOURCE','unsupported qualified soul identity');
-  relPath(value.exportPath,value.kind==='local-soul');return JSON.parse(JSON.stringify(value));
-}
 function executionBinding(value) {
   exact(value,['schemaVersion','deployment','resolution'],['schemaVersion','deployment','resolution'],'execution binding');
   exact(value.resolution,['schemaVersion','id'],['schemaVersion','id'],'resolution reference');
