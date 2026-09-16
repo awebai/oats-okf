@@ -233,15 +233,16 @@ test('captured helper skips ownership and legacy owner evidence requires explici
   assert.equal(fs.existsSync(join(legacy.home,'.okf-source.json')),false);assert.equal(fs.existsSync(join(legacy.bindings.stateDir,'sources')),false);
 });
 test('captured published commands fail closed on missing source, invalid snapshot and administration',t=>{
-  const f=fixture(t),receipt=capturedReceipt(f),snapshot=join(f.dir,'binding.json'),poison=join(f.dir,'poison-state');save(snapshot,receipt.binding);
-  const env={OATS_BINDING_FILE:snapshot,OATS_SETTINGS:JSON.stringify({'bindings-file':join(f.dir,'poison.json'),'state-dir':poison})};
+  const f=fixture(t),receipt=capturedReceipt(f),snapshot=join(f.dir,'binding.json'),poison=join(f.dir,'poison-state'),poisonFile=join(f.dir,'poison.json'),poisonBase=join(f.dir,'redirected-base'),nodes=join(f.dir,'poison-nodes.json');save(snapshot,receipt.binding);
+  save(poisonFile,{version:1,stateDir:poison,bases:{[f.base.id]:{id:f.base.id,kind:'directory',path:poisonBase}}});save(nodes,{expert:{path:'expert',owner:'owner-1'}});fs.rmSync(f.bindingFile);fs.rmSync(f.soul,{recursive:true});
+  const poisonBytes=fs.readFileSync(poisonFile),env={OATS_BINDING_FILE:snapshot,OATS_SETTINGS:JSON.stringify({'bindings-file':poisonFile,'state-dir':poison})};
   for(const [command,args=[]] of [['inspect'],['read',['--base',f.base.id]],['refresh'],['harvest',['--no-launch']],['retire'],['spawn']]) {
     const result=f.cli(command,args,env);assert.equal(result.status,1,`${command}: ${result.stdout}`);
   }
-  for(const [command,args] of [['setup',['--source',join(f.dir,'missing-source.json')]],['init',['--base',f.base.id,'--nodes',join(f.dir,'missing-nodes.json'),'--confirm']],['migrate',['--legacy',join(f.dir,'legacy'),'--base',f.base.id,'--node','expert','--output',join(f.dir,'stage')]],['unlock',['--lock',join(f.dir,'missing-lock'),'--token','no-token']]]) {
+  for(const [command,args] of [['setup',['--source',join(f.dir,'missing-source.json')]],['init',['--base',f.base.id,'--nodes',nodes,'--confirm']],['migrate',['--legacy',join(f.dir,'legacy'),'--base',f.base.id,'--node','expert','--output',join(f.dir,'stage')]],['unlock',['--lock',join(f.dir,'missing-lock'),'--token','no-token']]]) {
     const result=f.cli(command,args,env);assert.equal(result.status,1);assert.equal(result.out.error.code,'E_MIGRATION',command);
   }
-  assert.equal(fs.existsSync(poison),false);assert.equal(fs.existsSync(join(f.home,'.okf-source.json')),false);
+  assert.equal(fs.existsSync(poison),false);assert.equal(fs.existsSync(poisonBase),false);assert.deepEqual(fs.readFileSync(poisonFile),poisonBytes);assert.equal(fs.existsSync(join(f.home,'.okf-source.json')),false);
   put(snapshot,'{"schemaVersion":1,"schemaVersion":1}');const invalid=f.cli('inspect',[],env);assert.equal(invalid.status,1);assert.equal(invalid.out.error.code,'E_BINDING');assert.equal(fs.existsSync(poison),false);
   save(snapshot,receipt.binding);const receiptFile=join(f.dir,'source-receipt.json');put(receiptFile,'{"schemaVersion":1,"schemaVersion":1}');
   const invalidReceipt=f.cli('spawn',[],{...env,OATS_SOURCE_RECEIPT_FILE:receiptFile});assert.equal(invalidReceipt.status,1);assert.match(invalidReceipt.out.warning,/invalid captured source receipt/);

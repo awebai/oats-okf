@@ -18,6 +18,7 @@ import { stageBase, validateBase } from './stores.mjs';
 export const BINDING_WIRE_LIMITS=Object.freeze({bytes:1024*1024,depth:32,entries:16384});
 const CAPABILITY='oats.okf',SLOT='knowledge';
 const phases=new Set(['normalize','bind','check']);
+const unsupportedCapturedCommands=new Set(['setup','init','migrate','unlock']);
 const declarationKinds=new Set(['soul','workspace','adoption','operator']);
 const errorCodes=new Set(['needs-configuration','requirement-conflict','invalid-binding','authorization-required','host-requirement-missing','provider-unavailable','provider-not-qualified']);
 const obj=value=>value!==null && typeof value==='object' && !Array.isArray(value);
@@ -198,10 +199,18 @@ export function loadInvocationKnowledgeBinding(env=process.env) {
   return {kind:'captured',file,binding,runtime};
 }
 function problem(code) {return {code};}
+function providerActionName(action) {
+  if(action.kind!=='command') return null;
+  if(action.namespace==='okf' || action.capability===CAPABILITY) return action.name;
+  if(typeof action.name==='string' && action.name.startsWith('okf:')) return action.name.slice(4);
+  return null;
+}
 function checkPhase(req) {
   keys(req.input,['binding','context','action'],['binding','context','action'],'check input');
   if(!obj(req.input.context) || !obj(req.input.action)) wireError('invalid-binding');
-  const {runtime}=bindingPayload(req.input.binding);
+  const {runtime}=bindingPayload(req.input.binding),action=req.input.action,name=providerActionName(action);
+  if(name && unsupportedCapturedCommands.has(name)) return {status:'needs-configuration',problems:[problem('provider-not-qualified')]};
+  if(action.kind==='hook' && action.name==='soul-scaffold') return {status:'ready',problems:[]};
   let bindings;try{bindings=validateBindings(runtime.bindings,runtime.descriptorFile);}catch{return {status:'needs-configuration',problems:[problem('needs-configuration')]};}
   const accepted={},gitBases=Object.entries(bindings.bases).filter(([,base])=>base.kind==='git');
   if(gitBases.length>64) return {status:'unavailable',problems:[problem('provider-not-qualified')]};

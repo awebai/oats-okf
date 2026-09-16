@@ -80,6 +80,8 @@ test('normalize preserves separate authority candidates and bind emits the captu
   assert.doesNotThrow(()=>sourceRuntimeFromKnowledgeBinding(canonicalOrder),'canonical transport key order does not change binding identity');
   const canonicalCheck=call('check',canonical(request('check',{}, {binding:complete,context:{kind:'standalone',key:'fixture'},action:{kind:'spawn'}})));
   assert.equal(canonicalCheck.response.ok,true,'real canonical-order wire must not change structural payload equality');
+  const scaffold=call('check',request('check',{}, {binding:complete,context:{kind:'standalone',key:'fixture'},action:{kind:'hook',capability:'oats.okf',name:'soul-scaffold'}}));
+  assert.deepEqual(scaffold.response.result,{status:'ready',problems:[]});assert.equal(fs.existsSync(f.stateDir),false,'stateless qualification does not bootstrap missing bases or state');
 });
 
 test('check validates real directory and private-staged Git acceptance read-only',t=>{
@@ -88,6 +90,11 @@ test('check validates real directory and private-staged Git acceptance read-only
     const file=join(f.root,`${alias}-nodes.json`);fs.writeFileSync(file,JSON.stringify(nodes));initBase(bindings,alias,file,undefined,{confirm:true});
   }
   const before={read:tree(f.readPath),write:tree(f.writePath)};
+  for(const name of ['setup','init','migrate','unlock']) {
+    const administrative=call('check',request('check',{}, {binding,context:{kind:'standalone',key:'fixture'},action:{kind:'command',namespace:'okf',name}}));
+    assert.deepEqual(administrative.response.result,{status:'needs-configuration',problems:[{code:'provider-not-qualified'}]},name);
+  }
+  assert.deepEqual({read:tree(f.readPath),write:tree(f.writePath)},before,'administrative readiness checks mutate no accepted base');
   const checked=call('check',request('check',{}, {binding,context:{kind:'standalone',key:'fixture'},action:{kind:'spawn'}}));
   assert.equal(checked.status,0);assert.deepEqual(checked.response.result,{status:'ready',problems:[]});
   assert.deepEqual({read:tree(f.readPath),write:tree(f.writePath)},before,'check changes no accepted bytes');assert.equal(fs.existsSync(f.stateDir),false);
