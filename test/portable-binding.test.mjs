@@ -89,4 +89,10 @@ test('stable identities, destinations and nonsecret locators fail closed',()=>{
 
   const model=normalizeKnowledgeDeclaration(declaration({owner:'expert-owner',stores:{a:{fixed:directory('same','/srv/a')},b:{fixed:directory('same','/srv/b')}},reads:[],owns:[]}),{origin:origin()});
   assert.throws(()=>bindKnowledgeDomain({model,choices:{[storeChoiceKey('a')]:choice(directory('same','/srv/a')),[storeChoiceKey('b')]:choice(directory('same','/srv/b'))}}),/conflicting locations/);
+
+  const sameStore=directory('same','/srv/same'),resolvedReads=normalizeKnowledgeDeclaration(declaration({owner:'expert-owner',stores:{a:{fixed:sameStore},b:{fixed:sameStore}},reads:[{store:'a',node:'shared'},{store:'b',node:'shared'}],owns:[]}),{origin:origin()});
+  const sameChoices={[storeChoiceKey('a')]:choice(sameStore),[storeChoiceKey('b')]:choice(sameStore)};
+  assert.throws(()=>bindKnowledgeDomain({model:resolvedReads,choices:sameChoices}),/duplicate resolved knowledge read/);
+  const resolvedOwns=normalizeKnowledgeDeclaration(declaration({owner:'expert-owner',stores:{a:{fixed:sameStore},b:{fixed:sameStore}},reads:[],owns:[{node:'shared',destination:'a'},{node:'shared',destination:'b'}]}),{origin:origin()});
+  assert.throws(()=>bindKnowledgeDomain({model:resolvedOwns,choices:sameChoices}),/duplicate resolved knowledge steward/);
 });

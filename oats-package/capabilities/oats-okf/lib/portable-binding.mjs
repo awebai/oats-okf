@@ -125,11 +125,13 @@ export function bindKnowledgeDomain({model,choices}) {
   };
   for(const [alias,plan] of Object.entries(model.stores)) aliases[alias]=add(selected(choices,plan.choiceKey),plan.choiceKey);
   const reads=model.reads.map(entry=>({store:aliases[entry.store],node:entry.node}));
+  const readKeys=new Set();for(const entry of reads) {const key=`${entry.store}/${entry.node}`;if(readKeys.has(key)) fail('E_CONFIG',`duplicate resolved knowledge read: ${key}`);readKeys.add(key);}
   const owns=model.owns.map(entry=>{
     const locator=entry.destination===null?selected(choices,entry.choiceKey):selected(choices,model.stores[entry.destination].choiceKey);
     const store=add(locator,entry.choiceKey);
     return {store,node:entry.node,steward:model.owner};
   });
+  const ownKeys=new Set();for(const entry of owns) {const key=`${entry.store}/${entry.node}`;if(ownKeys.has(key)) fail('E_OWNER',`duplicate resolved knowledge steward: ${key}`);ownKeys.add(key);}
   for(const entry of [...model.reads,...model.owns]) provenance.push(clone(entry.origin));
   const unique=[];for(const item of provenance) if(!unique.some(prior=>same(prior,item))) unique.push(item);
   return {contract:KNOWLEDGE_CONTRACT,version:KNOWLEDGE_CONTRACT_VERSION,payload:{owner:model.owner,stores,reads,owns},credentialRefs:{},provenance:unique};
