@@ -139,7 +139,7 @@ function finishRegistration(source) {
 function capturedOwner(bindings,owner,identity) {
   const file=join(bindings.stateDir,'owners.json'),row={schemaVersion:1,kind:'captured-qualified-soul',identity};
   withLock(join(bindings.stateDir,'owners.lock'),()=>{
-    const owners=fs.existsSync(file)?readJSON(file):{};const prior=owners[owner];
+    const owners=fs.existsSync(file)?readJSON(file):{};if(!obj(owners)) fail('E_OWNER','invalid owner registry');const prior=owners[owner];
     if(typeof prior==='string') fail('E_MIGRATION','legacy owner registry evidence requires explicit qualified-identity migration');
     if(prior!==undefined && (!obj(prior) || prior.schemaVersion!==1 || prior.kind!=='captured-qualified-soul' || !sameJson(prior.identity,identity))) fail('E_OWNER','stable owner ID already identifies a different qualified soul');
     if(prior===undefined) {owners[owner]=row;save(file,owners);}
@@ -153,7 +153,8 @@ function sameCapturedReceipt(source,receipt,validated) {
     && sameJson(source.responsibleHuman,validated.responsibleHuman) && sameJson(source.providerBinding,receipt.binding);
 }
 export function registerCaptured(home,receipt) {
-  home=safePath(home);const captured=validateCapturedReceipt(home,receipt);
+  home=safePath(home);const captured=validateCapturedReceipt(home,receipt),invocation=loadInvocationKnowledgeBinding();
+  if(invocation.kind==='captured' && !sameJson(invocation.binding,receipt.binding)) fail('E_SOURCE','lifecycle receipt binding differs from invocation snapshot');
   if(receipt.kind==='helper') return {skipped:'service'};
   if(fs.existsSync(markerPath(home))) {
     const source=homeSource(home);if(!sameCapturedReceipt(source,receipt,captured)) fail('E_SOURCE','captured registration receipt differs from durable source');

@@ -193,7 +193,12 @@ test('no-launch sources and service workers never trigger scheduled model launch
   capture(s,{final:true});assert.equal(loadStatus(s).auto,false);assert.equal(runSource(s).status,'disabled');
 });
 test('captured registration freezes qualified identity, binding and v2 schedule without live source fallback',t=>{
-  const f=fixture(t),receipt=capturedReceipt(f),s=registerCaptured(f.home,receipt),again=registerCaptured(f.home,receipt);
+  const f=fixture(t),receipt=capturedReceipt(f),snapshot=join(f.dir,'invocation-binding.json'),wrong=structuredClone(receipt.binding),priorBinding=process.env.OATS_BINDING_FILE;
+  t.after(()=>{if(priorBinding===undefined) delete process.env.OATS_BINDING_FILE;else process.env.OATS_BINDING_FILE=priorBinding;});
+  wrong.payload.execution.model='different/model';save(snapshot,wrong);process.env.OATS_BINDING_FILE=snapshot;
+  assert.throws(()=>registerCaptured(f.home,receipt),/differs from invocation snapshot/);assert.equal(fs.existsSync(join(f.home,'.okf-source.json')),false);
+  delete process.env.OATS_BINDING_FILE;
+  const s=registerCaptured(f.home,receipt),again=registerCaptured(f.home,receipt);
   assert.equal(again.id,s.id);assert.equal(s.registration.kind,'captured');assert.deepEqual(s.providerBinding,receipt.binding);assert.deepEqual(s.executionBinding,receipt.executionBinding);assert.equal(s.responsibleHuman,null);
   const owner=readJSON(join(f.bindings.stateDir,'owners.json'))['owner-1'];assert.equal(owner.kind,'captured-qualified-soul');assert.deepEqual(owner.identity,receipt.sourceIdentity);
   const schedules=readJSON(join(f.dir,'schedules.json')),spec=schedules[`okf-${s.id}`];
