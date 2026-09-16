@@ -1,11 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   KNOWLEDGE_CONTRACT,
   bindKnowledgeDomain,
   bindingChoiceKey,
+  checkKnowledgeRuntime,
   normalizeKnowledgeBindingCandidates,
   normalizeKnowledgeDeclaration,
+  renderKnowledgeRuntime,
   storeChoiceKey,
   validateStoreLocator,
 } from '../oats-package/capabilities/oats-okf/lib/portable-binding.mjs';
@@ -72,6 +77,46 @@ test('read access never invents publication authority or a destination',()=>{
   const needsWrite=normalizeKnowledgeDeclaration(declaration({owner:'expert-owner',stores:{public:{fixed:publicRead}},reads:[{store:'public',node:'reference'}],owns:[{node:'private-note'}]}),{origin:origin()});
   assert.throws(()=>bindKnowledgeDomain({model:needsWrite,choices:{[storeChoiceKey('public')]:choice(publicRead)}}),/unresolved knowledge binding: \/bindings\/knowledge\/write\/default/);
   assert.ok(readBinding.payload.stores['public-base'].pr,'PR routing metadata alone does not create an owned destination');
+});
+
+test('captured domain renders and checks through the existing runtime after source/config loss and poison',t=>{
+  const root=fs.mkdtempSync(join(fs.realpathSync(tmpdir()),'okf-portable-runtime-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+  const acceptedPath=join(root,'accepted'),stateDir=join(root,'durable-state'),descriptorFile=join(root,'host','okf-bindings.json');
+  fs.mkdirSync(acceptedPath,{recursive:true});fs.mkdirSync(join(root,'source'),{recursive:true});fs.mkdirSync(join(root,'host'),{recursive:true});
+  const sourceFile=join(root,'source','okf.json');fs.writeFileSync(sourceFile,'{"live":"source"}\n');
+  fs.writeFileSync(descriptorFile,'{"live":"configuration"}\n');
+  const domain={owner:'expert-owner',stores:{
+    'private-base':{id:'private-base',kind:'directory',path:acceptedPath},
+  },reads:[{store:'private-base',node:'reference'}],owns:[{store:'private-base',node:'expert',steward:'expert-owner'}]};
+  const rendered=renderKnowledgeRuntime({domain,stateDir,descriptorFile});
+  assert.deepEqual(rendered.bindings,{version:1,stateDir,bases:{'private-base':domain.stores['private-base']}});
+  assert.deepEqual(rendered.declaration,{version:1,owner:'expert-owner',reads:['private-base/reference'],owns:['private-base/expert']});
+  assert.equal(fs.existsSync(stateDir),false,'pure rendering creates no state');
+
+  const accepted={'private-base':{id:'private-base',nodes:{reference:{path:'reference',owner:'reader-owner'},expert:{path:'expert',owner:'expert-owner'}}}};
+  fs.rmSync(join(root,'source'),{recursive:true});fs.rmSync(descriptorFile);
+  const absentBefore=fs.readdirSync(root).sort();
+  const absent=checkKnowledgeRuntime({rendered,accepted,sourceHome:join(root,'deleted-home'),sourceWork:join(root,'deleted-work')});
+  assert.deepEqual(absent.declaration,rendered.declaration);assert.equal(absent.bindings.bases['private-base'].path,acceptedPath);
+  assert.deepEqual(fs.readdirSync(root).sort(),absentBefore,'read-only check creates no descriptor or state after deletion');
+
+  fs.writeFileSync(descriptorFile,JSON.stringify({version:1,stateDir:'/poison',bases:{evil:{id:'evil',kind:'directory',path:'/poison'}}}));
+  const poisonBefore=fs.readFileSync(descriptorFile,'utf8');
+  const checked=checkKnowledgeRuntime({rendered,accepted});
+  assert.equal(checked.bindings.stateDir,stateDir);assert.deepEqual(checked.declaration.owns,['private-base/expert']);
+  assert.equal(fs.readFileSync(descriptorFile,'utf8'),poisonBefore,'captured check neither reads nor replaces current config bytes');
+  assert.equal(fs.existsSync(stateDir),false);
+  assert.throws(()=>checkKnowledgeRuntime({rendered,accepted:{'private-base':{nodes:{reference:{owner:'reader-owner'},expert:{owner:'other-owner'}}}}}),/owner mismatch/);
+  assert.throws(()=>checkKnowledgeRuntime({rendered:{...rendered,bindings:{...rendered.bindings,stateDir:'relative'}},accepted}),/stateDir must be a normalized absolute path/);
+});
+
+test('runtime adapter requires explicit host custody and stable aliases',()=>{
+  const domain={owner:'expert-owner',stores:{base:{id:'base',kind:'directory',path:'/srv/base'}},reads:[],owns:[]};
+  assert.throws(()=>renderKnowledgeRuntime({domain,stateDir:'relative',descriptorFile:'/srv/bindings.json'}),/stateDir must be a normalized absolute path/);
+  assert.throws(()=>renderKnowledgeRuntime({domain,stateDir:'/srv/state',descriptorFile:'relative'}),/descriptor file must be a normalized absolute path/);
+  assert.throws(()=>renderKnowledgeRuntime({domain:{...domain,stores:{alias:{...domain.stores.base}}},stateDir:'/srv/state',descriptorFile:'/srv/bindings.json'}),/alias must equal stable store identity/);
+  assert.throws(()=>renderKnowledgeRuntime({domain:{...domain,owns:[{store:'base',node:'expert',steward:'someone-else'}]},stateDir:'/srv/state',descriptorFile:'/srv/bindings.json'}),/steward mismatch/);
+  assert.throws(()=>renderKnowledgeRuntime({domain:{...domain,owns:[{node:'expert',steward:'expert-owner'}]},stateDir:'/srv/state',descriptorFile:'/srv/bindings.json'}),/requires store/);
 });
 
 test('stable identities, destinations and nonsecret locators fail closed',()=>{

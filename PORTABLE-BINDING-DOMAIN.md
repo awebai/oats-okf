@@ -11,7 +11,7 @@ The provider contract is `oats.okf.locations@1`. A source-owned payload is:
 {
   "owner": "stable-owner-id",
   "stores": {
-    "public": {"fixed": {"id":"public-kb","kind":"git","repository":"https://example.test/knowledge.git","root":"knowledge","acceptedBranch":"main"}},
+    "public": {"fixed": {"id":"public-kb","kind":"git","repository":"https://example.test/knowledge.git","root":"knowledge","acceptedBranch":"main","pr":{"repository":"example/knowledge"}}},
     "local": {"default": {"id":"local-kb","kind":"directory","path":"path:/absolute/knowledge"}},
     "destination": {"inherit":"write.default"}
   },
@@ -46,10 +46,24 @@ used as an implicit write destination. Git locators retain the existing runtime'
 explicit same-repository PR route, but that metadata grants no write authority
 without an `owns` destination.
 
-All functions are pure. They do no filesystem/network access, credential lookup,
-provider enrollment, publication, YAML decoding, or precedence resolution. The
-existing v2 runtime remains the authority for filesystem containment, accepted
-base metadata, node ownership, views, capture, workers and delivery.
+Normalization, selection rendering, and runtime document rendering are pure.
+They do no filesystem/network access, credential lookup, provider enrollment,
+publication, YAML decoding, or precedence resolution. The existing v2 runtime
+remains the authority for filesystem containment, accepted base metadata, node
+ownership, views, capture, workers and delivery.
+
+## Captured runtime adapter
+
+`renderKnowledgeRuntime()` converts the captured nonsecret bound domain into the
+existing version-1 bindings and declaration documents. The host must supply a
+normalized absolute durable `stateDir` and bindings descriptor path; neither is
+derived from an instance home. Stable store IDs become runtime base aliases, and
+store/node pairs become the existing `base/node` references.
+
+`checkKnowledgeRuntime()` is the separate read-only custody boundary. It reuses
+`validateBindings()`, `validateDeclaration()`, and `resolveNodes()` with accepted
+base metadata produced by the existing validation path. It does not reload
+current source/config documents, create state, initialize stores, or publish.
 
 ## Provider-owned inputs pending broker wiring
 

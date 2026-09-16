@@ -1,5 +1,6 @@
 import { isAbsolute, resolve } from 'node:path';
 import { identifier, relPath, fail } from './io.mjs';
+import { resolveNodes, validateBindings, validateDeclaration } from './config.mjs';
 
 export const KNOWLEDGE_CONTRACT='oats.okf.locations';
 export const KNOWLEDGE_CONTRACT_VERSION=1;
@@ -135,4 +136,56 @@ export function bindKnowledgeDomain({model,choices}) {
   for(const entry of [...model.reads,...model.owns]) provenance.push(clone(entry.origin));
   const unique=[];for(const item of provenance) if(!unique.some(prior=>same(prior,item))) unique.push(item);
   return {contract:KNOWLEDGE_CONTRACT,version:KNOWLEDGE_CONTRACT_VERSION,payload:{owner:model.owner,stores,reads,owns},credentialRefs:{},provenance:unique};
+}
+
+function absolutePath(value,label) {
+  if(typeof value!=='string' || !isAbsolute(value) || resolve(value)!==value) fail('E_PATH',`${label} must be a normalized absolute path`);
+  return value;
+}
+function boundStore(value) {
+  if(!obj(value)) fail('E_CONFIG','bound knowledge store must be an object');
+  const portable=value.kind==='directory'?{...value,path:`path:${value.path}`} : value;
+  return runtimeStore(validateStoreLocator(portable));
+}
+
+/** Purely adapt a captured nonsecret provider domain to the existing OKF v1
+ * documents. The host supplies durable custody paths; neither is derived from
+ * a source home, and this function performs no filesystem access. */
+export function renderKnowledgeRuntime({domain,stateDir,descriptorFile}={}) {
+  keys(domain,['owner','stores','reads','owns'],['owner','stores','reads','owns'],'bound knowledge domain');
+  const owner=identifier(domain.owner),bases={};
+  if(!obj(domain.stores) || !Object.keys(domain.stores).length) fail('E_CONFIG','bound knowledge domain requires stores');
+  for(const [alias,value] of Object.entries(domain.stores)) {
+    identifier(alias);const store=boundStore(value);
+    if(store.id!==alias) fail('E_ID',`runtime alias must equal stable store identity: ${alias}`);
+    bases[alias]=store;
+  }
+  const references=(entries,label,owned=false)=>{
+    if(!Array.isArray(entries)) fail('E_CONFIG',`bound knowledge ${label} must be an array`);
+    return entries.map(entry=>{
+      keys(entry,owned?['store','node','steward']:['store','node'],owned?['store','node','steward']:['store','node'],`bound knowledge ${label}`);
+      const store=identifier(entry.store),node=identifier(entry.node);
+      if(!Object.hasOwn(bases,store)) fail('E_CONFIG',`${label} references unbound store: ${store}`);
+      if(owned && identifier(entry.steward)!==owner) fail('E_OWNER',`bound knowledge steward mismatch: ${store}/${node}`);
+      return `${store}/${node}`;
+    });
+  };
+  const declaration=validateDeclaration({version:1,owner,reads:references(domain.reads,'read'),owns:references(domain.owns,'ownership',true)});
+  return {descriptorFile:absolutePath(descriptorFile,'OKF descriptor file'),bindings:{version:1,stateDir:absolutePath(stateDir,'OKF stateDir'),bases},declaration};
+}
+
+/** Read-only custody/accepted-base check for an already rendered capture.
+ * `accepted` must come from the existing base validation path. */
+export function checkKnowledgeRuntime({rendered,accepted,sourceHome,sourceWork}={}) {
+  keys(rendered,['descriptorFile','bindings','declaration'],['descriptorFile','bindings','declaration'],'rendered OKF runtime');
+  keys(rendered.bindings,['version','stateDir','bases'],['version','stateDir','bases'],'rendered OKF bindings');
+  if(rendered.bindings.version!==1 || !obj(rendered.bindings.bases) || !Object.keys(rendered.bindings.bases).length) fail('E_CONFIG','invalid rendered OKF bindings');
+  absolutePath(rendered.bindings.stateDir,'OKF stateDir');
+  for(const [alias,value] of Object.entries(rendered.bindings.bases)) if(identifier(alias)!==boundStore(value).id) fail('E_ID',`runtime alias must equal stable store identity: ${alias}`);
+  if(!obj(accepted)) fail('E_CONFIG','accepted OKF base metadata is required');
+  const descriptorFile=absolutePath(rendered.descriptorFile,'OKF descriptor file');
+  const bindings=validateBindings(rendered.bindings,descriptorFile,{sourceHome,sourceWork});
+  const declaration=validateDeclaration(rendered.declaration);
+  resolveNodes(declaration,bindings,accepted);
+  return {descriptorFile,bindings,declaration};
 }
