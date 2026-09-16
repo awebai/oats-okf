@@ -74,8 +74,10 @@ values and supplied origins only. Workspace `oats.okf.locations@1` entries use
 The provider emits requirements/candidates for the kernel's shared resolver,
 then binds only the selected choices.
 
-The binding payload captures the nonsecret domain and rendered runtime documents.
-Check validates that immutable relationship before read-only custody and accepted-
+The binding payload captures the nonsecret domain, rendered runtime documents,
+and the selected memory-worker runtime/model settings. This gives later durable
+source dispatch no reason to reread current capability settings. Check validates
+that immutable relationship before read-only custody and accepted-
 base checks. Directory bases are read in place. Git bases use the existing
 `stageBase` path in a fresh private OS-temporary checkout, which is removed on
 success and ordinary failure; accepted repositories/remotes are never mutated.

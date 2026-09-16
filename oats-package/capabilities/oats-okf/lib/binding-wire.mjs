@@ -97,9 +97,9 @@ function contract(value,{required=false}={}) {
 }
 function runtimeSettings(settings) {
   keys(settings,['bindings-file','state-dir','harvest-runtime','harvest-model'],[], 'OKF settings');
-  const descriptorFile=settings['bindings-file'],stateDir=settings['state-dir'];
-  if(!absolute(descriptorFile) || !absolute(stateDir)) wireError('needs-configuration');
-  return {descriptorFile,stateDir};
+  const descriptorFile=settings['bindings-file'],stateDir=settings['state-dir'],runtime=settings['harvest-runtime'],model=settings['harvest-model'] ?? null;
+  if(!absolute(descriptorFile) || !absolute(stateDir) || !['pi','claude','codex'].includes(runtime) || (model!==null && (typeof model!=='string' || !model.trim()))) wireError('needs-configuration');
+  return {descriptorFile,stateDir,execution:{runtime,model}};
 }
 function normalizePhase(req) {
   keys(req.input,['declarations','context'],['declarations','context'],'normalize input');
@@ -145,20 +145,28 @@ function choiceMap(value) {
 function bindPhase(req) {
   keys(req.input,['model','choices','context'],['model','choices','context'],'bind input');if(!obj(req.input.context)) wireError('invalid-binding');
   keys(req.input.model,['domain','runtime'],['domain','runtime'],'OKF binding model');
-  keys(req.input.model.runtime,['stateDir','descriptorFile'],['stateDir','descriptorFile'],'OKF runtime model');
+  keys(req.input.model.runtime,['stateDir','descriptorFile','execution'],['stateDir','descriptorFile','execution'],'OKF runtime model');
   let bound;try{bound=bindKnowledgeDomain({model:req.input.model.domain,choices:choiceMap(req.input.choices)});}catch(error){if(/unresolved knowledge binding/.test(error.message)) wireError('needs-configuration');throw error;}
   const runtime=renderKnowledgeRuntime({domain:bound.payload,...req.input.model.runtime});
-  return {payloadContract:bound.contract,payloadVersion:bound.version,payload:{...bound.payload,runtime},credentialRefs:bound.credentialRefs,provenance:bound.provenance};
+  return {payloadContract:bound.contract,payloadVersion:bound.version,payload:{...bound.payload,runtime,execution:req.input.model.runtime.execution},credentialRefs:bound.credentialRefs,provenance:bound.provenance};
 }
 function bindingPayload(binding) {
   keys(binding,['schemaVersion','capability','payloadContract','payloadVersion','payload','credentialRefs','provenance'],['schemaVersion','capability','payloadContract','payloadVersion','payload','credentialRefs','provenance'],'provider binding');
   if(binding.schemaVersion!==1 || binding.capability!==CAPABILITY || binding.payloadContract!==KNOWLEDGE_CONTRACT || binding.payloadVersion!==KNOWLEDGE_CONTRACT_VERSION || !Array.isArray(binding.provenance)) wireError('invalid-binding');
   if(!obj(binding.credentialRefs) || Object.keys(binding.credentialRefs).length) wireError('invalid-binding');
-  keys(binding.payload,['owner','stores','reads','owns','runtime'],['owner','stores','reads','owns','runtime'],'OKF binding payload');
+  keys(binding.payload,['owner','stores','reads','owns','runtime','execution'],['owner','stores','reads','owns','runtime','execution'],'OKF binding payload');
   const domain={owner:binding.payload.owner,stores:binding.payload.stores,reads:binding.payload.reads,owns:binding.payload.owns};
   const runtime=renderKnowledgeRuntime({domain,stateDir:binding.payload.runtime?.bindings?.stateDir,descriptorFile:binding.payload.runtime?.descriptorFile});
   if(!same(runtime,binding.payload.runtime)) wireError('invalid-binding');
-  return {domain,runtime};
+  keys(binding.payload.execution,['runtime','model'],['runtime','model'],'OKF worker execution');
+  if(!['pi','claude','codex'].includes(binding.payload.execution.runtime) || (binding.payload.execution.model!==null && (typeof binding.payload.execution.model!=='string' || !binding.payload.execution.model.trim()))) wireError('invalid-binding');
+  return {domain,runtime,execution:binding.payload.execution};
+}
+
+/** Pure projection for durable source registration and later source-free work. */
+export function sourceRuntimeFromKnowledgeBinding(binding) {
+  const {domain,runtime,execution}=bindingPayload(binding);
+  return {owner:domain.owner,bindings:{file:runtime.descriptorFile,...runtime.bindings},decl:runtime.declaration,execution:{...execution}};
 }
 function problem(code) {return {code};}
 function checkPhase(req) {

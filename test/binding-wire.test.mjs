@@ -6,7 +6,7 @@ import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { bindingChoiceKey, storeChoiceKey } from '../oats-package/capabilities/oats-okf/lib/portable-binding.mjs';
-import { parseBindingJson } from '../oats-package/capabilities/oats-okf/lib/binding-wire.mjs';
+import { parseBindingJson, sourceRuntimeFromKnowledgeBinding } from '../oats-package/capabilities/oats-okf/lib/binding-wire.mjs';
 import { validateBindings } from '../oats-package/capabilities/oats-okf/lib/config.mjs';
 import { initBase } from '../oats-package/capabilities/oats-okf/lib/migration.mjs';
 import { tree } from '../oats-package/capabilities/oats-okf/lib/io.mjs';
@@ -27,7 +27,7 @@ function fixture(t) {
   const root=fs.mkdtempSync(join(fs.realpathSync(tmpdir()),'okf-binding-wire-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
   const descriptorFile=join(root,'host','bindings.json'),stateDir=join(root,'state'),readPath=join(root,'read'),writePath=join(root,'write');
   fs.mkdirSync(dirname(descriptorFile),{recursive:true});
-  const settings={'bindings-file':descriptorFile,'state-dir':stateDir};
+  const settings={'bindings-file':descriptorFile,'state-dir':stateDir,'harvest-runtime':'pi','harvest-model':'fixture/model'};
   const soulOrigin=origin('soul-requirement','/knowledge');
   const operatorOrigin={kind:'operator',document:{kind:'operator',id:'fixture-human'},pointer:'/bindings'};
   const soul={contract,version:1,payload:{owner:'expert-owner',stores:{
@@ -67,6 +67,10 @@ test('normalize preserves separate authority candidates and bind emits the captu
     'private-base':{id:'private-base',kind:'directory',path:f.writePath},
   }});
   assert.deepEqual(bound.payload.runtime.declaration,{version:1,owner:'expert-owner',reads:['reference-base/reference'],owns:['private-base/expert']});
+  assert.deepEqual(bound.payload.execution,{runtime:'pi',model:'fixture/model'});
+  assert.deepEqual(sourceRuntimeFromKnowledgeBinding({schemaVersion:1,capability:'oats.okf',...bound}),{
+    owner:'expert-owner',bindings:{file:f.descriptorFile,...bound.payload.runtime.bindings},decl:bound.payload.runtime.declaration,execution:{runtime:'pi',model:'fixture/model'},
+  });
 });
 
 test('check validates real directory and private-staged Git acceptance read-only',t=>{
