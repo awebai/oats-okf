@@ -170,7 +170,7 @@ export function sourceRuntimeFromKnowledgeBinding(binding) {
 }
 
 const invocationError=()=>{throw Object.assign(new Error('invalid captured provider binding snapshot'),{code:'E_BINDING'});};
-function readInvocationSnapshot(file) {
+export function readPrivateInvocationJson(file) {
   if(!absolute(file)) invocationError();
   let fd;
   try {
@@ -193,7 +193,7 @@ function readInvocationSnapshot(file) {
  * Absence is an explicit legacy mode; every present-file defect fails closed. */
 export function loadInvocationKnowledgeBinding(env=process.env) {
   if(!Object.hasOwn(env,'OATS_BINDING_FILE')) return {kind:'legacy'};
-  const file=env.OATS_BINDING_FILE,binding=readInvocationSnapshot(file);
+  const file=env.OATS_BINDING_FILE,binding=readPrivateInvocationJson(file);
   let runtime;try{runtime=sourceRuntimeFromKnowledgeBinding(binding);}catch{invocationError();}
   return {kind:'captured',file,binding,runtime};
 }

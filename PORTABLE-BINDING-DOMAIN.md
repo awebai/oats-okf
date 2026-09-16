@@ -103,7 +103,12 @@ Captured command authority is explicit:
 | `soul-scaffold`, `--help` | Stateless guidance only; they do not resolve bindings or create knowledge. |
 | No `OATS_BINDING_FILE` | Explicit legacy behavior, unchanged pending migration. |
 
-`registerCaptured(home, receipt)` consumes the parent-qualified lifecycle receipt
+`OATS_SOURCE_RECEIPT_FILE`, when present beside `OATS_BINDING_FILE` for a
+captured spawn/retire hook, is read through the same strict private-file boundary.
+Its receipt binding must equal the binding snapshot; invalid, missing, relative or
+misrouted receipt files refuse. The variable is scrubbed from worker subprocesses.
+
+`registerCaptured(home, receipt)` consumes that parent-qualified lifecycle receipt
 directly. Persistent receipts write the existing source/status/view/marker layout
 with the complete binding, execution binding, responsible human, retained role,
 and qualified soul identity. Helpers return `skipped: service` and create no owner

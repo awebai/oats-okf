@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { fs, join, dirname, resolve, safePath, readJSON, save, atomic, materialize, hash, withLock, oats, fail, tree, overlaps, syncDir, identifier, relPath } from './io.mjs';
 import { loadBindings, declaration, metadata, resolveNodes, bindingFingerprint, settings, validateBindings } from './config.mjs';
 import { stageBase } from './stores.mjs';
-import { loadInvocationKnowledgeBinding, sourceRuntimeFromKnowledgeBinding } from './binding-wire.mjs';
+import { loadInvocationKnowledgeBinding, readPrivateInvocationJson, sourceRuntimeFromKnowledgeBinding } from './binding-wire.mjs';
 import { sameJson } from './portable-binding.mjs';
 
 const obj=value=>value!==null && typeof value==='object' && !Array.isArray(value);
@@ -50,6 +50,14 @@ function validateCapturedReceipt(home,receipt) {
   const sourceIdentity=receipt.sourceIdentity===null?null:qualifiedSoulIdentity(receipt.sourceIdentity);
   if((receipt.kind==='persistent')!==(sourceIdentity!==null)) fail('E_SOURCE','persistent receipt needs qualified source identity; helper needs null');
   return {home,work,context,binding,execution,sourceIdentity,responsibleHuman:human(receipt.responsibleHuman)};
+}
+export function loadInvocationSourceReceipt(home,env=process.env) {
+  if(!Object.hasOwn(env,'OATS_SOURCE_RECEIPT_FILE')) return {mode:'legacy'};
+  if(!Object.hasOwn(env,'OATS_BINDING_FILE')) fail('E_SOURCE','captured source receipt requires its provider binding snapshot');
+  let receipt;try{receipt=readPrivateInvocationJson(env.OATS_SOURCE_RECEIPT_FILE);}catch{fail('E_SOURCE','invalid captured source receipt snapshot');}
+  const validated=validateCapturedReceipt(safePath(home),receipt),invocation=loadInvocationKnowledgeBinding(env);
+  if(invocation.kind!=='captured' || !sameJson(invocation.binding,receipt.binding)) fail('E_SOURCE','source receipt binding differs from invocation snapshot');
+  return {mode:'captured',receipt,validated};
 }
 export const markerPath = home => join(home,'.okf-source.json');
 export const statusPath = source => join(dirname(source.file),'status.json');

@@ -197,8 +197,9 @@ test('captured registration freezes qualified identity, binding and v2 schedule 
   t.after(()=>{if(priorBinding===undefined) delete process.env.OATS_BINDING_FILE;else process.env.OATS_BINDING_FILE=priorBinding;});
   wrong.payload.execution.model='different/model';save(snapshot,wrong);process.env.OATS_BINDING_FILE=snapshot;
   assert.throws(()=>registerCaptured(f.home,receipt),/differs from invocation snapshot/);assert.equal(fs.existsSync(join(f.home,'.okf-source.json')),false);
-  delete process.env.OATS_BINDING_FILE;
-  const s=registerCaptured(f.home,receipt),again=registerCaptured(f.home,receipt);
+  delete process.env.OATS_BINDING_FILE;save(snapshot,receipt.binding);const receiptFile=join(f.dir,'source-receipt.json');save(receiptFile,receipt);
+  const lifecycle=f.cli('spawn',[],{OATS_BINDING_FILE:snapshot,OATS_SOURCE_RECEIPT_FILE:receiptFile});assert.equal(lifecycle.status,0,lifecycle.stdout);
+  const s=loadSource(lifecycle.out.meta.source),again=registerCaptured(f.home,receipt);
   assert.equal(again.id,s.id);assert.equal(s.registration.kind,'captured');assert.deepEqual(s.providerBinding,receipt.binding);assert.deepEqual(s.executionBinding,receipt.executionBinding);assert.equal(s.responsibleHuman,null);
   const owner=readJSON(join(f.bindings.stateDir,'owners.json'))['owner-1'];assert.equal(owner.kind,'captured-qualified-soul');assert.deepEqual(owner.identity,receipt.sourceIdentity);
   const schedules=readJSON(join(f.dir,'schedules.json')),spec=schedules[`okf-${s.id}`];
@@ -217,7 +218,8 @@ test('captured registration freezes qualified identity, binding and v2 schedule 
   assert.throws(()=>scheduleSource(s),/definition differs/);assert.deepEqual(readJSON(join(f.dir,'schedules.json'))[`okf-${s.id}`].attempt,{executionId:'retained-attempt'});
 });
 test('captured helper skips ownership and legacy owner evidence requires explicit migration',t=>{
-  const helper=fixture(t),helperReceipt=capturedReceipt(helper,{kind:'helper'});assert.deepEqual(registerCaptured(helper.home,helperReceipt),{skipped:'service'});assert.equal(fs.existsSync(join(helper.bindings.stateDir,'owners.json')),false);
+  const helper=fixture(t),helperReceipt=capturedReceipt(helper,{kind:'helper'}),bindingFile=join(helper.dir,'helper-binding.json'),receiptFile=join(helper.dir,'helper-receipt.json');save(bindingFile,helperReceipt.binding);save(receiptFile,helperReceipt);
+  const helperSpawn=helper.cli('spawn',[],{OATS_BINDING_FILE:bindingFile,OATS_SOURCE_RECEIPT_FILE:receiptFile});assert.equal(helperSpawn.status,0);assert.equal(helperSpawn.out.meta.memory,'none');assert.equal(fs.existsSync(join(helper.bindings.stateDir,'owners.json')),false);
   for(const changed of [
     {...helperReceipt,home:join(helper.dir,'other-home')},
     {...helperReceipt,work:'relative'},
@@ -241,7 +243,10 @@ test('captured published commands fail closed on missing source, invalid snapsho
   }
   assert.equal(fs.existsSync(poison),false);assert.equal(fs.existsSync(join(f.home,'.okf-source.json')),false);
   put(snapshot,'{"schemaVersion":1,"schemaVersion":1}');const invalid=f.cli('inspect',[],env);assert.equal(invalid.status,1);assert.equal(invalid.out.error.code,'E_BINDING');assert.equal(fs.existsSync(poison),false);
-  save(snapshot,receipt.binding);assert.equal(f.cli('soul-scaffold',[],env).status,0,'stateless scaffold guidance remains side-effect free');assert.equal(fs.existsSync(poison),false);
+  save(snapshot,receipt.binding);const receiptFile=join(f.dir,'source-receipt.json');put(receiptFile,'{"schemaVersion":1,"schemaVersion":1}');
+  const invalidReceipt=f.cli('spawn',[],{...env,OATS_SOURCE_RECEIPT_FILE:receiptFile});assert.equal(invalidReceipt.status,1);assert.match(invalidReceipt.out.warning,/invalid captured source receipt/);
+  save(receiptFile,receipt);const wrongAction=f.cli('inspect',[],{...env,OATS_SOURCE_RECEIPT_FILE:receiptFile});assert.equal(wrongAction.status,1);assert.equal(wrongAction.out.error.code,'E_SOURCE');
+  assert.equal(f.cli('soul-scaffold',[],env).status,0,'stateless scaffold guidance remains side-effect free');assert.equal(fs.existsSync(poison),false);
 });
 test('completion rejects invalid judgment and credential-shaped promotion output',t=>{
   const f=fixture(t);note(f);const {s,run}=prepared(f);const j=judgment(f,s,run,{secret:true});assert.throws(()=>complete(s,run.id,j),/credential-shaped/);const doc=readJSON(j);doc.outcomes=[];save(j,doc);assert.throws(()=>complete(s,run.id,j),/exactly one outcome/);assert.equal(loadStatus(s).processed.length,0);

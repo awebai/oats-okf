@@ -2,7 +2,7 @@
 import { randomUUID } from 'node:crypto';
 import { fs, join, dirname, resolve, readJSON, save, safePath, cliPath, oats, fail, unlock } from '../lib/io.mjs';
 import { loadBindings, declaration, splitRef } from '../lib/config.mjs';
-import { register, homeSource, loadSource, loadStatus, saveStatus, updateStatus, capture, scheduleSource, service, markerPath, views } from '../lib/sources.mjs';
+import { register, registerCaptured, loadInvocationSourceReceipt, homeSource, loadSource, loadStatus, saveStatus, updateStatus, capture, scheduleSource, service, markerPath, views } from '../lib/sources.mjs';
 import { runSource, complete, retry, readRun } from '../lib/worker.mjs';
 import { initBase, migrate, deliverMigration, cutoverMigration, migrateSource } from '../lib/migration.mjs';
 import { inspect } from '../lib/inspection.mjs';
@@ -53,6 +53,8 @@ else {
     const unsupportedCaptured=new Set(['setup','init','migrate','unlock']);
     if(captured && unsupportedCaptured.has(event)) fail('E_MIGRATION',`captured ${event} is not supported; use an explicit operator administration path`);
     const home=resolve(flags.home || process.env.OATS_INSTANCE_HOME || process.env.OATS_HOME || process.cwd());
+    const sourceReceipt=loadInvocationSourceReceipt(home);
+    if(sourceReceipt.mode==='captured' && !['spawn','retire'].includes(event)) fail('E_SOURCE','captured source receipt is valid only for lifecycle hooks');
     const src=()=>{
       try {return flags.source?loadSource(resolve(flags.source)):homeSource(home);}
       catch(error) {if(captured && ['ENOENT','ENOTDIR'].includes(error.code)) fail('E_SOURCE','captured command requires its durable registered source descriptor');throw error;}
@@ -62,7 +64,7 @@ else {
       // Souls are portable declarations, never an implicit knowledge store.
       result={meta:{scaffolded:false},brief:'OKF requires explicit external bindings and soul/okf.json before a working instance can spawn. Use init or migrate; no knowledge was created in this soul.'};
     } else if(event==='spawn') {
-      const s=register(home);
+      const s=sourceReceipt.mode==='captured'?registerCaptured(home,sourceReceipt.receipt):register(home);
       if(s.skipped) result={meta:{memory:'none'},brief:'Service agent: follow your own task; no working-memory upkeep.'};
       else {
         const schedule=loadStatus(s).schedule.result;
@@ -70,8 +72,10 @@ else {
       }
     } else if(event==='retire') {
       if(captured) {
-        if(!fs.existsSync(markerPath(home))) fail('E_MIGRATION','captured retire requires a durable registered source or explicit helper receipt');
-        const s=src();scheduleSource(s);const r=capture(s,{final:true});result={meta:{retired:r.complete===true,source:s.file,capture:r},brief:'Final input is in durable custody. Delivery remains asynchronous.'};
+        let s;
+        if(sourceReceipt.mode==='captured') {s=registerCaptured(home,sourceReceipt.receipt);if(s.skipped) {result={meta:{retired:true,reason:'service'}};s=null;}}
+        else {if(!fs.existsSync(markerPath(home))) fail('E_MIGRATION','captured retire requires a durable registered source or explicit helper receipt');s=src();}
+        if(s) {scheduleSource(s);const r=capture(s,{final:true});result={meta:{retired:r.complete===true,source:s.file,capture:r},brief:'Final input is in durable custody. Delivery remains asynchronous.'};}
       } else if(service(home)) result={meta:{retired:true}};
       else if(!fs.existsSync(markerPath(home))) {
         if(['STATE.md','log.md','notes','.okf-harvest-record.json','.okf-harvest-record.next.json'].some(p=>fs.existsSync(join(home,p)))) fail('E_MIGRATION','unregistered/legacy source has memory; explicitly migrate/register before retirement');
