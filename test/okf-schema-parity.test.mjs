@@ -85,7 +85,7 @@ test('R1 configuration runtime and shipped schemas agree on accepted keys and ma
 test('R1 settings reject unknown properties using the exported manifest setting names',t=>{
   const prior=process.env.OATS_SETTINGS;t.after(()=>{if(prior===undefined) delete process.env.OATS_SETTINGS;else process.env.OATS_SETTINGS=prior;});
   const manifest=JSON.parse(fs.readFileSync(join(capability,'oats.json'),'utf8'));
-  const valid={'bindings-file':'/fixture/bindings.json','harvest-runtime':'pi','harvest-model':'fixture/model'};
+  const valid={'bindings-file':'/fixture/bindings.json','state-dir':'/fixture/state','harvest-runtime':'pi','harvest-model':'fixture/model'};
   assert.deepEqual(Object.keys(valid).sort(),Object.keys(manifest.settings).sort());
   process.env.OATS_SETTINGS=JSON.stringify(valid);assert.deepEqual(settings(),valid);
   for(const bad of [{...valid,'harvest-modle':'typo'},{...valid,'harvest-runtime':'unknown'},{...valid,'harvest-model':42}]) {process.env.OATS_SETTINGS=JSON.stringify(bad);assert.throws(()=>settings());}

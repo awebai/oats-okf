@@ -22,7 +22,10 @@
       "description": "Optional model pin for the selected harvest runtime, for example to use a cheaper model: a Pi provider/model or a native Claude/Codex model. When omitted, each harness uses its configured default."
     },
     "bindings-file": {
-      "description": "Absolute path to the capability-local version:1 JSON bindings document. Required for working sources; bases and durable state resolve relative to that document."
+      "description": "Absolute host-owned path identifying the version:1 bindings document. Portable binding preparation captures the selected document payload and never rereads this path."
+    },
+    "state-dir": {
+      "description": "Absolute host-owned durable state directory for portable bindings. It is never derived from an instance home."
     }
   },
   "agents": [
@@ -42,7 +45,16 @@
     "refresh": "bin/oats-okf.mjs refresh",
     "init": "bin/oats-okf.mjs init",
     "migrate": "bin/oats-okf.mjs migrate",
-    "unlock": "bin/oats-okf.mjs unlock"
+    "unlock": "bin/oats-okf.mjs unlock",
+    "binding-normalize": "bin/oats-okf-binding.mjs normalize",
+    "binding-bind": "bin/oats-okf-binding.mjs bind",
+    "binding-check": "bin/oats-okf-binding.mjs check"
+  },
+  "binding": {
+    "version": 1,
+    "normalize": "binding-normalize",
+    "bind": "binding-bind",
+    "check": "binding-check"
   },
   "inject": "injects/okf.md",
   "hooks": {

@@ -160,6 +160,13 @@ for (const [index, capabilityDir] of declaredCapabilities.entries()) {
   };
   for (const [name, command] of entries(manifest.commands)) safeResource(capabilityRoot, entrypoint(command), `${capabilityDir}/oats.json.commands.${name}`, "command entrypoint", { type: "file" });
   for (const [event, hook] of entries(manifest.hooks)) safeResource(capabilityRoot, entrypoint(hook), `${capabilityDir}/oats.json.hooks.${event}`, "hook entrypoint", { type: "file" });
+  if (manifest.binding && typeof manifest.binding === "object" && !Array.isArray(manifest.binding)) {
+    if (!["knowledge", "messaging", "tasks"].includes(manifest.layer)) report(`${capabilityDir}/oats.json.binding`, "binding codecs require a fundamental capability layer");
+    for (const phase of ["normalize", "bind", "check"]) {
+      const command = manifest.binding[phase];
+      if (typeof command !== "string" || !Object.hasOwn(manifest.commands || {}, command)) report(`${capabilityDir}/oats.json.binding.${phase}`, "must name one of the manifest's commands");
+    }
+  }
   for (const [name, operation] of entries(manifest.operations)) {
     if (typeof operation?.command !== "string" || !Object.hasOwn(manifest.commands || {}, operation.command)) {
       report(`${capabilityDir}/oats.json.operations.${name}.command`, "must name one of the manifest's commands");

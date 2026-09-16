@@ -208,6 +208,8 @@ for (const [name, mutate, message] of [
   ["undeclared operation command", (f) => { f.manifest.operations.inspect.command = "not-declared"; }, /operations.inspect.command: must name one of the manifest's commands/],
   ["inherited operation command", (f) => { f.manifest.operations.inspect.command = "constructor"; }, /operations.inspect.command: must name one of the manifest's commands/],
   ["removed inspect command", (f) => { delete f.manifest.commands.inspect; }, /operations.inspect.command: must name one of the manifest's commands/],
+  ["unowned binding command", (f) => { f.manifest.binding.bind = "missing-command"; }, /binding.bind: must name one of the manifest's commands/],
+  ["binding on non-fundamental capability", (f) => { delete f.manifest.layer; }, /binding codecs require a fundamental capability layer/],
   ["malformed resources", (f) => { f.manifest.skills = {}; f.manifest.agents = 1; }, /must be array/],
   ["required retire hook", (f) => { f.manifest.hooks.retire = { command: "bin/oats-okf.mjs retire", required: true }; }, /must match exactly one schema alternative/],
   ["invalid requirement", (f) => { f.manifest.requires = [{ command: "git" }]; }, /must match exactly one schema alternative/],

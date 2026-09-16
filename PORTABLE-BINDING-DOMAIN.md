@@ -1,7 +1,7 @@
 # Portable OKF binding domain
 
-Status: pure provider-domain foundation. The kernel invocation envelope and the
-manifest `binding` commands are intentionally not implemented here yet.
+Status: provider-domain foundation with manifest-owned binding wire commands.
+The kernel remains the sole resolver and invocation broker.
 
 ## Contract
 
@@ -65,10 +65,16 @@ store/node pairs become the existing `base/node` references.
 base metadata produced by the existing validation path. It does not reload
 current source/config documents, create state, initialize stores, or publish.
 
-## Provider-owned inputs pending broker wiring
+## Manifest-owned wire
 
-Workspace `knowledge.stores[]` remains a list of opaque provider envelopes in the
-kernel declaration contract. Until the broker fixes the command request shape,
-this module accepts explicit already-extracted binding maps rather than inventing
-a workspace YAML representation. The future normalize command can adapt those
-parsed envelopes to these functions without changing their domain rules.
+The capability declares `binding-normalize`, `binding-bind`, and `binding-check`
+under `binding.version: 1`. Their bounded stdin/stdout codec accepts decoded
+values and supplied origins only. Workspace `oats.okf.locations@1` entries use
+`payload.bindings`; adoption/operator inputs use their supplied `bindings` map.
+The provider emits requirements/candidates for the kernel's shared resolver,
+then binds only the selected choices.
+
+The binding payload captures the nonsecret domain and rendered runtime documents.
+Check validates that immutable relationship before read-only custody and accepted-
+base checks. It never reloads source/config YAML or JSON, initializes a base,
+enrolls a provider, starts a worker, or publishes.

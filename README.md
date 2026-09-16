@@ -17,11 +17,16 @@ not a published patch release.
 
 Install/trust this package and activate `oats.okf` using the OATS package and
 configuration skills. Activation may target sources, not necessarily the service
-worker. Runtime needs one effective setting:
+worker. The legacy live-source runtime needs one effective setting:
 
 ```sh
 oats use oats.okf --soul domain-expert --settings bindings-file=/absolute/config/okf-bindings.json
 ```
+
+Portable provider-binding preparation additionally requires an explicit
+`state-dir` setting alongside `bindings-file`. Both are captured as host-owned
+absolute locations; the codec does not derive state from an instance home or
+reread the bindings file during normalize/bind.
 
 The **absolute** bindings document is capability-owned JSON:
 
