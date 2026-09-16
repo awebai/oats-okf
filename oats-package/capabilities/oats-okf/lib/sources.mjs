@@ -187,9 +187,12 @@ export function registerCaptured(home,receipt) {
 export function register(home) {
   home=safePath(home);
   const invocation=loadInvocationKnowledgeBinding();
+  if(invocation.kind==='captured') {
+    if(fs.existsSync(markerPath(home))) return finishRegistration(homeSource(home));
+    fail('E_MIGRATION','captured provider binding requires durable captured-source registration; current soul/config fallback is forbidden');
+  }
   if(service(home)) return {skipped:'service'};
   if(fs.existsSync(markerPath(home))) return finishRegistration(homeSource(home));
-  if(invocation.kind==='captured') fail('E_MIGRATION','captured provider binding requires durable captured-source registration; current soul/config fallback is forbidden');
   safePath(join(home,'knowledge'));
   if(fs.existsSync(join(home,'knowledge'))) fail('E_VIEW','unregistered knowledge view exists; preserve it and inspect before registering');
   if(['.okf-harvest-record.json','.okf-harvest-record.next.json'].some(p=>fs.existsSync(join(home,p))) && !fs.existsSync(join(home,'.okf-v1-migration.json'))) fail('E_MIGRATION','legacy source watermarks require explicit oats okf migrate --source-home PATH before v2 registration; no cursor is silently trusted');
