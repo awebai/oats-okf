@@ -36,13 +36,13 @@ export function validateStoreLocator(value) {
     if(typeof value.path!=='string' || !value.path.startsWith('path:') || !isAbsolute(value.path.slice(5)) || resolve(value.path.slice(5))!==value.path.slice(5)) fail('E_CONFIG','portable directory store requires a normalized absolute path: locator');
     return {id:value.id,kind:value.kind,path:value.path};
   } else if(value.kind==='git') {
-    keys(value,['id','kind','repository','root','acceptedBranch','pr'],['id','kind','repository','root','acceptedBranch'],'git store locator');
+    keys(value,['id','kind','repository','root','acceptedBranch','pr'],['id','kind','repository','root','acceptedBranch','pr'],'git store locator');
     if(typeof value.repository!=='string' || !/^(?:https:\/\/|ssh:\/\/|git@)/.test(value.repository) || /[\r\n\0]/.test(value.repository)) fail('E_CONFIG','portable Git store requires an HTTPS or SSH repository');
     if(/^(?:https|ssh):\/\//.test(value.repository)) {let url;try{url=new URL(value.repository);}catch{fail('E_CONFIG','invalid Git store repository');}if(url.username || url.password) fail('E_CONFIG','Git store repository must not contain credentials');}
     relPath(value.root,true);
     if(typeof value.acceptedBranch!=='string' || !/^[a-zA-Z0-9][a-zA-Z0-9._/-]*$/.test(value.acceptedBranch) || value.acceptedBranch.includes('..') || value.acceptedBranch.endsWith('/') || value.acceptedBranch.endsWith('.lock')) fail('E_CONFIG','invalid acceptedBranch');
-    if(value.pr!==undefined) {keys(value.pr,['repository'],['repository'],'git PR binding');if(typeof value.pr.repository!=='string' || !/^[\w.-]+\/[\w.-]+$/.test(value.pr.repository)) fail('E_CONFIG','git PR binding requires owner/repo');}
-    return {id:value.id,kind:value.kind,repository:value.repository,root:value.root,acceptedBranch:value.acceptedBranch,...(value.pr?{pr:{repository:value.pr.repository}}:{})};
+    keys(value.pr,['repository'],['repository'],'git PR binding');if(typeof value.pr.repository!=='string' || !/^[\w.-]+\/[\w.-]+$/.test(value.pr.repository)) fail('E_CONFIG','git PR binding requires owner/repo');
+    return {id:value.id,kind:value.kind,repository:value.repository,root:value.root,acceptedBranch:value.acceptedBranch,pr:{repository:value.pr.repository}};
   }
   fail('E_CONFIG',`unsupported knowledge store kind: ${value.kind}`);
 }
@@ -127,7 +127,6 @@ export function bindKnowledgeDomain({model,choices}) {
   const reads=model.reads.map(entry=>({store:aliases[entry.store],node:entry.node}));
   const owns=model.owns.map(entry=>{
     const locator=entry.destination===null?selected(choices,entry.choiceKey):selected(choices,model.stores[entry.destination].choiceKey);
-    if(locator.kind==='git' && !locator.pr) fail('E_CONFIG',`Git write destination ${locator.id} requires explicit same-repository PR routing`);
     const store=add(locator,entry.choiceKey);
     return {store,node:entry.node,steward:model.owner};
   });

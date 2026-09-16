@@ -42,8 +42,9 @@ selection/declaration provenance. Portable directory `path:/...` locators render
 to the existing runtime's absolute `path` field only after selection. Every
 owned node has either an explicit declared destination or the required
 `write.default` choice. A read—even the sole configured public store—is never
-used as an implicit write destination. Git write destinations require explicit
-same-repository PR routing.
+used as an implicit write destination. Git locators retain the existing runtime's
+explicit same-repository PR route, but that metadata grants no write authority
+without an `owns` destination.
 
 All functions are pure. They do no filesystem/network access, credential lookup,
 provider enrollment, publication, YAML decoding, or precedence resolution. The

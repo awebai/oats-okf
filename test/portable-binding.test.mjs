@@ -13,7 +13,7 @@ import { validateBindings } from '../oats-package/capabilities/oats-okf/lib/conf
 
 const origin=(pointer='/knowledge/payload')=>({document:{kind:'source',source:'git:https://example.test/souls.git',revision:'a'.repeat(40),path:'agents/expert/soul.yaml',integrity:{format:'oats.bytes.v1',value:`sha256-${'b'.repeat(64)}`}},pointer});
 const directory=(id,path)=>({id,kind:'directory',path:`path:${path}`});
-const git=(id,{writable=true}={})=>({id,kind:'git',repository:'https://example.test/knowledge.git',root:'knowledge',acceptedBranch:'main',...(writable?{pr:{repository:'example/knowledge'}}:{})});
+const git=id=>({id,kind:'git',repository:'https://example.test/knowledge.git',root:'knowledge',acceptedBranch:'main',pr:{repository:'example/knowledge'}});
 function declaration(payload) {return {contract:KNOWLEDGE_CONTRACT,version:1,payload};}
 function choice(value) {return {value};}
 
@@ -65,14 +65,13 @@ test('binding renders stable store identities, multiple stores and explicit writ
 });
 
 test('read access never invents publication authority or a destination',()=>{
-  const publicRead=git('public-base',{writable:false});
+  const publicRead=git('public-base');
   const readOnly=normalizeKnowledgeDeclaration(declaration({owner:'expert-owner',stores:{public:{fixed:publicRead}},reads:[{store:'public',node:'reference'}],owns:[]}),{origin:origin()});
   const readBinding=bindKnowledgeDomain({model:readOnly,choices:{[storeChoiceKey('public')]:choice(publicRead)}});
   assert.deepEqual(readBinding.payload.owns,[]);
   const needsWrite=normalizeKnowledgeDeclaration(declaration({owner:'expert-owner',stores:{public:{fixed:publicRead}},reads:[{store:'public',node:'reference'}],owns:[{node:'private-note'}]}),{origin:origin()});
   assert.throws(()=>bindKnowledgeDomain({model:needsWrite,choices:{[storeChoiceKey('public')]:choice(publicRead)}}),/unresolved knowledge binding: \/bindings\/knowledge\/write\/default/);
-  const explicitPublicWrite=normalizeKnowledgeDeclaration(declaration({owner:'expert-owner',stores:{public:{fixed:publicRead}},reads:[],owns:[{node:'private-note',destination:'public'}]}),{origin:origin()});
-  assert.throws(()=>bindKnowledgeDomain({model:explicitPublicWrite,choices:{[storeChoiceKey('public')]:choice(publicRead)}}),/requires explicit same-repository PR routing/);
+  assert.ok(readBinding.payload.stores['public-base'].pr,'PR routing metadata alone does not create an owned destination');
 });
 
 test('stable identities, destinations and nonsecret locators fail closed',()=>{
@@ -84,7 +83,8 @@ test('stable identities, destinations and nonsecret locators fail closed',()=>{
     {...base,reads:[{store:'one',node:'x'},{store:'one',node:'x'}]},
     {...base,stores:{one:{fixed:directory('one','/srv/one'),default:directory('two','/srv/two')}}},
   ]) assert.throws(()=>normalizeKnowledgeDeclaration(declaration(payload),{origin:origin()}));
-  assert.throws(()=>validateStoreLocator({id:'git-base',kind:'git',repository:'https://user:secret@example.test/repo.git',root:'.',acceptedBranch:'main'}),/credentials/);
+  assert.throws(()=>validateStoreLocator({id:'git-base',kind:'git',repository:'https://user:secret@example.test/repo.git',root:'.',acceptedBranch:'main',pr:{repository:'example/repo'}}),/credentials/);
+  assert.throws(()=>validateStoreLocator({id:'git-base',kind:'git',repository:'https://example.test/repo.git',root:'.',acceptedBranch:'main'}),/requires pr/);
   assert.throws(()=>validateStoreLocator({id:'dir-base',kind:'directory',path:'/not-explicit'}),/path:/);
 
   const model=normalizeKnowledgeDeclaration(declaration({owner:'expert-owner',stores:{a:{fixed:directory('same','/srv/a')},b:{fixed:directory('same','/srv/b')}},reads:[],owns:[]}),{origin:origin()});
