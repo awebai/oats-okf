@@ -38,7 +38,7 @@ export function validateStoreLocator(value) {
   } else if(value.kind==='git') {
     keys(value,['id','kind','repository','root','acceptedBranch','pr'],['id','kind','repository','root','acceptedBranch','pr'],'git store locator');
     if(typeof value.repository!=='string' || !/^(?:https:\/\/|ssh:\/\/|git@)/.test(value.repository) || /[\r\n\0]/.test(value.repository)) fail('E_CONFIG','portable Git store requires an HTTPS or SSH repository');
-    if(/^(?:https|ssh):\/\//.test(value.repository)) {let url;try{url=new URL(value.repository);}catch{fail('E_CONFIG','invalid Git store repository');}if(url.username || url.password) fail('E_CONFIG','Git store repository must not contain credentials');}
+    if(/^(?:https|ssh):\/\//.test(value.repository)) {let url;try{url=new URL(value.repository);}catch{fail('E_CONFIG','invalid Git store repository');}if(url.password || (url.protocol==='https:' && url.username)) fail('E_CONFIG','Git store repository must not contain credentials');}
     relPath(value.root,true);
     if(typeof value.acceptedBranch!=='string' || !/^[a-zA-Z0-9][a-zA-Z0-9._/-]*$/.test(value.acceptedBranch) || value.acceptedBranch.includes('..') || value.acceptedBranch.endsWith('/') || value.acceptedBranch.endsWith('.lock')) fail('E_CONFIG','invalid acceptedBranch');
     keys(value.pr,['repository'],['repository'],'git PR binding');if(typeof value.pr.repository!=='string' || !/^[\w.-]+\/[\w.-]+$/.test(value.pr.repository)) fail('E_CONFIG','git PR binding requires owner/repo');

@@ -84,6 +84,8 @@ test('stable identities, destinations and nonsecret locators fail closed',()=>{
     {...base,stores:{one:{fixed:directory('one','/srv/one'),default:directory('two','/srv/two')}}},
   ]) assert.throws(()=>normalizeKnowledgeDeclaration(declaration(payload),{origin:origin()}));
   assert.throws(()=>validateStoreLocator({id:'git-base',kind:'git',repository:'https://user:secret@example.test/repo.git',root:'.',acceptedBranch:'main',pr:{repository:'example/repo'}}),/credentials/);
+  assert.doesNotThrow(()=>validateStoreLocator({id:'git-base',kind:'git',repository:'ssh://git@example.test/repo.git',root:'.',acceptedBranch:'main',pr:{repository:'example/repo'}}),'an SSH transport user is not a secret');
+  assert.throws(()=>validateStoreLocator({id:'git-base',kind:'git',repository:'ssh://git:secret@example.test/repo.git',root:'.',acceptedBranch:'main',pr:{repository:'example/repo'}}),/credentials/);
   assert.throws(()=>validateStoreLocator({id:'git-base',kind:'git',repository:'https://example.test/repo.git',root:'.',acceptedBranch:'main'}),/requires pr/);
   assert.throws(()=>validateStoreLocator({id:'dir-base',kind:'directory',path:'/not-explicit'}),/path:/);
 
