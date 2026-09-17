@@ -1046,6 +1046,70 @@ test('custody R3 all-drop does not certify a worker that changed peer file modes
   assert.throws(()=>complete(s,run.id,j),{code:'E_OWNER'});noPublication(f,s);
 });
 function entryMode(repo,oid,path) {return git(repo,['--no-replace-objects','ls-tree',oid,'--',path]).split(' ')[0];}
+function indexBoundaryProbe(f,stage,race=null) {
+  const scratch=join(f.dir,'index-probe-tmp');fs.mkdirSync(scratch);
+  const module=new URL('../oats-package/capabilities/oats-okf/lib/stores.mjs',import.meta.url).href;
+  const code=`import fs from 'node:fs';import {spawnSync} from 'node:child_process';import {syncBuiltinESMExports} from 'node:module';import {verifyGitScope} from ${JSON.stringify(module)};
+const index=${JSON.stringify(join(stage.checkout,'.git/index'))},race=${JSON.stringify(race)},observed={race:false,opened:false,closed:false,reads:0,nonblock:false,nofollow:false};
+const open=fs.openSync,close=fs.closeSync,read=fs.readSync;let indexFd;
+fs.openSync=(path,flags,...rest)=>{
+  if(path===index){
+    observed.nonblock=typeof flags==='number'&&(flags&fs.constants.O_NONBLOCK)!==0;observed.nofollow=typeof flags==='number'&&(flags&fs.constants.O_NOFOLLOW)!==0;
+    if(race&&!observed.race){observed.race=true;
+      if(race==='ancestor-race'){const dir=index.slice(0,index.lastIndexOf('/'));fs.renameSync(dir,dir+'-original');fs.symlinkSync(dir+'-original',dir);}
+      else {fs.renameSync(index,index+'.before-race');if(race==='fifo-race'){const r=spawnSync('/usr/bin/mkfifo',[index]);if(r.status!==0)throw new Error('fixture mkfifo failed');}else if(race==='symlink-race')fs.symlinkSync(index+'.before-race',index);else fs.writeFileSync(index,'DO_NOT_READ_REPLACEMENT');}
+    }
+  }
+  const fd=open(path,flags,...rest);if(path===index){indexFd=fd;observed.opened=true;}return fd;
+};
+fs.readSync=(fd,...rest)=>{if(fd===indexFd)observed.reads++;return read(fd,...rest);};
+fs.closeSync=fd=>{if(fd===indexFd)observed.closed=true;return close(fd);};syncBuiltinESMExports();
+let answer;try{verifyGitScope(${JSON.stringify(f.base)},${JSON.stringify(stage.checkout)},${JSON.stringify(stage.head)});answer={ok:true};}catch(error){answer={ok:false,code:error.code,message:error.message};}
+process.stdout.write(JSON.stringify({...answer,observed})+'\\n');`;
+  const result=spawnSync(process.execPath,['--input-type=module','-e',code],{cwd:f.context,env:{...process.env,TMPDIR:scratch},encoding:'utf8',timeout:5000,killSignal:'SIGKILL',maxBuffer:1024*1024});
+  let answer;try{answer=JSON.parse(result.stdout);}catch{}
+  return {...result,answer,scratch};
+}
+
+test('index copy boundary refuses split dependencies without freshening original backing files',t=>{
+  const f=fixture(t,{kind:'git'}),stage=stageBase(f.base,join(f.dir,'index-stage')),gitdir=join(stage.checkout,'.git'),index=join(gitdir,'index');
+  git(stage.checkout,['update-index','--split-index']);
+  const shared=fs.readdirSync(gitdir).filter(name=>/^sharedindex\.[a-f0-9]+$/.test(name)).map(name=>join(gitdir,name));assert.ok(shared.length);
+  const original=fs.readFileSync(index),contents=shared.map(path=>fs.readFileSync(path));
+  for(const path of shared)fs.utimesSync(path,new Date('2000-01-01T00:00:00Z'),new Date('2000-01-02T00:00:00Z'));
+  const stat=path=>{const s=fs.statSync(path,{bigint:true});return {atime:s.atimeNs,mtime:s.mtimeNs,ctime:s.ctimeNs,ino:s.ino};};
+  const before=shared.map(stat),calls=join(f.dir,'index-native-calls.jsonl');
+  gitWrapper(f,`fs.appendFileSync(${JSON.stringify(calls)},JSON.stringify({args:a,gitdir:process.env.GIT_DIR||null,index:process.env.GIT_INDEX_FILE||null})+'\\n');`);
+  const result=indexBoundaryProbe(f,stage),after=shared.map(stat);
+  assert.deepEqual(after,before,'native split-index parsing must not freshen original sharedindex timestamps');
+  assert.equal(result.status,0,result.stderr);assert.equal(result.answer?.code,'E_INDEX',result.stdout);
+  assert.deepEqual(fs.readFileSync(index),original);shared.forEach((path,i)=>assert.deepEqual(fs.readFileSync(path),contents[i]));
+  const native=fs.readFileSync(calls,'utf8').trim().split('\n').map(JSON.parse);
+  assert.equal(native.some(({args})=>args.includes('diff')),false,'unsupported split input refuses before original-gitdir verification');
+  assert.ok(native.some(({args,gitdir:dir,index:copy})=>args.includes('--shared-index-path')&&dir?.startsWith(result.scratch+'/')&&copy?.startsWith(result.scratch+'/')),'dependency read context is private, not only the primary index filename');
+  assert.deepEqual(fs.readdirSync(result.scratch),[],'private preflight scratch is removed');
+});
+
+for(const condition of ['fifo','directory','symlink','fifo-race','symlink-race','regular-race','ancestor-race','oversized']) test(`index copy boundary safely refuses ${condition}`,t=>{
+  const f=fixture(t,{kind:'git'}),stage=stageBase(f.base,join(f.dir,'index-stage')),index=join(stage.checkout,'.git/index'),original=fs.readFileSync(index),race=condition.endsWith('-race')?condition:null;
+  if(!race){
+    fs.renameSync(index,index+'.original');
+    if(condition==='fifo')execFileSync('/usr/bin/mkfifo',[index]);
+    else if(condition==='directory')fs.mkdirSync(index);
+    else if(condition==='symlink')fs.symlinkSync(index+'.original',index);
+    else {const fd=fs.openSync(index,'wx');try{fs.ftruncateSync(fd,16*1024*1024+1);}finally{fs.closeSync(fd);}}
+  }
+  const result=indexBoundaryProbe(f,stage,race);
+  assert.equal(result.status,0,`${condition} must return before subprocess timeout: ${result.error?.code||result.stderr}`);
+  assert.equal(result.answer?.code,'E_INDEX',result.stdout);assert.doesNotMatch(result.stdout,/DO_NOT_READ_REPLACEMENT/);
+  const observed=result.answer.observed;assert.equal(observed.reads,0,'no special/replaced/oversize source bytes read');
+  if(race){assert.equal(observed.race,true);assert.equal(observed.nonblock,true);assert.equal(observed.nofollow,true);}
+  if(observed.opened)assert.equal(observed.closed,true,'rejected acquired descriptor is closed');
+  const saved=race?(condition==='ancestor-race'?join(stage.checkout,'.git-original/index'):index+'.before-race'):index+'.original';
+  assert.deepEqual(fs.readFileSync(saved),original,'the original regular index is preserved by the fixture and never rewritten');
+  assert.deepEqual(fs.readdirSync(result.scratch),[],'bounded failure cleans only its private scratch');
+});
+
 test('custody R3 worker index mode-only entries are preserved but cannot contaminate publication',t=>{
   const f=fixture(t,{kind:'git'});note(f);const {s,run}=prepared(f),j=judgment(f,s,run),cwd=run.stages.project.checkout,path='knowledge/peer/log.md';
   git(cwd,['update-index','--chmod=+x','--',path]);

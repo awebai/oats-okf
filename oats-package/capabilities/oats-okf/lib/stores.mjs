@@ -91,19 +91,54 @@ export function allowedChanges(before, after, meta, owned) {
   }
   return changed;
 }
-function withVerificationIndex(cwd,fn) {
-  // Git 2.44 diff can refresh the index despite --no-optional-locks. Disabling
-  // autoRefreshIndex also disables stat-only filtering, producing false scope
-  // violations. Redirect those native reads/refreshes to a disposable COPY;
-  // never mutate or restore the worker index, or use the publication index.
-  const scratch=fs.mkdtempSync(join(fs.realpathSync(tmpdir()),'oats-okf-verify-index-'));
+const INDEX_SNAPSHOT_LIMIT=16*1024*1024;
+const indexFailure=()=>fail('E_INDEX','Git verification requires a stable regular self-contained index within 16 MiB');
+function readVerificationIndex(source) {
+  let fd;
   try {
-    const index=join(scratch,'index'),source=safePath(resolve(cwd,git(cwd,['rev-parse','--git-path','index'])));
-    fs.copyFileSync(source,index,fs.constants.COPYFILE_EXCL);fs.chmodSync(index,0o600);
-    const env={...cleanEnv(),GIT_INDEX_FILE:index};
-    // Keep any split-index writes in the disposable file too, not .git/.
+    const before=fs.lstatSync(safePath(source),{bigint:true});
+    const regular=stat=>stat.isFile() && stat.size>=0n && stat.size<=BigInt(INDEX_SNAPSHOT_LIMIT);
+    const same=stat=>regular(stat) && ['dev','ino','size','mtimeNs','ctimeNs'].every(key=>stat[key]===before[key]);
+    if(!regular(before) || typeof fs.constants.O_NOFOLLOW!=='number' || typeof fs.constants.O_NONBLOCK!=='number') indexFailure();
+    // lstat alone races. NONBLOCK prevents a swapped FIFO from hanging open;
+    // NOFOLLOW plus descriptor identity/type checks precede every byte read.
+    fd=fs.openSync(source,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW|fs.constants.O_NONBLOCK);
+    if(!same(fs.fstatSync(fd,{bigint:true})) || !same(fs.lstatSync(safePath(source),{bigint:true}))) indexFailure();
+    const bytes=Buffer.alloc(Number(before.size));
+    for(let offset=0;offset<bytes.length;) {
+      const count=fs.readSync(fd,bytes,offset,bytes.length-offset,offset);
+      if(!count) indexFailure();offset+=count;
+    }
+    if(!same(fs.fstatSync(fd,{bigint:true})) || !same(fs.lstatSync(safePath(source),{bigint:true}))) indexFailure();
+    return bytes;
+  } catch {indexFailure();}
+  finally {if(fd!==undefined) fs.closeSync(fd);}
+}
+function withVerificationIndex(cwd,fn) {
+  // Git 2.44 diff refreshes even with optional locks disabled. Use a COPY,
+  // never a worker-index write/restore or the private publication index.
+  const scratch=fs.mkdtempSync(join(fs.realpathSync(tmpdir()),'oats-okf-verify-index-')),owned=fs.lstatSync(scratch);
+  try {
+    const index=join(scratch,'index'),source=resolve(cwd,git(cwd,['rev-parse','--git-path','index']));
+    fs.writeFileSync(index,readVerificationIndex(source),{flag:'wx',mode:0o600});
+    const env={...cleanEnv(),GIT_INDEX_FILE:index},format=git(cwd,['rev-parse','--show-object-format']);
+    if(!['sha1','sha256'].includes(format)) indexFailure();
+    // Native split-index parsing freshens backing files BEFORE splitIndex=false
+    // takes effect. Preflight in an EMPTY private gitdir: original sharedindex
+    // files are never searched/opened, and missing dependencies refuse. Merely
+    // putting a backing copy beside GIT_INDEX_FILE would not isolate that read.
+    const gitdir=join(scratch,'repository');
+    git(scratch,['init','--bare','--quiet','--template=',`--object-format=${format}`,gitdir]);
+    try {
+      const shared=git(scratch,['--no-optional-locks','-c','core.splitIndex=false','-c','core.fsmonitor=false','rev-parse','--shared-index-path'],{env:{...env,GIT_DIR:gitdir}});
+      if(shared) indexFailure();
+    } catch {indexFailure();}
     return fn(args=>git(cwd,['--no-optional-locks','-c','diff.autoRefreshIndex=true','-c','core.splitIndex=false',...args],{env}));
-  } finally {fs.rmSync(scratch,{recursive:true,force:true});}
+  } finally {
+    const current=fs.lstatSync(scratch);
+    if(!current.isDirectory() || current.dev!==owned.dev || current.ino!==owned.ino) fail('E_INDEX','Git verification scratch ownership changed; cleanup refused');
+    fs.rmSync(scratch,{recursive:true,force:true});
+  }
 }
 export function verifyGitScope(base, dest, baseline, { checkModes = true } = {}) {
   return withVerificationIndex(dest,read=>{
