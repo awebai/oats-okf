@@ -1,54 +1,73 @@
-# Captured invocation wire — coordinated unreleased revision
+# Captured invocation wire — incarnation/intent successor
 
-Implemented from the lifecycle owner's approved cross-owner handoff: check input
-is exactly `{binding,context,action,invocation?}`. Normalize/bind are unchanged.
-The final shared-kernel implementation hash must be tested before a consumer pin
-is integrated or published. This source revision is not a release on old kernels.
+This separate consumer successor targets exact framework producer
+**`257c4b96b67001fa2bcf38436e57106c44aa797b`**. The independent worker-index fix
+is retained at `ce8980ba3f7f4b6b8c885ea8a7250977183a603a`, parent of this wire
+work, and must not be confused with invocation compatibility or publication.
 
-## Single authority by phase
+This is a coordinated revision of the **unreleased v1** projection. Earlier c5
+consumers and source-main history are preserved, not silently reinterpreted.
+Check input remains `{binding,context,action,invocation?}`; normalize/bind and the
+existing strict JSON decoder, settings, manifests and version/floor are unchanged.
 
-- **Check:** `input.invocation` is the only invocation authority. No environment
-  file supplies/fills missing check input; file pointers are ignored for this
-  phase. A present null/malformed/mismatched invocation refuses.
-- **Execution:** the same projection is supplied by the kernel through private
-  `OATS_INVOCATION_CONTEXT_FILE`, with binding separately supplied through the
-  existing private binding snapshot. No duplicate binding or full runtime env is
-  added to the generic context.
-- **Scope:** generic scope checks can omit invocation. Identity-dependent
-  messaging actions refuse missing invocation. Provider source-specific legacy
-  authority checks remain separate; this revision does not weaken them.
-
-## Projection and consumption checks
+## Required projection and structural checks
 
 ```
 {schemaVersion:1,executionBinding,subject,
- instance:null|{home,work,name,agent},context,responsibleHuman,
- messagingChoice,capability,action,priorReceipt}
+ instance:null|{home,work,name,agent,incarnationId},
+ intent:null|{schemaVersion:1,executionId,incarnationId,attempt},
+ context,responsibleHuman,messagingChoice,capability,action,priorReceipt}
 ```
 
-`subject` is the retained record union, not an alias-derived approximation:
-`{kind:"persistent",soul:<SoulSelection>}` or
-`{kind:"helper",provider:<CapabilityArtifactRef>,definition:<ResourceRef>,name}`.
-Checks retain full values and verify closed structures, artifact/definition owner
-consistency, subject/instance matching, human/messaging/context consistency and
-exact requested capability/context/action. The kernel still owns canonical source
-locator interpretation, retained artifact verification and executable approval;
-provider-side structural validation does not discover or authorize a source.
+- Check consumes **inline invocation only**, never an environment file to fill
+  missing or override supplied context. Scope checks can still omit invocation.
+- Present invocation requires `intent`; non-null instance requires a lowercase
+  UUIDv4 incarnationId. Old-c5 missing fields refuse—no defaults or backfill.
+- Intent fields are closed, schemaVersion1; executionId matches
+  `[A-Za-z0-9][A-Za-z0-9._:-]{0,127}`, attempt is a positive safe integer, and a
+  non-null intent must match a non-null instance's incarnation.
+- Exact retained persistent/helper subject structure and resource ownership,
+  capability/context/action, home/work/agent, human/messaging consistency and
+  prior-receipt bounds remain. Hooks require an instance; an explicit action
+  capability must equal its owner.
+- Existing512KiB/depth32/16384 overall and128KiB/depth24/8192 prior-receipt budgets
+  remain. No new JSON/config parser, source resolver, identity minting or runtime
+  kernel import.
 
-Budgets: full invocation 512 KiB/depth32/16384 entries; opaque nullable prior
-receipt 128 KiB/depth24/8192 entries. The existing bounded duplicate-safe UTF-8
-phase decoder remains the only JSON decoder. No new config parser or resolver.
+The kernel owns current retained approval, incarnation/index/attempt custody and
+admission; provider structural validation does not independently prove them.
+A null intent grants no mutation authority. Composition/home/name/digest or a
+synthetic fixture identity is not a substitute for an admitted request.
 
-Generic receipt bounds do not certify provider receipt meaning or readiness.
-In particular, setup authorization is not completed enrollment, and an old
-resolution/home digest does not identify a fresh incarnation or admitted request.
-Native mutation remains gated pending the exact generic identity contract.
+## Execution and capability boundaries are unchanged
 
-## Provider pins
+The kernel supplies the same generic projection through its private invocation
+snapshot for execution. **This OKF CLI still uses its existing captured binding,
+source-receipt and durable descriptor authority; this commit does not add a
+production generic invocation-file execution reader.** The exported shape codec
+validates the private snapshot in the focused consumer fixture, not as a claim
+that the stateless CLI consumes generic admission authority.
 
-Both isolated providers receive matching consumption rules on separate commits.
-Previous commits, including reviewed OKF runtime `7c57de9`, are preserved; they
-are not amended or represented as accepting this revised check wire. OKF retains
-its existing source receipt as supplemental registration input and its source-free
-worker/delivery engine, promotion judgment and PR-only Git publication unchanged.
-No settings/version floor, mirror, installation or live provider state is changed.
+Captured harvest/run-source/helper paths retain `E_CAPTURED_HELPER`; no captured
+worker/runtime launch is enabled, including `--no-launch`. Saved input/receipt
+custody, existing completion, lifecycle registration/final capture, promotion
+judgment and PR-only runtime Git knowledge publication stay unchanged. No direct
+accepted-branch delivery or kernel knowledge policy is added.
+
+## Focused producer evidence
+
+`test/parent-invocation-codec.test.mjs` uses exact257 source via its sibling
+archive or `OATS_INVOCATION_FRAMEWORK_ROOT`. Positive fixtures use fresh
+`materializeCapturedDirectoryScaffold` homes with kernel-minted incarnation and
+index custody. A supplied older/missing producer fails; absent optional producer
+source is an explicit skip, not qualification.
+
+Tests cover persistent/helper and workspace/standalone, actual kernel custody
+admission/begin/replay primitives, the real OKF check CLI, private snapshot shape,
+old-c5 rejection and preserved stateless binding-based guidance. These controlled
+loaded-record fixtures do **not** prove public retained-approval admission,
+production generic-context execution, source registration or helper launch.
+
+Coordinator owns the separate review, coherent follow-up integration gate and
+publication. No full-suite rerun, metadata/floor change, installation, live setup,
+provider authority lookup, model or timer is part of this consumer update.

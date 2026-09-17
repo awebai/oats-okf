@@ -18,7 +18,24 @@ test('closed invocation matches capability/context/action and instance subject/h
   const value=make();assert.equal(validateInvocationShape(value,{capability:binding.capability,context,action}),value);
   for(const expected of [{capability:'other.provider'},{context:{kind:'standalone',key:'other'}},{action:{...action,name:'retire'}}]) assert.throws(()=>validateInvocationShape(value,expected),{code:'invalid-binding'});
   for(const changed of [{...value,extra:true},{...value,schemaVersion:2},{...value,instance:{...value.instance,agent:'other'}},{...value,instance:{...value.instance,work:'/other/work'}},{...value,action:{...action,unknown:true}},{...value,action:{kind:'hook',name:'spawn'}}]) assert.throws(()=>validateInvocationShape(changed),{code:'invalid-binding'});
-  assert.doesNotThrow(()=>validateInvocationShape({...value,instance:null}));
+  assert.throws(()=>validateInvocationShape({...value,instance:null}),{code:'invalid-binding'},'hooks require an instance');
+  assert.doesNotThrow(()=>validateInvocationShape({...value,instance:null,action:{kind:'inspect'}}));
+  assert.throws(()=>validateInvocationShape({...value,action:{...action,capability:'other.provider'}}),{code:'invalid-binding'});
+});
+
+test('required incarnation and intent match the exact successor without c5 backfill',()=>{
+  for(const subject of [persistentSubject(),helperSubject()]) {
+    const value=make(subject),intent={schemaVersion:1,executionId:'request:1',incarnationId:value.instance.incarnationId,attempt:1};
+    assert.equal(validateInvocationShape({...value,intent}).intent,intent);
+    assert.doesNotThrow(()=>validateInvocationShape({...value,intent:{...intent,executionId:'a'.repeat(128),attempt:Number.MAX_SAFE_INTEGER}}));
+    for(const change of [{schemaVersion:2},{executionId:''},{executionId:17},{executionId:'bad space'},{executionId:'a'.repeat(129)},{incarnationId:'22222222-2222-4222-8222-222222222222'},{attempt:0},{attempt:1.5},{attempt:'1'},{attempt:Number.MAX_SAFE_INTEGER+1},{receipt:{unexpected:true}}]) assert.throws(()=>validateInvocationShape({...value,intent:{...intent,...change}}),{code:'invalid-binding'});
+    assert.throws(()=>validateInvocationShape({...value,instance:null,intent,action:{kind:'inspect'}}),{code:'invalid-binding'});
+    for(const key of ['intent','instance.incarnationId']) {
+      const old=structuredClone(value);if(key==='intent') delete old.intent;else delete old.instance.incarnationId;
+      assert.throws(()=>validateInvocationShape(old),{code:'invalid-binding'},'missing successor fields are never filled');
+    }
+    for(const incarnationId of ['',null,17,'11111111-1111-1111-8111-111111111111','11111111-1111-4111-7111-111111111111','AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA']) assert.throws(()=>validateInvocationShape({...value,instance:{...value.instance,incarnationId}}),{code:'invalid-binding'});
+  }
 });
 
 test('prior opaque receipt has its own byte/depth/entry budget',()=>{

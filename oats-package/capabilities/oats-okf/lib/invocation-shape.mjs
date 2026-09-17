@@ -35,6 +35,13 @@ function artifact(value) {
   integrity(value.integrity,'oats.tree-exec.v1');
 }
 function resolution(value) {keys(value,['schemaVersion','id']);if(value.schemaVersion!==1) fail();hash(value.id);}
+function incarnation(value) {if(typeof value!=='string' || !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(value)) fail();}
+function intent(value,instance) {
+  if(value===null) return;
+  keys(value,['schemaVersion','executionId','incarnationId','attempt']);incarnation(value.incarnationId);
+  if(value.schemaVersion!==1 || typeof value.executionId!=='string' || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(value.executionId) || !Number.isSafeInteger(value.attempt) || value.attempt<1) fail();
+  if(instance===null || value.incarnationId!==instance.incarnationId) fail();
+}
 function origin(value) {
   keys(value,['kind','document','pointer','span'],['kind','document','pointer']);
   if(!['soul-requirement','soul-default','workspace-default','import-adoption','operator','package-dependency','work-target','migration-evidence','provider-binding','workspace-admission','member-backlink','source-export','manifest-default'].includes(value.kind)) fail();
@@ -115,11 +122,14 @@ export function assertInvocationBounds(value,limits=INVOCATION_LIMITS) {
   visit(value,1);if(Buffer.byteLength(JSON.stringify(value),'utf8')>limits.bytes) fail();
 }
 export function validateInvocationShape(value,expected={}) {
-  assertInvocationBounds(value);keys(value,['schemaVersion','executionBinding','subject','instance','context','responsibleHuman','messagingChoice','capability','action','priorReceipt']);
+  assertInvocationBounds(value);keys(value,['schemaVersion','executionBinding','subject','instance','intent','context','responsibleHuman','messagingChoice','capability','action','priorReceipt']);
   if(value.schemaVersion!==1) fail();keys(value.executionBinding,['schemaVersion','deployment','resolution']);if(value.executionBinding.schemaVersion!==1) fail();absolute(value.executionBinding.deployment);resolution(value.executionBinding.resolution);
   const alias=subject(value.subject);
-  if(value.instance!==null) {keys(value.instance,['home','work','name','agent']);absolute(value.instance.home);absolute(value.instance.work);text(value.instance.name);text(value.instance.agent);if(value.instance.agent!==alias || value.instance.work!==join(value.instance.home,'work')) fail();}
+  if(value.instance!==null) {keys(value.instance,['home','work','name','agent','incarnationId']);incarnation(value.instance.incarnationId);absolute(value.instance.home);absolute(value.instance.work);text(value.instance.name);text(value.instance.agent);if(value.instance.agent!==alias || value.instance.work!==join(value.instance.home,'work')) fail();}
+  intent(value.intent,value.instance);
   const selectedContext=context(value.context);human(value.responsibleHuman);messaging(value.messagingChoice,selectedContext,value.responsibleHuman);capability(value.capability);action(value.action);assertInvocationBounds(value.priorReceipt,PRIOR_RECEIPT_LIMITS);
+  if(value.action.capability!==undefined && value.action.capability!==value.capability) fail();
+  if(value.action.kind==='hook' && value.instance===null) fail();
   for(const field of ['capability','context','action']) if(Object.hasOwn(expected,field) && !same(value[field],expected[field])) fail();
   return value;
 }
