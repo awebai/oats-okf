@@ -142,6 +142,15 @@ test('exported payload version, floor, required hooks and complete command inven
   const inj=fs.readFileSync(join(CAP,m.inject),'utf8');assert.doesNotMatch(inj,/harvest/i);assert.match(inj,/after compaction/);
   const skill=fs.readFileSync(join(CAP,'skills/memory-harvest/SKILL.md'),'utf8');assert.ok(skill.indexOf('### 3.2 The accept list')<skill.indexOf('## Independent input'));assert.match(skill,/Could it NOT have found this by reading the repository/);
 });
+test('c77 OKF declares only own helper omission and unchanged lifecycle input opt-ins',()=>{
+  const m=readJSON(join(CAP,'oats.json'));
+  assert.deepEqual(m.helperInjection,{version:1,mode:'omit'});
+  assert.equal(m.inject,'injects/okf.md','primary contribution is unchanged');
+  assert.deepEqual(m.hooks.spawn,{command:'bin/oats-okf.mjs spawn',required:true,inputs:{sourceReceipt:{version:1}}});
+  assert.deepEqual(m.hooks.retire,{command:'bin/oats-okf.mjs retire',inputs:{sourceReceipt:{version:1}}});
+  assert.equal(Object.hasOwn(m.hooks.retire,'required'),false,'legacy optional retire semantics are unchanged');
+  assert.equal(m.hooks['soul-scaffold'],'bin/oats-okf.mjs soul-scaffold','no source receipt opt-in for stateless soul guidance');
+});
 test('help is side-effect free, including malformed settings and every declared command',t=>{
   const f=fixture(t);for(const cmd of Object.keys(readJSON(join(CAP,'oats.json')).commands)) {const r=f.cli(cmd,['--help'],{OATS_SETTINGS:'!'});assert.equal(r.status,0,r.stderr);assert.match(r.stdout,/oats okf/);}assert.equal(fs.existsSync(f.calls),false);
 });
@@ -259,6 +268,42 @@ test('generic lifecycle ingress refuses missing or contradictory admission befor
   assert.equal(fs.existsSync(join(f.home,'.okf-source.json')),false);assert.equal(fs.existsSync(f.bindings.stateDir),false);
 });
 
+test('c77 NEW captured registration refuses missing SourceReceipt1 before any effects',t=>{
+  for(const kind of ['persistent','helper']) {
+    const f=fixture(t),receipt=capturedReceipt(f,{kind}),snapshot=join(f.dir,'binding-input.json');save(snapshot,receipt.binding);
+    // Even contradictory live service metadata cannot confer helper skip/input
+    // authority. Generic fixtures supply the actual retained subject instead.
+    save(join(f.home,'instance.json'),{kind:'capability',instance:'source-one',agent:'source'});
+    const preload=noEffectsPreload(f.dir);
+    for(const event of ['spawn','retire']) {
+      const env={...process.env,OATS_BINDING_FILE:snapshot,...capturedExecutionEnv(f,receipt,event)};
+      const before=inventory(f.dir),result=spawnSync(process.execPath,['--import',preload,CLI,event,'--json'],{cwd:f.home,env,encoding:'utf8',timeout:30000});
+      assert.equal(result.status,1,result.stdout+result.stderr);
+      assert.match(result.stdout,/new captured registration requires SourceReceipt1 input authority/);
+      assert.equal(result.stderr,'');assert.deepEqual(inventory(f.dir),before,'no source, owner, view, scheduler, lock or native mutation');
+    }
+    assert.equal(fs.existsSync(join(f.home,'.okf-source.json')),false);assert.equal(fs.existsSync(f.bindings.stateDir),false);
+  }
+});
+
+test('c77 absent SourceReceipt1 permits only qualified already-registered replay',t=>{
+  const f=fixture(t),receipt=capturedReceipt(f),source=registerCaptured(f.home,receipt),snapshot=join(f.dir,'binding-input.json');save(snapshot,receipt.binding);
+  const sourceBytes=fs.readFileSync(source.file),owners=fs.readFileSync(join(f.bindings.stateDir,'owners.json'));
+  for(const generic of [false,true]) {
+    const env={OATS_BINDING_FILE:snapshot,...(generic?capturedExecutionEnv(f,receipt,'spawn'):{})};
+    const result=f.cli('spawn',[],env);assert.equal(result.status,0,result.stdout+result.stderr);
+    assert.equal(result.out.meta.source,source.file);assert.deepEqual(fs.readFileSync(source.file),sourceBytes);assert.deepEqual(fs.readFileSync(join(f.bindings.stateDir,'owners.json')),owners);
+  }
+  note(f);const retired=f.cli('retire',[],{OATS_BINDING_FILE:snapshot,...capturedExecutionEnv(f,receipt,'retire')});
+  assert.equal(retired.status,0,retired.stdout);assert.equal(retired.out.meta.retired,true);
+  assert.deepEqual(fs.readFileSync(source.file),sourceBytes,'final capture does not replace source identity');
+  // Retained data is not authority to recreate a missing home registration.
+  fs.rmSync(join(f.home,'.okf-source.json'));
+  const env={OATS_BINDING_FILE:snapshot,...capturedExecutionEnv(f,receipt,'spawn')},before=inventory(f.dir),result=f.cli('spawn',[],env);
+  assert.equal(result.status,1);assert.match(result.stdout,/new captured registration requires SourceReceipt1 input authority/);
+  assert.deepEqual(inventory(f.dir),before,'no reconstruction from an old descriptor or current soul/config');
+});
+
 test('captured registration freezes qualified identity, binding and v2 schedule without live source fallback',t=>{
   const f=fixture(t),receipt=capturedReceipt(f),snapshot=join(f.dir,'invocation-binding.json'),wrong=structuredClone(receipt.binding),priorBinding=process.env.OATS_BINDING_FILE;
   t.after(()=>{if(priorBinding===undefined) delete process.env.OATS_BINDING_FILE;else process.env.OATS_BINDING_FILE=priorBinding;});
@@ -305,7 +350,13 @@ test('public captured harvest refuses before registration replay or scheduling e
   const preload=noEffectsPreload(f.dir),before=inventory(f.dir);
   for(const env of [{OATS_BINDING_FILE:snapshot},{}]) for(const args of [[],['--no-launch']]) {
     const result=spawnSync(process.execPath,['--import',preload,CLI,'harvest','--home',f.home,...args,'--json'],{cwd:f.context,env:{...process.env,...env},encoding:'utf8',timeout:30000});
-    assert.equal(result.status,1,result.stdout+result.stderr);assert.equal(JSON.parse(result.stdout).error.code,'E_CAPTURED_HELPER');
+    assert.equal(result.status,1,result.stdout+result.stderr);
+    const error=JSON.parse(result.stdout).error;
+    // The production reader refuses a persisted captured source with NO
+    // selected binding even before the qualified-helper guard. A selected
+    // binding still reaches the explicit unsupported-helper diagnostic.
+    assert.equal(error.code,Object.hasOwn(env,'OATS_BINDING_FILE')?'E_CAPTURED_HELPER':'E_INVOCATION');
+    if(!Object.hasOwn(env,'OATS_BINDING_FILE')) assert.equal(error.message,'captured source execution requires its selected binding');
     assert.equal(result.stderr,'');assert.deepEqual(inventory(f.dir),before,'no repair, lock, schedule, input or admitted receipt change');
   }
 });

@@ -80,6 +80,10 @@ else {
       src();
     }
     if(['spawn','retire'].includes(event)) {
+      // A generic intent authorizes its action, not missing source/role input.
+      // Absence may replay an already qualified source, never create one or
+      // infer a helper skip from an ambient kind/name/knowledge-slot heuristic.
+      if(captured && sourceReceipt.mode!=='captured' && !fs.existsSync(markerPath(home))) fail('E_SOURCE','new captured registration requires SourceReceipt1 input authority');
       if(execution && fs.existsSync(markerPath(home))) src();
       if(!captured && fs.existsSync(join(home,'instance.json')) && Object.hasOwn(readJSON(safePath(join(home,'instance.json'))),'executionBinding')) fail('E_INVOCATION','captured home cannot use legacy lifecycle ingress');
     }

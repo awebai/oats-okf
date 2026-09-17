@@ -57,13 +57,25 @@
     "check": "binding-check"
   },
   "inject": "injects/okf.md",
+  "helperInjection": {
+    "version": 1,
+    "mode": "omit"
+  },
   "hooks": {
     "soul-scaffold": "bin/oats-okf.mjs soul-scaffold",
     "spawn": {
       "command": "bin/oats-okf.mjs spawn",
-      "required": true
+      "required": true,
+      "inputs": {
+        "sourceReceipt": { "version": 1 }
+      }
     },
-    "retire": "bin/oats-okf.mjs retire"
+    "retire": {
+      "command": "bin/oats-okf.mjs retire",
+      "inputs": {
+        "sourceReceipt": { "version": 1 }
+      }
+    }
   },
   "operations": {
     "inspect": {
