@@ -26,7 +26,7 @@ function human(value) {
   if(typeof value.provider!=='string' || !value.provider || typeof value.id!=='string' || !value.id) fail('E_SOURCE','invalid responsible human');
   return JSON.parse(JSON.stringify(value));
 }
-function validateCapturedReceipt(home,receipt) {
+export function validateCapturedReceipt(home,receipt) {
   exact(receipt,['schemaVersion','kind','home','work','context','agent','instance','sourceIdentity','role','executionBinding','responsibleHuman','binding'],['schemaVersion','kind','home','work','context','agent','instance','sourceIdentity','role','executionBinding','responsibleHuman','binding'],'captured source receipt');
   if(receipt.schemaVersion!==1 || !['persistent','helper'].includes(receipt.kind)) fail('E_SOURCE','unsupported captured source receipt');
   home=absolute(home,'registration home');const receiptHome=absolute(receipt.home,'receipt home');if(home!==receiptHome) fail('E_SOURCE','registration home differs from receipt');

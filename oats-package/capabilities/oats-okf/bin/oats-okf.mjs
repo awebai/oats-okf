@@ -7,6 +7,7 @@ import { runSource, complete, retry, readRun, requireQualifiedHelper } from '../
 import { initBase, migrate, deliverMigration, cutoverMigration, migrateSource } from '../lib/migration.mjs';
 import { inspect } from '../lib/inspection.mjs';
 import { loadInvocationKnowledgeBinding } from '../lib/binding-wire.mjs';
+import { loadCapturedOkfInvocation, loadOkfSourceReceiptInput, assertOkfInvocationAction, requireOkfAdmittedAction, assertOkfSourceContext, assertOkfRegisteredSourceReplay } from '../lib/invocation-context.mjs';
 const HELP=`oats okf inspect [--home PATH | --source FILE] [--json]
 oats okf harvest [--home PATH] [--no-launch] [--json]
 oats okf run-source --source FILE [--manual] [--no-launch] [--json]
@@ -49,17 +50,46 @@ else {
     };
     for(const k of Object.keys(flags)) if(!['json','soul',...(accepted[event] || [])].includes(k)) fail('E_USAGE',`unknown flag --${k} for ${event}`);
     if(flags.source && flags.home) fail('E_USAGE','choose source descriptor OR home');
-    const invocation=loadInvocationKnowledgeBinding(),captured=invocation.kind==='captured';
-    // Refuse the unavailable worker before even attempting source registration.
+    const execution=Object.hasOwn(process.env,'OATS_INVOCATION_CONTEXT_FILE')?loadCapturedOkfInvocation():null;
+    const invocation=execution?{kind:'captured',binding:execution.binding}:loadInvocationKnowledgeBinding(),captured=invocation.kind==='captured';
+    if(execution) assertOkfInvocationAction(execution.context,event,readJSON(new URL('../oats.json',import.meta.url)));
+    // Unsupported worker/administration paths stay closed even with an intent.
     if(captured && event==='harvest') requireQualifiedHelper({providerBinding:invocation.binding});
     const unsupportedCaptured=new Set(['setup','init','migrate','unlock']);
     if(captured && unsupportedCaptured.has(event)) fail('E_MIGRATION',`captured ${event} is not supported; use an explicit operator administration path`);
-    const home=resolve(flags.home || process.env.OATS_INSTANCE_HOME || process.env.OATS_HOME || process.cwd());
-    const sourceReceipt=loadInvocationSourceReceipt(home);
+    const target=execution?.context.instance;
+    if(target && flags.home && resolve(flags.home)!==target.home) fail('E_INVOCATION','captured invocation target differs from requested home');
+    const home=target?.home || resolve(flags.home || (execution?process.cwd():process.env.OATS_INSTANCE_HOME || process.env.OATS_HOME || process.cwd()));
+    if(execution && ['spawn','retire'].includes(event)) requireOkfAdmittedAction(execution.context);
+    const sourceReceipt=execution?loadOkfSourceReceiptInput(execution):loadInvocationSourceReceipt(home);
     if(sourceReceipt.mode==='captured' && !['spawn','retire'].includes(event)) fail('E_SOURCE','captured source receipt is valid only for lifecycle hooks');
     const src=()=>{
-      try {return flags.source?loadSource(resolve(flags.source)):homeSource(home);}
-      catch(error) {if(captured && ['ENOENT','ENOTDIR'].includes(error.code)) fail('E_SOURCE','captured command requires its durable registered source descriptor');throw error;}
+      try {
+        const source=flags.source?loadSource(resolve(flags.source)):homeSource(home);
+        if(execution) assertOkfSourceContext(source,execution.context,execution.binding);
+        else if(captured) assertOkfRegisteredSourceReplay(source,invocation.binding);
+        else if(source.providerBinding && event!=='inspect') fail('E_INVOCATION','captured source execution requires its selected binding');
+        return source;
+      } catch(error) {if(captured && ['ENOENT','ENOTDIR'].includes(error.code)) fail('E_SOURCE','captured command requires its durable registered source descriptor');throw error;}
+    };
+    // Deliberate old registered-source replay is a separate qualified contract,
+    // never a way to create a source or synthesize generic admission. A present
+    // invalid/unadmitted generic invocation cannot enter this compatibility path.
+    if(captured && !execution && Object.hasOwn(accepted,event) && event!=='soul-scaffold') {
+      if(!fs.existsSync(flags.source?resolve(flags.source):markerPath(home))) fail('E_ADMISSION','new captured registration requires generic admitted invocation inputs');
+      src();
+    }
+    if(['spawn','retire'].includes(event)) {
+      if(execution && fs.existsSync(markerPath(home))) src();
+      if(!captured && fs.existsSync(join(home,'instance.json')) && Object.hasOwn(readJSON(safePath(join(home,'instance.json'))),'executionBinding')) fail('E_INVOCATION','captured home cannot use legacy lifecycle ingress');
+    }
+    // Scope commands have no kernel instance intent. They may finish only
+    // already retained runs under their exact source binding/descriptor, never
+    // allocate a new worker or infer an incarnation for a deleted source.
+    const retainedRun=s=>{
+      const id=event==='complete'?flags.run:loadStatus(s).activeRun;
+      if(!id) {if(event==='complete') fail('E_RUN','complete requires an existing --run');requireQualifiedHelper(s);}
+      readRun(s,id);return s;
     };
     let result;
     if(event==='soul-scaffold') {
@@ -92,8 +122,8 @@ else {
       const s=register(home);
       result=s.skipped?{status:'skipped',reason:'service'}:runSource(s,{manual:true,noLaunch:!!flags['no-launch']});
     } else if(event==='run-source') result=runSource(src(),{manual:!!flags.manual,noLaunch:!!flags['no-launch']});
-    else if(event==='complete') result=complete(src(),flags.run,flags.judgment && resolve(flags.judgment));
-    else if(event==='retry') result=retry(src(),{run:flags.run,rejudge:!!flags.rejudge,launch:!!flags.launch,adoptHome:flags['adopt-home']});
+    else if(event==='complete') {const s=src();if(captured) retainedRun(s);result=complete(s,flags.run,flags.judgment && resolve(flags.judgment));}
+    else if(event==='retry') {const s=src();if(captured && !flags.run && !flags.rejudge && !flags.launch && !flags['adopt-home']) retainedRun(s);result=retry(s,{run:flags.run,rejudge:!!flags.rejudge,launch:!!flags.launch,adoptHome:flags['adopt-home']});}
     else if(event==='inspect') result=inspect(src());
     else if(event==='setup') {
       const s=src();if(flags.enable && flags.disable) fail('E_USAGE','choose enable or disable');

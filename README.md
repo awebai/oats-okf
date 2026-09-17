@@ -180,6 +180,9 @@ Captured command/lifecycle invocation uses short-lived, same-user mode-0600
 snapshots:
 
 - `OATS_BINDING_FILE` contains exactly the retained ProviderBinding1.
+- `OATS_INVOCATION_CONTEXT_FILE` carries the generic subject/context/action and
+  incarnation/intent projection; execution reads this file, while binding check
+  consumes only its inline stdin projection.
 - `OATS_SOURCE_RECEIPT_FILE` additionally carries the parent-qualified persistent
   or helper lifecycle receipt for captured spawn/retire.
 
@@ -190,6 +193,14 @@ rendered v1 runtime documents, qualified source identity, role, execution bindin
 and explicit responsible human into the existing durable source descriptor. A
 helper registers no owner/source. `responsibleHuman: null` specifically means
 messaging was disabled; a missing value is unknown and refuses.
+
+Fresh captured lifecycle execution requires admitted generic inputs. Invalid or
+unadmitted supplied context never falls back. An already registered source may
+replay its qualified descriptor+binding contract without generic input, but this
+compatibility path cannot create a new registration. Scope completion/retry can
+finish only retained runs under their source binding—not invent a live source
+incarnation or grant new worker/native authority. See
+[invocation transport and limits](INVOCATION-WIRE-STATUS.md).
 
 New captured persistent sources receive a schedule with
 `definitionVersion: 2`, `recurrencePolicy: "capture"`, explicit saved

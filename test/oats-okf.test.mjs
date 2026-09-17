@@ -8,6 +8,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { syncBuiltinESMExports } from 'node:module';
 import { inventory, noEffectsPreload } from './helpers/no-effects.mjs';
+import { invocationFor, persistentSubject, helperSubject } from './helpers/invocation-fixture.mjs';
 const ROOT=fileURLToPath(new URL('../',import.meta.url));
 const CAP=join(ROOT,'oats-package',JSON.parse(fs.readFileSync(join(ROOT,'oats-package/oats-package.json'),'utf8')).capabilities[0]);
 const CLI=join(CAP,'bin/oats-okf.mjs');
@@ -43,7 +44,7 @@ else if(a[0]==='--deployment') {
   const inherited=['OATS_DEPLOYMENT','OATS_RESOLUTION','OATS_BINDING_FILE','OATS_SOURCE_RECEIPT_FILE','OATS_INVOCATION_CONTEXT_FILE'];
   if(a[1]!==target.deployment || a[2]!=='--resolution' || a[3]!==target.resolution || a[4]!=='okf' || a[5]!=='complete' || a.includes('--soul') || inherited.some(key=>process.env[key]!==undefined)) process.exit(93);
   const {spawnSync}=await import('node:child_process');
-  const r=spawnSync(process.execPath,[target.cli,...a.slice(5)],{env:{...process.env,OATS_BINDING_FILE:target.bindingFile},encoding:'utf8'});
+  const r=spawnSync(process.execPath,[target.cli,...a.slice(5)],{env:{...process.env,OATS_BINDING_FILE:target.bindingFile,...(target.invocationFile?{OATS_INVOCATION_CONTEXT_FILE:target.invocationFile}:{})},encoding:'utf8'});
   process.stdout.write(r.stdout);process.stderr.write(r.stderr);process.exit(r.status ?? 94);
 }
 else if(a[0]==='spawn') {const instance='memory-harvest-'+val('--purpose'),home=join(root,'workers',instance);fs.mkdirSync(join(home,'work'),{recursive:true});fs.writeFileSync(join(home,'instance.json'),JSON.stringify({instance,agent:'memory-harvest',work:'directory',repo:val('--repo'),kind:'capability',launched:false}));fs.copyFileSync(val('--task-file'),join(home,'TASK.md'));out({instance,home,work:'directory',launched:false});}
@@ -100,6 +101,23 @@ function capturedReceipt(f,{kind='persistent',binding=capturedBinding(f)}={}) {
   return {schemaVersion:1,kind,home:f.home,work:join(f.home,'work'),context:f.context,agent:'source',instance:'source-one',
     sourceIdentity:kind==='helper'?null:{kind:'git-soul',repository:{kind:'canonical-remote',remote:'git:https://example.test/source.git'},exportPath:'agents/source'},
     role:'# Captured source\n',executionBinding:{schemaVersion:1,deployment:f.context,resolution:{schemaVersion:1,id:`sha256-${'a'.repeat(64)}`}},responsibleHuman:null,binding};
+}
+// Explicit provider-contract input fixture, not a kernel admission producer or
+// a backfill of old instance metadata. Real producer fixtures remain separate.
+function capturedExecutionEnv(f,receipt,event,{scope=false}={}) {
+  const subject=receipt.kind==='helper'?helperSubject(receipt.agent):persistentSubject(receipt.agent);
+  if(receipt.kind==='persistent') {
+    const soul=subject.soul,identity=structuredClone(receipt.sourceIdentity);
+    soul.identity=identity;soul.sourceArtifact.identity=identity;soul.definition=identity.exportPath==='.'?'soul.yaml':`${identity.exportPath}/soul.yaml`;
+    soul.revision.source=identity.kind==='local-soul'?identity.source:'path:/fixture/source-export';
+    if(identity.kind==='git-soul')soul.revision.repository=identity.repository;
+  }
+  const action=['spawn','retire','soul-scaffold'].includes(event)?{kind:'hook',capability:'oats.okf',name:event}:{kind:'command',namespace:'okf',name:event};
+  const value=invocationFor({binding:receipt.binding,context:{kind:'standalone',key:'provider-fixture'},action,subject});
+  value.instance={...value.instance,home:receipt.home,work:receipt.work,name:receipt.instance,agent:receipt.agent};
+  value.executionBinding=receipt.executionBinding;value.intent={schemaVersion:1,executionId:randomUUID(),incarnationId:value.instance.incarnationId,attempt:1};
+  if(scope){value.instance=null;value.intent=null;}
+  const file=join(f.dir,`execution-${randomUUID()}.json`);save(file,value);return {OATS_INVOCATION_CONTEXT_FILE:file};
 }
 function git(repo,args) {return execFileSync('git',['-C',repo,...args],{encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();}
 function note(f,name='decision.md',text='The human chose explicit custody because hidden fallbacks conceal delivery failures.') {put(join(f.home,'notes',name),`---\ntype: Decision\ntitle: Explicit custody\ndescription: Why custody is explicit.\n---\n\n${text}\n`);}
@@ -221,13 +239,37 @@ test('legacy inspect reports unknown registration authority without changing exi
   assert.deepEqual(result.out.result.authority,{schemaVersion:1,registration:'legacy',capture:'unknown',migrationRequired:true,responsibleHuman:{status:'unknown'}});
   assert.equal(result.out.result.source,s.file);assert.deepEqual(result.out.result.owns,s.decl.owns);assert.deepEqual(result.out.result.reads,s.decl.reads);assert.deepEqual(result.out.result.bases,s.bindings.bases);assert.deepEqual(result.out.result.status,loadStatus(s));
 });
+test('generic lifecycle ingress refuses missing or contradictory admission before registration',t=>{
+  const f=fixture(t),receipt=capturedReceipt(f),bindingFile=join(f.dir,'binding-input.json'),receiptFile=join(f.dir,'source-input.json');save(bindingFile,receipt.binding);save(receiptFile,receipt);
+  const oldEnv={OATS_BINDING_FILE:bindingFile,OATS_SOURCE_RECEIPT_FILE:receiptFile};
+  const before=inventory(f.dir),missing=f.cli('spawn',[],oldEnv);
+  assert.equal(missing.status,1);assert.match(missing.stdout,/new captured registration requires generic admitted invocation/);assert.deepEqual(inventory(f.dir),before,'old receipt-only transport cannot bootstrap a new source');
+  const generic=capturedExecutionEnv(f,receipt,'spawn'),file=generic.OATS_INVOCATION_CONTEXT_FILE,valid=readJSON(file);
+  for(const value of [
+    {...valid,intent:null},
+    {...valid,action:{...valid.action,name:'retire'}},
+    {...valid,instance:{...valid.instance,home:join(f.dir,'other'),work:join(f.dir,'other/work')}},
+    {...valid,intent:{...valid.intent,attempt:0}},
+  ]) {
+    save(file,value);const bytes=inventory(f.dir),result=f.cli('spawn',[],{...oldEnv,...generic});
+    assert.equal(result.status,1,result.stdout);assert.deepEqual(inventory(f.dir),bytes,'invalid generic authority causes no registration/schedule effects');
+  }
+  save(file,valid);const badReceipt={...receipt,responsibleHuman:{provider:'example.human',id:'other'}};save(receiptFile,badReceipt);
+  const bytes=inventory(f.dir),result=f.cli('spawn',[],{...oldEnv,...generic});assert.equal(result.status,1);assert.deepEqual(inventory(f.dir),bytes);
+  assert.equal(fs.existsSync(join(f.home,'.okf-source.json')),false);assert.equal(fs.existsSync(f.bindings.stateDir),false);
+});
+
 test('captured registration freezes qualified identity, binding and v2 schedule without live source fallback',t=>{
   const f=fixture(t),receipt=capturedReceipt(f),snapshot=join(f.dir,'invocation-binding.json'),wrong=structuredClone(receipt.binding),priorBinding=process.env.OATS_BINDING_FILE;
   t.after(()=>{if(priorBinding===undefined) delete process.env.OATS_BINDING_FILE;else process.env.OATS_BINDING_FILE=priorBinding;});
   wrong.payload.execution.model='different/model';save(snapshot,wrong);process.env.OATS_BINDING_FILE=snapshot;
   assert.throws(()=>registerCaptured(f.home,receipt),/differs from invocation snapshot/);assert.equal(fs.existsSync(join(f.home,'.okf-source.json')),false);
   delete process.env.OATS_BINDING_FILE;save(snapshot,receipt.binding);const receiptFile=join(f.dir,'source-receipt.json');save(receiptFile,receipt);
-  const lifecycle=f.cli('spawn',[],{OATS_BINDING_FILE:snapshot,OATS_SOURCE_RECEIPT_FILE:receiptFile});assert.equal(lifecycle.status,0,lifecycle.stdout);
+  const executionEnv=capturedExecutionEnv(f,receipt,'spawn');
+  const lifecycle=f.cli('spawn',[],{OATS_BINDING_FILE:snapshot,OATS_SOURCE_RECEIPT_FILE:receiptFile,...executionEnv});assert.equal(lifecycle.status,0,lifecycle.stdout);
+  const contextFile=executionEnv.OATS_INVOCATION_CONTEXT_FILE,context=readJSON(contextFile);save(contextFile,{...context,intent:null});
+  const beforeRejectedReplay=inventory(f.dir),unadmitted=f.cli('spawn',[],{OATS_BINDING_FILE:snapshot,OATS_SOURCE_RECEIPT_FILE:receiptFile,...executionEnv});
+  assert.equal(unadmitted.status,1);assert.match(unadmitted.stdout,/requires an admitted instance intent/);assert.deepEqual(inventory(f.dir),beforeRejectedReplay,'present unadmitted context cannot downgrade to registered replay');save(contextFile,context);
   const s=loadSource(lifecycle.out.meta.source),schedules=readJSON(join(f.dir,'schedules.json')),spec=schedules[`okf-${s.id}`];
   const normalized={...spec,execution:{responsibleHuman:null,deployment:receipt.executionBinding.deployment,resolution:receipt.executionBinding.resolution}};delete normalized.responsibleHuman;schedules[`okf-${s.id}`]=normalized;save(join(f.dir,'schedules.json'),schedules);
   const again=registerCaptured(f.home,receipt);assert.equal(again.id,s.id,'scheduler-normalized explicit null remains idempotent');assert.equal(s.registration.kind,'captured');assert.deepEqual(s.providerBinding,receipt.binding);assert.deepEqual(s.executionBinding,receipt.executionBinding);assert.equal(s.responsibleHuman,null);
@@ -298,11 +340,15 @@ test('captured completion command binds saved selectors and public provider comp
   const staged=stageBase(f.base,join(home,'work','base')),run={version:1,id,source:s.id,created:'2026-09-16T00:00:00.000Z',inputs:loadStatus(s).captured.inputs,status:'ready',worker:{instance:'retained-worker',home},stages:{[alias]:{root:staged.root,baseline:staged.files,digest:staged.digest,owned:['expert']}},receipts:{}};
   save(join(dirname(s.file),'runs',id,'run.json'),run);const status=loadStatus(s);status.activeRun=id;saveStatus(s,status);
   const judgmentFile=judgment(f,s,run,{drop:true,base:alias}),snapshot=join(f.dir,'completion-binding.json');save(snapshot,receipt.binding);
-  save(join(f.dir,'captured-dispatch.json'),{deployment:s.executionBinding.deployment,resolution:s.executionBinding.resolution.id,cli:CLI,bindingFile:snapshot});
+  const generic=capturedExecutionEnv(f,receipt,'complete',{scope:true});
+  save(join(f.dir,'captured-dispatch.json'),{deployment:s.executionBinding.deployment,resolution:s.executionBinding.resolution.id,cli:CLI,bindingFile:snapshot,invocationFile:generic.OATS_INVOCATION_CONTEXT_FILE});
   const argv=completionArgv(s,id,judgmentFile);assert.deepEqual(argv.slice(0,4),['--deployment',f.context,'--resolution',receipt.executionBinding.resolution.id]);assert.equal(argv.includes('--soul'),false);
   fs.rmSync(f.home,{recursive:true});fs.rmSync(f.soul,{recursive:true});fs.rmSync(f.bindingFile);
   fs.symlinkSync('/usr/bin/env',join(f.dir,'bin','env'));
   const env={...process.env,OATS_DEPLOYMENT:'/poison',OATS_RESOLUTION:'poison',OATS_BINDING_FILE:'/poison',OATS_SOURCE_RECEIPT_FILE:'/poison',OATS_INVOCATION_CONTEXT_FILE:'/poison'};
+  const contextFile=generic.OATS_INVOCATION_CONTEXT_FILE,context=readJSON(contextFile);save(contextFile,{...context,executionBinding:{...context.executionBinding,resolution:{schemaVersion:1,id:`sha256-${'d'.repeat(64)}`}}});
+  const beforeMismatch=tree(f.bindings.stateDir),mismatch=spawnSync('/bin/sh',['-c',completionCommand(s,id,judgmentFile)],{env,encoding:'utf8'});
+  assert.equal(mismatch.status,1);assert.equal(JSON.parse(mismatch.stdout).error.code,'E_INVOCATION');assert.deepEqual(tree(f.bindings.stateDir),beforeMismatch,'wrong generic source binding cannot change retained runs/receipts');save(contextFile,context);
   const result=spawnSync('/bin/sh',['-c',completionCommand(s,id,judgmentFile)],{env,encoding:'utf8'});
   assert.equal(result.status,0,result.stderr+result.stdout);assert.equal(JSON.parse(result.stdout).result.processed,true);assert.equal(loadStatus(s).processed.length,run.inputs.length);
   assert.equal(fs.existsSync(join(f.dir,'workers')),false,'no fake legacy spawn occurred; this proves public provider completion, not a qualified kernel helper launch');
@@ -329,7 +375,7 @@ test('captured owner registry accepts legal prototype-named owners and replays i
 
 test('captured helper skips ownership and legacy owner evidence requires explicit migration',t=>{
   const helper=fixture(t),helperReceipt=capturedReceipt(helper,{kind:'helper'}),bindingFile=join(helper.dir,'helper-binding.json'),receiptFile=join(helper.dir,'helper-receipt.json');save(bindingFile,helperReceipt.binding);save(receiptFile,helperReceipt);
-  const helperSpawn=helper.cli('spawn',[],{OATS_BINDING_FILE:bindingFile,OATS_SOURCE_RECEIPT_FILE:receiptFile});assert.equal(helperSpawn.status,0);assert.equal(helperSpawn.out.meta.memory,'none');assert.equal(fs.existsSync(join(helper.bindings.stateDir,'owners.json')),false);
+  const helperSpawn=helper.cli('spawn',[],{OATS_BINDING_FILE:bindingFile,OATS_SOURCE_RECEIPT_FILE:receiptFile,...capturedExecutionEnv(helper,helperReceipt,'spawn')});assert.equal(helperSpawn.status,0);assert.equal(helperSpawn.out.meta.memory,'none');assert.equal(fs.existsSync(join(helper.bindings.stateDir,'owners.json')),false);
   for(const changed of [
     {...helperReceipt,home:join(helper.dir,'other-home')},
     {...helperReceipt,work:'relative'},

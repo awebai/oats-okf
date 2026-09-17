@@ -54,11 +54,14 @@ test('exact producer incarnation and intent reach OKF check and private snapshot
       assert.equal(fs.statSync(contextFile).mode&0o777,0o600);assert.equal(fs.statSync(bindingFile).mode&0o777,0o600);
       assert.deepEqual(validateInvocationShape(JSON.parse(fs.readFileSync(contextFile,'utf8'))),value);
       assert.equal(p.readCapturedIntent({...f.request,intent:admitted.intent}).state,'running');
-      // Existing stateless CLI transport stays usable. It consumes the binding,
-      // not generic invocation authority; snapshot shape is checked above. This
-      // is NOT production generic-context execution or helper launch proof.
+      // The real CLI now consumes the generic file too. Stateless guidance is
+      // not helper launch or admission proof; the next call poisons its action.
       const result=spawnSync(process.execPath,[join(CAP,'bin/oats-okf.mjs'),'soul-scaffold'],{cwd:f.instance.home,env:{...f.env,...contextEnv,...bindingEnv,OATS_INSTANCE_HOME:f.instance.home},encoding:'utf8'});
       assert.equal(result.status,0,result.stdout+result.stderr);assert.equal(JSON.parse(result.stdout).meta.scaffolded,false);
+      fs.writeFileSync(contextFile,JSON.stringify({...value,action:{...action,name:'retire'}}));
+      const refused=spawnSync(process.execPath,[join(CAP,'bin/oats-okf.mjs'),'soul-scaffold'],{cwd:f.instance.home,env:{...f.env,...contextEnv,...bindingEnv,OATS_INSTANCE_HOME:f.instance.home},encoding:'utf8'});
+      assert.equal(refused.status,1);assert.match(refused.stdout,/invalid captured OKF invocation/);
+      fs.writeFileSync(contextFile,JSON.stringify(value));
     }));
     assert.equal(fs.existsSync(contextFile),false);assert.equal(fs.existsSync(bindingFile),false);
     assert.equal(fs.existsSync(f.stateDir),false,'stateless guidance creates no OKF registration, run or schedule');

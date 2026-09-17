@@ -39,20 +39,47 @@ admission; provider structural validation does not independently prove them.
 A null intent grants no mutation authority. Composition/home/name/digest or a
 synthetic fixture identity is not a substitute for an admitted request.
 
-## Execution and capability boundaries are unchanged
+## Production execution-input consumer (separate successor)
 
-The kernel supplies the same generic projection through its private invocation
-snapshot for execution. **This OKF CLI still uses its existing captured binding,
-source-receipt and durable descriptor authority; this commit does not add a
-production generic invocation-file execution reader.** The exported shape codec
-validates the private snapshot in the focused consumer fixture, not as a claim
-that the stateless CLI consumes generic admission authority.
+The CLI now consumes `OATS_INVOCATION_CONTEXT_FILE` when supplied, paired with
+its selected `OATS_BINDING_FILE`. Both are physical, same-user, single-link0600
+snapshots read through bounded no-follow/nonblocking descriptors, with pre/post
+path/inode/size/nanosecond checks and the existing strict JSON decoder. Context
+uses the512KiB bound; binding uses its existing1MiB bound. Invalid-present input
+never falls back. Check remains inline-only and does not use this reader.
 
-Captured harvest/run-source/helper paths retain `E_CAPTURED_HELPER`; no captured
-worker/runtime launch is enabled, including `--no-launch`. Saved input/receipt
-custody, existing completion, lifecycle registration/final capture, promotion
-judgment and PR-only runtime Git knowledge publication stay unchanged. No direct
-accepted-branch delivery or kernel knowledge policy is added.
+Execution matches the actual event to the capability's EXISTING manifest hook,
+command or operation table. Generic instance home is authoritative over ambient
+identity variables; a contradictory explicit home refuses. SourceReceipt1 input
+uses its unchanged256KiB/role bounds and is checked against the same subject,
+instance, human, deployment/execution binding and provider binding. Saved source
+descriptors are independently validated and must agree with the projection;
+helper execution binding cannot replace source completion binding.
+
+Fresh captured spawn/retire requires a non-null admitted instance intent. The
+kernel proves current admission/ownership; provider shape checks do not create
+that authority. New captured registration cannot be bootstrapped through an old
+binding/source-receipt-only transport. A present unadmitted or contradictory
+projection cannot downgrade to compatibility replay.
+
+**Explicit compatibility, not inferred consent:** absent generic input may replay
+an already validated, durably registered captured source with its matching
+selected binding under the existing source contract. This path does not create a
+source or manufacture an incarnation/intent. Stateless guidance and genuine
+legacy operation remain separate; captured-home lifecycle cannot use an entirely
+legacy ingress, and saved-data inspection does not grant mutation authority.
+
+Raw scope complete/non-rejudging retry has no kernel instance intent. It may
+process ONLY an already retained run under its exact source binding/descriptor
+and existing input/judgment/receipt checks; run identity is checked before worker
+state effects. This is retained-work authority, not a new generic mutation grant
+or an invented live source after deletion. A retry without retained work cannot
+create an unqualified captured helper.
+
+Captured harvest/run-source/helper paths retain `E_CAPTURED_HELPER`; no actual
+worker/runtime launch is enabled, including `--no-launch`. Captured administration
+stays refused. Promotion judgment, PR-only Git publication and existing delivery
+checks are unchanged; no direct accepted-branch delivery or kernel harvester.
 
 ## Focused producer evidence
 
@@ -63,10 +90,18 @@ index custody. A supplied older/missing producer fails; absent optional producer
 source is an explicit skip, not qualification.
 
 Tests cover persistent/helper and workspace/standalone, actual kernel custody
-admission/begin/replay primitives, the real OKF check CLI, private snapshot shape,
-old-c5 rejection and preserved stateless binding-based guidance. These controlled
-loaded-record fixtures do **not** prove public retained-approval admission,
-production generic-context execution, source registration or helper launch.
+admission/begin/replay primitives, the real OKF check CLI and execution reader,
+old-c5 rejection, and a poisoned generic action rejected by the ACTUAL stateless
+CLI. These controlled loaded-record fixtures are not full public retained-approval
+admission or actual helper-launch qualification.
+
+Separate provider-contract CLI fixtures exercise fresh admitted registration,
+helper validation/skip, missing/null/mismatched admission with no effects,
+registered-source compatibility without new registration, and source-deleted
+completion using a scope/null-intent projection. A mismatched source resolution
+refuses without changing retained runs/receipts. These explicit contract inputs
+are not a backfill of old kernel metadata and are not labelled kernel admission
+producers. No full provider suite is implied by these focused cases.
 
 Coordinator owns the separate review, coherent follow-up integration gate and
 publication. No full-suite rerun, metadata/floor change, installation, live setup,
