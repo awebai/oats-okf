@@ -11,21 +11,31 @@ import {inventory,noEffectsPreload} from './helpers/no-effects.mjs';
 // Separate real retained producer pairing; never relabel the older257 fixture.
 // Kernel imports below are TEST ONLY. The shipped capability imports no kernel.
 const ROOT=fileURLToPath(new URL('../',import.meta.url));
-const PRODUCER='be2460c52bf5403d8edcc7058ffe8e0dc58d0952';
+// Accepted source is a Git TREE reconstructed from this exact base+patch,
+// not original BE and not full59's unrelated native/API2 ancestry.
+const PRODUCER=Object.freeze({
+  tree:'0c031114e965b08ac25b29ab456f48eedcf42c91',
+  base:'be2460c52bf5403d8edcc7058ffe8e0dc58d0952',
+  patchSha256:'a29db161dc87a90360ec2ecde1629b6b294835368ce8363c1eac7587f81f78ac',
+});
 const SCHEMA_SHA='52f82d5c3456178863e020a16c8881b7b62b96b985aebc343a099408c989a3f4';
 const framework=process.env.OATS_HELPER_INPUT_FRAMEWORK_ROOT;
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
 const json=file=>JSON.parse(fs.readFileSync(file,'utf8'));
 function put(file,value) {fs.mkdirSync(dirname(file),{recursive:true});fs.writeFileSync(file,typeof value==='string'?value:JSON.stringify(value));}
 
-test('c77 vendored manifest schema is exact committed be2460c5 bytes',()=>{
+test('c77 vendored manifest schema retains accepted BE+P1 byte identity',()=>{
   assert.equal(sha(fs.readFileSync(join(ROOT,'schemas/capability-manifest.schema.json'))),SCHEMA_SHA);
 });
 
 async function producer(t) {
-  if(!framework) {t.skip(`set OATS_HELPER_INPUT_FRAMEWORK_ROOT to exact ${PRODUCER} source`);return;}
-  assert.equal(process.env.OATS_HELPER_INPUT_FRAMEWORK_REV,PRODUCER,'pairing must identify exact producer, not an uncommitted tree');
+  if(!framework) {t.skip(`set OATS_HELPER_INPUT_FRAMEWORK_ROOT to accepted BE+P1 tree ${PRODUCER.tree}`);return;}
+  assert.equal(process.env.OATS_HELPER_INPUT_FRAMEWORK_TREE,PRODUCER.tree,'pairing requires the accepted corrected tree, not a commit/version alias');
+  assert.equal(process.env.OATS_HELPER_INPUT_FRAMEWORK_BASE,PRODUCER.base,'retain the exact producer base');
+  assert.equal(process.env.OATS_HELPER_INPUT_FRAMEWORK_PATCH_SHA256,PRODUCER.patchSha256,'retain the accepted correction patch identity');
   assert.equal(sha(fs.readFileSync(join(framework,'docs/capability-manifest.schema.json'))),SCHEMA_SHA);
+  assert.equal(sha(fs.readFileSync(join(framework,'lib/helper-injection-policy.mjs'))),'29f6ddac6b15cc340effc2fb1ef02b92a1f8095e6c86efafbfc35255068db922','execute the actual corrected policy, not relabelled BE');
+  assert.equal(sha(fs.readFileSync(join(framework,'docs/portable.schema.json'))),'5083e05bfa7c37c60d953cdbd1bcc88beff89c49a6694f5dc5a2b13a96606dbb','exclude full59/native API2 schema ancestry');
   const modules=await Promise.all(['core','captured-resolutions','captured-invocation-context'].map(name=>import(pathToFileURL(join(framework,`lib/${name}.mjs`)))));
   return Object.assign({},...modules);
 }
@@ -56,7 +66,7 @@ function fixture(t) {
 }
 function ok(call) {assert.equal(call.status,0,call.stdout+call.stderr);return JSON.parse(call.stdout).result;}
 
-test('be2460c5 actual OKF hooks and public SOURCE continuation survive source deletion',async t=>{
+test('accepted BE+P1 tree 0c031114 actual OKF hooks and public SOURCE continuation survive source deletion',async t=>{
   const p=await producer(t);if(!p)return;
   const f=fixture(t),oldEnv={...process.env};
   // Embedding setup and real CLI children share only the private fixture scope.
@@ -145,7 +155,7 @@ test('be2460c5 actual OKF hooks and public SOURCE continuation survive source de
   assert.equal(ok(f.call(command('complete',ready.executionBinding,['--run',id]))).processed,true,'existing receipt continuation is idempotent, not another dispatch');
   assert.equal(fs.existsSync(sourceHome),false);assert.equal(fs.existsSync(helperHome),false);
 
-  // Real be snapshot writers, controlled invalid transport -> actual provider
+  // Accepted BE+P1 snapshot writers, controlled invalid transport -> actual provider
   // CLI. These negatives are NOT claimed as unmodified public CLI production.
   const action={kind:'command',namespace:'okf',name:'complete'},selected=p.loadCapturedDispatch({deployment:f.deployment,resolution:ready.resolution,action});
   const invocation=p.buildCapturedInvocationContext({loaded:selected,action});

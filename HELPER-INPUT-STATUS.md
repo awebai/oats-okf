@@ -2,9 +2,21 @@
 
 The declaration/input guard was independently committed at
 **0f809af150661ec9d6bd5eac2bdd5b6388c33ad1**, above production generic reader
-**f43996ded317d88b9696d8c00d521a6cf5a9a134**. The separate schema-paired successor
-uses exact producer **be2460c52bf5403d8edcc7058ffe8e0dc58d0952**. None of this
-changes the delivered index/source checkpoint **ec5d767** or its failed logs.
+**f43996ded317d88b9696d8c00d521a6cf5a9a134**. Final pairing uses the independently
+accepted corrected producer source:
+
+- base commit **be2460c52bf5403d8edcc7058ffe8e0dc58d0952**;
+- correction patch SHA-256
+  **a29db161dc87a90360ec2ecde1629b6b294835368ce8363c1eac7587f81f78ac**;
+- resulting Git **tree 0c031114e965b08ac25b29ab456f48eedcf42c91**.
+
+The tree is not a commit or package version. Original BE remains the historical
+returned source; full59's inherited native/API2 ancestry is not this accepted
+producer. Earlier57 fixture evidence against original BE is preserved, not
+relabelled as corrected-source execution. Its schema/validator delta was approved
+within scope; the separate identity successor runs the same pairing fixture
+against the accepted tree. None of this changes the delivered **ec5d767** source
+checkpoint or its failed logs.
 
 ## Declaration and provider behavior
 
@@ -34,8 +46,9 @@ a helper binding or invents a deleted live incarnation.
 
 ## Exact shared schema, no fork
 
-Authoritative public file at **be2460c5**:
-`docs/capability-manifest.schema.json`
+Authoritative public file in accepted **BE+P1 tree 0c031114**:
+`docs/capability-manifest.schema.json`. The correction changes no schema bytes;
+retain and verify the existing hash, rather than inventing a schema change.
 
 Vendored byte-for-byte as `schemas/capability-manifest.schema.json`, SHA-256:
 `52f82d5c3456178863e020a16c8881b7b62b96b985aebc343a099408c989a3f4`.
@@ -51,7 +64,12 @@ not hidden by loosening `additionalProperties`.
 ## Bounded real producer evidence
 
 `test/helper-input-pairing.test.mjs` is a NEW pairing fixture, not a relabelled257
-fixture. It requires the exact producer revision and uses actual retained
+fixture. It requires the accepted producer tree/base/patch identity through the
+TEST-ONLY `OATS_HELPER_INPUT_FRAMEWORK_ROOT`, `_TREE`, `_BASE` and `_PATCH_SHA256`
+variables (each suffix replaces `_ROOT`). It also checks the actual corrected
+policy bytes and BE+P1 portable schema, rather than accepting a renamed old
+source or full59/API2 tree. The isolated runner verifies every tracked blob/mode
+against the accepted Git tree before and after execution. It uses actual retained
 preparation/approval/resources, then deletes the source repository and poisons
 current config/lock before real public CLI spawn/hook dispatch.
 
