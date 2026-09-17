@@ -17,12 +17,28 @@ const readJson = (path) => {
   catch (error) { report(relative(root, path), `invalid JSON (${error.message})`); return undefined; }
 };
 
-function validateSchema(value, schema, at) {
+function validateSchema(value, schema, at, rootSchema = schema, references = []) {
   if (!schema || typeof schema !== "object") return;
+  // The canonical manifest schema now shares acyclic definitions with local
+  // JSON Pointer refs. Evaluate them, never ignore them or copy/fork their
+  // protocol rules here. Remote/unresolved/cyclic refs fail validation closed.
+  if (Object.hasOwn(schema, "$ref")) {
+    const ref = schema.$ref;
+    let target = rootSchema;
+    if (typeof ref !== "string" || !ref.startsWith("#/") || /~(?![01])/.test(ref) || references.includes(ref) || references.length >= 32) {
+      report(at, "unsupported or cyclic schema reference"); return;
+    }
+    for (const part of ref.slice(2).split("/")) {
+      const key = part.replace(/~1/g, "/").replace(/~0/g, "~");
+      target = target && typeof target === "object" && Object.hasOwn(target, key) ? target[key] : undefined;
+    }
+    if (!target || typeof target !== "object" || Array.isArray(target)) { report(at, "unresolved schema reference"); return; }
+    validateSchema(value, target, at, rootSchema, [...references, ref]);
+  }
   if (schema.oneOf) {
     const matches = schema.oneOf.filter((alternative) => {
       const start = errors.length;
-      validateSchema(value, alternative, at);
+      validateSchema(value, alternative, at, rootSchema, references);
       return errors.splice(start).length === 0;
     }).length;
     if (matches !== 1) report(at, "must match exactly one schema alternative");
@@ -39,16 +55,16 @@ function validateSchema(value, schema, at) {
   if (Array.isArray(value)) {
     if (schema.minItems !== undefined && value.length < schema.minItems) report(at, `must contain at least ${schema.minItems} item(s)`);
     if (schema.uniqueItems && new Set(value.map((item) => JSON.stringify(item))).size !== value.length) report(at, "must contain unique items");
-    value.forEach((item, index) => validateSchema(item, schema.items, `${at}[${index}]`));
+    value.forEach((item, index) => validateSchema(item, schema.items, `${at}[${index}]`, rootSchema, references));
   }
   if (value && actual === "object") {
-    for (const key of schema.required || []) if (!(key in value)) report(at, `missing required property ${key}`);
+    for (const key of schema.required || []) if (!Object.hasOwn(value, key)) report(at, `missing required property ${key}`);
     const properties = schema.properties || {};
     for (const [key, item] of Object.entries(value)) {
       if (schema.propertyNames?.pattern && !(new RegExp(schema.propertyNames.pattern)).test(key)) report(`${at}.${key}`, `property name must match ${schema.propertyNames.pattern}`);
-      if (properties[key]) validateSchema(item, properties[key], `${at}.${key}`);
+      if (Object.hasOwn(properties, key)) validateSchema(item, properties[key], `${at}.${key}`, rootSchema, references);
       else if (schema.additionalProperties === false) report(`${at}.${key}`, "unknown property");
-      else if (schema.additionalProperties && typeof schema.additionalProperties === "object") validateSchema(item, schema.additionalProperties, `${at}.${key}`);
+      else if (schema.additionalProperties && typeof schema.additionalProperties === "object") validateSchema(item, schema.additionalProperties, `${at}.${key}`, rootSchema, references);
     }
   }
 }
@@ -150,9 +166,14 @@ for (const [index, capabilityDir] of declaredCapabilities.entries()) {
     if (tree) validateSkillTree(tree, at);
   }
   if ("inject" in manifest) safeResource(capabilityRoot, manifest.inject, `${capabilityDir}/oats.json.inject`, "injection path", { type: "file" });
+  if (manifest.helperInjection?.mode === "file") {
+    const at = `${capabilityDir}/oats.json.helperInjection.path`;
+    const target = safeResource(capabilityRoot, manifest.helperInjection.path, at, "helper injection path", { type: "file" });
+    if (target && !target.startsWith(realpathSync(capabilityRoot) + sep)) report(at, "helper injection must remain inside its owning capability");
+  }
   for (const [agentIndex, agent] of array(manifest.agents).entries()) safeResource(capabilityRoot, agent, `${capabilityDir}/oats.json.agents[${agentIndex}]`, "agent path", { type: "directory", recursive: true });
   // A hook may be a plain "entrypoint args" string or the object form
-  // { command, required } (only the spawn hook may set required). Commands are
+  // { command, required, inputs } (only spawn may require the hook). Commands are
   // always strings. Reduce either to the executable entrypoint for containment.
   const entrypoint = (spec) => {
     const command = typeof spec === "string" ? spec : (spec && typeof spec === "object" ? spec.command : undefined);

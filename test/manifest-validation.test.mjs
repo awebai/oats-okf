@@ -56,6 +56,42 @@ test("validator accepts the actual exported release with no unenumerated payload
   assert.match(result.stdout, /1 capability manifest/);
 });
 
+test("canonical referenced helper/input definitions remain closed", (t) => {
+  for (const mutate of [
+    m => { m.helperInjection = null; },
+    m => { m.helperInjection = {version:1,mode:'omit',path:'injects/okf.md'}; },
+    m => { m.helperInjection = {version:2,mode:'omit'}; },
+    m => { m.helperInjection = {version:1,mode:'omit',constructor:'not-a-declared-field'}; },
+    m => { m.helperInjection = {version:1,mode:'file',path:'../other.md'}; },
+    m => { m.hooks.spawn.inputs = {sourceReceipt:{version:2}}; },
+    m => { m.hooks.spawn.inputs = {sourceReceipt:{version:1,extra:true}}; },
+    m => { m.hooks.retire.inputs = {unknown:{version:1}}; },
+    m => { m.hooks.retire.inputs = {constructor:{version:1}}; },
+    m => { m.hooks.retire.required = true; },
+    m => { m.hooks['soul-scaffold'] = {command:'bin/oats-okf.mjs soul-scaffold',inputs:null}; },
+  ]) {
+    const f=fixture(t);mutate(f.manifest);rejected(f,/must match exactly one schema alternative/);
+  }
+});
+
+test('validator checks helper-only file existence and same-capability containment',t=>{
+  const f=fixture(t);f.manifest.helperInjection={version:1,mode:'file',path:'injects/okf.md'};
+  assert.equal(f.run().status,0);
+  f.manifest.helperInjection.path='missing.md';rejected(f,/helper injection path cannot be resolved/);
+  f.manifest.helperInjection.path='skills';rejected(f,/helper injection path must be a file/);
+  const shared=join(f.payload,'shared.md');writeFileSync(shared,'Different capability ownership\n');
+  symlinkSync(shared,join(f.capabilityRoot,'other-owner.md'));
+  f.manifest.helperInjection.path='other-owner.md';rejected(f,/inside its owning capability/);
+});
+
+for (const ref of ['https://example.invalid/schema.json', '#/$defs/missing', '#/$defs/HelperInjection']) {
+  test(`validator refuses unsupported schema reference ${ref}`, t => {
+    const f=fixture(t),file=join(f.dir,'schemas/capability-manifest.schema.json'),schema=readJson(file);
+    schema.$defs.HelperInjection={$ref:ref};writeJson(file,schema);
+    rejected(f,/schema reference/);
+  });
+}
+
 test("validator rejects a missing capability enumeration", (t) => {
   const f = fixture(t);
   delete f.packageManifest.capabilities;
