@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { fs, join, dirname, resolve, readJSON, save, safePath, cliPath, oats, fail, unlock } from '../lib/io.mjs';
 import { loadBindings, declaration, splitRef } from '../lib/config.mjs';
 import { register, registerCaptured, loadInvocationSourceReceipt, homeSource, loadSource, loadStatus, saveStatus, updateStatus, capture, scheduleSource, service, markerPath, views } from '../lib/sources.mjs';
-import { runSource, complete, retry, readRun } from '../lib/worker.mjs';
+import { runSource, complete, retry, readRun, requireQualifiedHelper } from '../lib/worker.mjs';
 import { initBase, migrate, deliverMigration, cutoverMigration, migrateSource } from '../lib/migration.mjs';
 import { inspect } from '../lib/inspection.mjs';
 import { loadInvocationKnowledgeBinding } from '../lib/binding-wire.mjs';
@@ -50,6 +50,8 @@ else {
     for(const k of Object.keys(flags)) if(!['json','soul',...(accepted[event] || [])].includes(k)) fail('E_USAGE',`unknown flag --${k} for ${event}`);
     if(flags.source && flags.home) fail('E_USAGE','choose source descriptor OR home');
     const invocation=loadInvocationKnowledgeBinding(),captured=invocation.kind==='captured';
+    // Refuse the unavailable worker before even attempting source registration.
+    if(captured && event==='harvest') requireQualifiedHelper({providerBinding:invocation.binding});
     const unsupportedCaptured=new Set(['setup','init','migrate','unlock']);
     if(captured && unsupportedCaptured.has(event)) fail('E_MIGRATION',`captured ${event} is not supported; use an explicit operator administration path`);
     const home=resolve(flags.home || process.env.OATS_INSTANCE_HOME || process.env.OATS_HOME || process.cwd());
@@ -84,6 +86,9 @@ else {
         const s=src();scheduleSource(s);const r=capture(s,{final:true});result={meta:{retired:r.complete===true,source:s.file,capture:r},brief:'Final input is in durable custody. Delivery remains asynchronous.'};
       }
     } else if(event==='harvest') {
+      // Snapshot absence does not turn a persisted captured source into legacy.
+      // homeSource is read-only; register can repair views/memory and schedule.
+      if(fs.existsSync(markerPath(home))) requireQualifiedHelper(src());
       const s=register(home);
       result=s.skipped?{status:'skipped',reason:'service'}:runSource(s,{manual:true,noLaunch:!!flags['no-launch']});
     } else if(event==='run-source') result=runSource(src(),{manual:!!flags.manual,noLaunch:!!flags['no-launch']});

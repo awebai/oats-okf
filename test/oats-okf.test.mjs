@@ -7,6 +7,7 @@ import { join, dirname, resolve } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { syncBuiltinESMExports } from 'node:module';
+import { inventory, noEffectsPreload } from './helpers/no-effects.mjs';
 const ROOT=fileURLToPath(new URL('../',import.meta.url));
 const CAP=join(ROOT,'oats-package',JSON.parse(fs.readFileSync(join(ROOT,'oats-package/oats-package.json'),'utf8')).capabilities[0]);
 const CLI=join(CAP,'bin/oats-okf.mjs');
@@ -249,6 +250,47 @@ test('captured registration freezes qualified identity, binding and v2 schedule 
   schedules[`okf-${s.id}`]={...spec,argv:['oats','poison'],attempt:{executionId:'retained-attempt'}};save(join(f.dir,'schedules.json'),schedules);
   assert.throws(()=>scheduleSource(s),/definition differs/);assert.deepEqual(readJSON(join(f.dir,'schedules.json'))[`okf-${s.id}`].attempt,{executionId:'retained-attempt'});
 });
+test('public captured harvest refuses before registration replay or scheduling effects',t=>{
+  const f=fixture(t),receipt=capturedReceipt(f),s=registerCaptured(f.home,receipt),snapshot=join(f.dir,'binding-snapshot.json');save(snapshot,receipt.binding);
+  note(f);capture(s);
+  const id=randomUUID(),status=loadStatus(s);
+  save(join(dirname(s.file),'runs',id,'run.json'),{version:1,id,source:s.id,inputs:status.captured.inputs,status:'delivered',receipts:{'base-1':{status:'delivered',proposal:'retained-fixture'}}});
+  status.activeRun=id;saveStatus(s,status);
+  // These pending repairs used to run before the knowingly unsupported worker.
+  fs.renameSync(join(f.home,'knowledge'),join(f.home,`.okf-view-${s.id}`));
+  for(const path of ['STATE.md','log.md','notes']) fs.rmSync(join(f.home,path),{recursive:true,force:true});
+  fs.rmSync(join(dirname(s.file),'schedule.json'));save(join(f.dir,'schedules.json'),{});
+  const preload=noEffectsPreload(f.dir),before=inventory(f.dir);
+  for(const env of [{OATS_BINDING_FILE:snapshot},{}]) for(const args of [[],['--no-launch']]) {
+    const result=spawnSync(process.execPath,['--import',preload,CLI,'harvest','--home',f.home,...args,'--json'],{cwd:f.context,env:{...process.env,...env},encoding:'utf8',timeout:30000});
+    assert.equal(result.status,1,result.stdout+result.stderr);assert.equal(JSON.parse(result.stdout).error.code,'E_CAPTURED_HELPER');
+    assert.equal(result.stderr,'');assert.deepEqual(inventory(f.dir),before,'no repair, lock, schedule, input or admitted receipt change');
+  }
+});
+
+test('public captured harvest with unregistered or missing source refuses without effects',t=>{
+  const f=fixture(t),receipt=capturedReceipt(f),snapshot=join(f.dir,'binding-snapshot.json');save(snapshot,receipt.binding);
+  const preload=noEffectsPreload(f.dir);
+  for(const missing of [false,true]) {
+    if(missing) {registerCaptured(f.home,receipt);fs.rmSync(f.home,{recursive:true});fs.rmSync(f.soul,{recursive:true});fs.rmSync(f.bindingFile);}
+    const before=inventory(f.dir);
+    for(const args of [[],['--no-launch']]) {
+      const result=spawnSync(process.execPath,['--import',preload,CLI,'harvest','--home',f.home,...args,'--json'],{cwd:f.context,env:{...process.env,OATS_BINDING_FILE:snapshot},encoding:'utf8',timeout:30000});
+      assert.equal(result.status,1,result.stdout+result.stderr);assert.equal(JSON.parse(result.stdout).error.code,'E_CAPTURED_HELPER');
+      assert.equal(result.stderr,'');assert.deepEqual(inventory(f.dir),before,'no registration, source recreation or scheduler/worker call');
+    }
+  }
+});
+
+test('public legacy harvest still registers and replays its existing worker',t=>{
+  const f=fixture(t);note(f);
+  const first=f.cli('harvest',['--no-launch']);assert.equal(first.status,0,first.stdout+first.stderr);assert.equal(first.out.result.status,'ready');
+  const second=f.cli('harvest',['--no-launch']);assert.equal(second.status,0,second.stdout+second.stderr);assert.equal(second.out.result.run,first.out.result.run);
+  const calls=fs.readFileSync(f.calls,'utf8').trim().split('\n').map(JSON.parse);
+  assert.equal(calls.filter(({a})=>a[0]==='spawn').length,1,'fixture scaffold only, never a real model');assert.ok(calls.some(({a})=>a[0]==='schedule'));
+  assert.equal(calls.some(({a})=>a[0]==='session' || a.includes('install')),false);
+});
+
 test('captured completion command binds saved selectors and public provider completion after source deletion',t=>{
   const f=fixture(t),receipt=capturedReceipt(f),s=registerCaptured(f.home,receipt);note(f);capture(s,{final:true});
   const id=randomUUID(),home=join(f.dir,'retained-worker'),alias=f.base.id;fs.mkdirSync(join(home,'work'),{recursive:true});

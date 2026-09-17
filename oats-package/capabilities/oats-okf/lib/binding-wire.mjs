@@ -201,6 +201,7 @@ export function loadInvocationKnowledgeBinding(env=process.env) {
 }
 function problem(code) {return {code};}
 function providerActionName(action) {
+  if(action.kind==='operation' && action.slot===SLOT) return action.name;
   if(action.kind!=='command') return null;
   if(action.namespace==='okf' || action.capability===CAPABILITY) return action.name;
   if(typeof action.name==='string' && action.name.startsWith('okf:')) return action.name.slice(4);

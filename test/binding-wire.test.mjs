@@ -1,5 +1,6 @@
 import test from 'node:test';
 import { invocationFor, helperSubject } from './helpers/invocation-fixture.mjs';
+import { inventory, noEffectsPreload } from './helpers/no-effects.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -122,6 +123,32 @@ test('check validates real directory and private-staged Git acceptance read-only
   const redirected=call('check',request('check',{}, {binding:rewritten,context:{},action:{kind:'spawn'}}),{HOME:rewriteHome,TMPDIR:scratch});
   assert.deepEqual(redirected.response.result,{status:'needs-configuration',problems:[{code:'provider-not-qualified'}]},'rewritten effective Git origins do not qualify');
   assert.deepEqual(fs.readdirSync(scratch),[]);
+});
+
+test('captured harvest command and knowledge operation check refuse before store effects',t=>{
+  const {f,binding}=prepareBinding(t),bindings=validateBindings(binding.payload.runtime.bindings,f.descriptorFile);
+  for(const [alias,nodes] of [['reference-base',{reference:{path:'reference',owner:'reference-owner'}}],['private-base',{expert:{path:'expert',owner:'expert-owner'}}]]) {
+    const file=join(f.root,`${alias}-nodes.json`);fs.writeFileSync(file,JSON.stringify(nodes));initBase(bindings,alias,file,undefined,{confirm:true});
+  }
+  const context={kind:'standalone',key:'fixture'};
+  assert.deepEqual(call('check',request('check',{}, {binding,context,action:{kind:'inspect'}})).response.result,{status:'ready',problems:[]},'valid stores would otherwise qualify');
+  const gitBinding=structuredClone(binding);
+  const remote={id:'reference-base',kind:'git',repository:'git@example.invalid:knowledge.git',root:'.',acceptedBranch:'main',pr:{repository:'example/knowledge'}};
+  gitBinding.payload.stores['reference-base']=remote;gitBinding.payload.runtime.bindings.bases['reference-base']=remote;
+  const preload=noEffectsPreload(f.root),before=inventory(f.root);
+  for(const capturedBinding of [binding,gitBinding]) for(const action of [
+    {kind:'command',namespace:'okf',name:'harvest'},
+    {kind:'command',capability:'oats.okf',name:'harvest'},
+    {kind:'operation',slot:'knowledge',name:'harvest'},
+  ]) {
+    for(const withInvocation of [false,true]) {
+      const input={binding:capturedBinding,context,action,...(withInvocation?{invocation:invocationFor({binding:capturedBinding,context,action})}:{})};
+      const result=call('check',request('check',{},input),{TMPDIR:f.root,NODE_OPTIONS:`--import=${JSON.stringify(preload)}`});
+      assert.equal(result.status,0,result.stdout+result.stderr);assert.equal(result.response.ok,true);
+      assert.deepEqual(result.response.result,{status:'needs-configuration',problems:[{code:'provider-not-qualified'}]});
+      assert.equal(result.stderr,'');assert.deepEqual(inventory(f.root),before,'no scratch, native Git, registration or scheduler effects');
+    }
+  }
 });
 
 test('OATS_BINDING_FILE loads one frozen provider envelope and never falls back',t=>{

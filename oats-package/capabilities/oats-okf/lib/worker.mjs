@@ -18,7 +18,7 @@ function persist(source,run) {
   }
   save(runPath(source,run.id),run);
 }
-function requireQualifiedHelper(source) {
+export function requireQualifiedHelper(source) {
   if(['providerBinding','executionBinding','registration'].some(key=>Object.hasOwn(source,key))) fail('E_CAPTURED_HELPER','captured worker requires a qualified generic captured-helper launch API; legacy helper selection is forbidden');
 }
 export function completionArgv(source,id,judgmentFile='<absolute-judgment.json>') {

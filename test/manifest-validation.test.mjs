@@ -244,6 +244,8 @@ for (const manifest of [null, [], "not an object"]) {
 function runBaseline(f) {
   mkdirSync(join(f.dir, "test"), { recursive: true });
   copyFileSync(join(ROOT, "test/oats-okf.test.mjs"), join(f.dir, "test/oats-okf.test.mjs"));
+  mkdirSync(join(f.dir, "test/helpers"), { recursive: true });
+  copyFileSync(join(ROOT, "test/helpers/no-effects.mjs"), join(f.dir, "test/helpers/no-effects.mjs"));
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^(NODE_TEST_|OATS_|GIT_)/.test(key)));
   return spawnSync(process.execPath, ["--test", "--test-name-pattern=^baseline ", "test/oats-okf.test.mjs"], {
     cwd: f.dir, env, encoding: "utf8", timeout: 20000,
