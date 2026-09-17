@@ -1049,11 +1049,17 @@ function entryMode(repo,oid,path) {return git(repo,['--no-replace-objects','ls-t
 test('custody R3 worker index mode-only entries are preserved but cannot contaminate publication',t=>{
   const f=fixture(t,{kind:'git'});note(f);const {s,run}=prepared(f),j=judgment(f,s,run),cwd=run.stages.project.checkout,path='knowledge/peer/log.md';
   git(cwd,['update-index','--chmod=+x','--',path]);
-  const index=fs.readFileSync(join(cwd,'.git/index'));
+  const index=fs.readFileSync(join(cwd,'.git/index')),probes=join(f.dir,'scope-index-reads.jsonl');
+  // Observe the real Git reads individually, not an index restored afterward.
+  gitWrapper(f,`if(a.includes('diff')) {const p=cwd+'/.git/index',before=fs.readFileSync(p);const r=spawnSync(real,a,{stdio:'inherit'});fs.appendFileSync(${JSON.stringify(probes)},JSON.stringify({args:a,indexUnchanged:before.equals(fs.readFileSync(p)),privateIndex:process.env.GIT_INDEX_FILE||null})+'\\n');process.exit(r.status ?? 1);}`);
   assert.equal(git(cwd,['ls-files','--stage','--',path]).split(' ')[0],'100755');
   const r=complete(s,run.id,j);assert.equal(r.processed,true);
   assert.equal(entryMode(f.repo,r.receipts.project.commit,path),'100644');
   assert.deepEqual(fs.readFileSync(join(cwd,'.git/index')),index,'worker index remains byte-for-byte intact');
+  const reads=fs.readFileSync(probes,'utf8').trim().split('\n').map(JSON.parse);
+  assert.ok(reads.some(({args})=>args.includes('--cached')) && reads.some(({args})=>!args.includes('--cached')));
+  assert.ok(reads.every(({args,indexUnchanged,privateIndex})=>indexUnchanged && args.includes('--no-optional-locks') && privateIndex && privateIndex!==join(cwd,'.git/index')),'native scope reads never write the worker index');
+  assert.ok(reads.every(({privateIndex})=>!fs.existsSync(dirname(privateIndex))),'verification copies are removed, not retained as another worker/publication index');
 });
 test('custody R3 late mode edits cannot enter the private index; add scope is the exact validated content delta',t=>{
   const f=fixture(t,{kind:'git'});note(f);const {s,run}=prepared(f),j=judgment(f,s,run),cwd=run.stages.project.checkout;

@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { fs, join, dirname, safePath, readJSON, save, atomic, tree, materialize, digest, hash, withLock, exec, cleanEnv, fail, relPath, overlaps, resolve } from './io.mjs';
 import { metadata, noGit } from './config.mjs';
@@ -90,28 +91,44 @@ export function allowedChanges(before, after, meta, owned) {
   }
   return changed;
 }
+function withVerificationIndex(cwd,fn) {
+  // Git 2.44 diff can refresh the index despite --no-optional-locks. Disabling
+  // autoRefreshIndex also disables stat-only filtering, producing false scope
+  // violations. Redirect those native reads/refreshes to a disposable COPY;
+  // never mutate or restore the worker index, or use the publication index.
+  const scratch=fs.mkdtempSync(join(fs.realpathSync(tmpdir()),'oats-okf-verify-index-'));
+  try {
+    const index=join(scratch,'index'),source=safePath(resolve(cwd,git(cwd,['rev-parse','--git-path','index'])));
+    fs.copyFileSync(source,index,fs.constants.COPYFILE_EXCL);fs.chmodSync(index,0o600);
+    const env={...cleanEnv(),GIT_INDEX_FILE:index};
+    // Keep any split-index writes in the disposable file too, not .git/.
+    return fn(args=>git(cwd,['--no-optional-locks','-c','diff.autoRefreshIndex=true','-c','core.splitIndex=false',...args],{env}));
+  } finally {fs.rmSync(scratch,{recursive:true,force:true});}
+}
 export function verifyGitScope(base, dest, baseline, { checkModes = true } = {}) {
-  const names=git(dest,['diff','--name-only','-z',baseline,'--']).split('\0').filter(Boolean);
-  // A restored working file can conceal a staged, unauthorized index entry.
-  names.push(...git(dest,['diff','--cached','--name-only','-z',baseline,'--']).split('\0').filter(Boolean));
-  names.push(...git(dest,['ls-files','--others','--exclude-standard','-z']).split('\0').filter(Boolean));
-  if(base.root!=='.' && names.some(p=>!p.startsWith(base.root+'/'))) fail('E_OWNER','Git worker touched files outside its knowledge base');
-  // --others without exclude-standard includes ignored additions as well.
-  // Unchanged code symlinks outside the base are not knowledge and need not be
-  // traversed. Bundle symlinks are rejected by validateBase/tree.
-  const extra=git(dest,['ls-files','--others','-z']).split('\0').filter(Boolean);
-  if(base.root!=='.' && extra.some(p=>!p.startsWith(base.root+'/'))) fail('E_OWNER','untracked/ignored file outside knowledge');
-  if(checkModes) {
-    // Harvest judgments authorize content, not executable-bit edits. Inspect
-    // the filesystem against frozen objects, not core.fileMode or index flags.
-    for(const [p,entry] of gitTreeEntries(dest,baseline)) {
-      if(!['100644','100755'].includes(entry.mode)) continue;
-      const path=join(dest,p);
-      let stat;try {stat=fs.lstatSync(path);} catch(e) {if(e.code==='ENOENT' || e.code==='ENOTDIR') continue;throw e;}
-      if(stat.isFile() && (stat.mode & 0o100 ? '100755':'100644')!==entry.mode) fail('E_OWNER',`harvest cannot change Git file mode: ${p}`);
+  return withVerificationIndex(dest,read=>{
+    const names=read(['diff','--name-only','-z',baseline,'--']).split('\0').filter(Boolean);
+    // A restored working file can conceal a staged, unauthorized index entry.
+    names.push(...read(['diff','--cached','--name-only','-z',baseline,'--']).split('\0').filter(Boolean));
+    names.push(...read(['ls-files','--others','--exclude-standard','-z']).split('\0').filter(Boolean));
+    if(base.root!=='.' && names.some(p=>!p.startsWith(base.root+'/'))) fail('E_OWNER','Git worker touched files outside its knowledge base');
+    // --others without exclude-standard includes ignored additions as well.
+    // Unchanged code symlinks outside the base are not knowledge and need not be
+    // traversed. Bundle symlinks are rejected by validateBase/tree.
+    const extra=read(['ls-files','--others','-z']).split('\0').filter(Boolean);
+    if(base.root!=='.' && extra.some(p=>!p.startsWith(base.root+'/'))) fail('E_OWNER','untracked/ignored file outside knowledge');
+    if(checkModes) {
+      // Harvest judgments authorize content, not executable-bit edits. Inspect
+      // the filesystem against frozen objects, not core.fileMode or index flags.
+      for(const [p,entry] of gitTreeEntries(dest,baseline)) {
+        if(!['100644','100755'].includes(entry.mode)) continue;
+        const path=join(dest,p);
+        let stat;try {stat=fs.lstatSync(path);} catch(e) {if(e.code==='ENOENT' || e.code==='ENOTDIR') continue;throw e;}
+        if(stat.isFile() && (stat.mode & 0o100 ? '100755':'100644')!==entry.mode) fail('E_OWNER',`harvest cannot change Git file mode: ${p}`);
+      }
     }
-  }
-  verifyRemote(base,dest);
+    verifyRemote(base,dest);
+  });
 }
 // Caller MUST hold the cooperative base lock. Intent is durable before journal
 // installation; publishing is durable AFTER it and BEFORE the first accepted
