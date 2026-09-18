@@ -88,7 +88,11 @@
       "kind": "action",
       "command": "harvest",
       "context": "home",
-      "description": "Capture this source into durable custody and request an independent worker."
+      "description": "Capture this source into durable custody and request an independent worker.",
+      "args": [
+        {"name": "native-request", "flag": "--native-request", "required": false, "description": "Captured operations require an explicit absolute backend-only native request JSON; provider owns the worker task."},
+        {"name": "worker-mode", "flag": "--worker-mode", "required": false, "description": "Captured worker mode: prepare or launch (default launch); legacy behavior is unchanged when absent."}
+      ]
     }
   }
 }

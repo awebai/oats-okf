@@ -21,6 +21,10 @@ oats okf migrate --legacy PATH --base ALIAS --node NODE --output PATH [--json]
 oats okf migrate --deliver FILE | --cutover FILE --soul-dir PATH [--json]
 oats okf migrate --source-home PATH [--json]
 oats okf unlock --lock PATH --token TOKEN [--json]
+Captured workers use oats operation run knowledge:harvest with SOURCE --deployment/--resolution/--home,
+--arg native-request=ABS_BACKEND_ONLY_JSON and optional --arg worker-mode=prepare|launch.
+Raw captured harvest/run-source/scheduler/rejudge remain held; completed runs use SOURCE complete/retry.
+Unknown scaffold/native outcomes are retained, never automatically re-scaffolded or redispatched.
 Explicit retry --run ID requires --rejudge; add --launch only for operator-approved launch.
 Closed-PR recovery uses retained evidence and a fresh run; complete its returned ID.
 Settled destinations and old proposals/receipts are preserved; another active run blocks recovery.
@@ -42,7 +46,7 @@ else {
     }
     const accepted={
       spawn:[],retire:['home'], 'soul-scaffold':[],
-      harvest:['home','no-launch'],inspect:['home','source'],
+      harvest:['home','no-launch','native-request','worker-mode'],inspect:['home','source'],
       'run-source':['source','manual','no-launch'],complete:['source','run','judgment'],
       retry:['source','run','rejudge','launch','adopt-home'],read:['home','source','base','path'],refresh:['home','source'],
       setup:['source','enable','disable','install-host'],init:['base','nodes','output','confirm'],
@@ -53,8 +57,14 @@ else {
     const execution=Object.hasOwn(process.env,'OATS_INVOCATION_CONTEXT_FILE')?loadCapturedOkfInvocation():null;
     const invocation=execution?{kind:'captured',binding:execution.binding}:loadInvocationKnowledgeBinding(),captured=invocation.kind==='captured';
     if(execution) assertOkfInvocationAction(execution.context,event,readJSON(new URL('../oats.json',import.meta.url)));
-    // Unsupported worker/administration paths stay closed even with an intent.
-    if(captured && event==='harvest') requireQualifiedHelper({providerBinding:invocation.binding});
+    // Only an actual admitted, instance-scoped kernel operation can create a
+    // captured worker. Raw commands/null intents and legacy ingress stay closed.
+    const capturedHarvest=captured && execution?.context.action.kind==='operation' && execution.context.action.slot==='knowledge' && execution.context.action.name==='harvest';
+    if(captured && event==='harvest') {
+      if(!capturedHarvest)requireQualifiedHelper({providerBinding:invocation.binding});
+      requireOkfAdmittedAction(execution.context);
+      if(!flags['native-request']||!['prepare','launch'].includes(flags['worker-mode']||'launch'))fail('E_CAPTURED_HELPER','captured harvest needs explicit native-request and supported worker-mode');
+    }
     const unsupportedCaptured=new Set(['setup','init','migrate','unlock']);
     if(captured && unsupportedCaptured.has(event)) fail('E_MIGRATION',`captured ${event} is not supported; use an explicit operator administration path`);
     const target=execution?.context.instance;
@@ -120,11 +130,16 @@ else {
         const s=src();scheduleSource(s);const r=capture(s,{final:true});result={meta:{retired:r.complete===true,source:s.file,capture:r},brief:'Final input is in durable custody. Delivery remains asynchronous.'};
       }
     } else if(event==='harvest') {
-      // Snapshot absence does not turn a persisted captured source into legacy.
-      // homeSource is read-only; register can repair views/memory and schedule.
-      if(fs.existsSync(markerPath(home))) requireQualifiedHelper(src());
-      const s=register(home);
-      result=s.skipped?{status:'skipped',reason:'service'}:runSource(s,{manual:true,noLaunch:!!flags['no-launch']});
+      if(capturedHarvest) {
+        const s=src(); // existing registered descriptor ONLY; never new registration.
+        result=runSource(s,{manual:true,noLaunch:!!flags['no-launch']||flags['worker-mode']==='prepare',capturedInvocation:execution.context,nativeRequest:flags['native-request']});
+      } else {
+        if(flags['native-request']||flags['worker-mode'])fail('E_USAGE','native-request/worker-mode require an admitted captured operation');
+        // Snapshot absence does not turn a persisted captured source into legacy.
+        if(fs.existsSync(markerPath(home))) requireQualifiedHelper(src());
+        const s=register(home);
+        result=s.skipped?{status:'skipped',reason:'service'}:runSource(s,{manual:true,noLaunch:!!flags['no-launch']});
+      }
     } else if(event==='run-source') result=runSource(src(),{manual:!!flags.manual,noLaunch:!!flags['no-launch']});
     else if(event==='complete') {const s=src();if(captured) retainedRun(s);result=complete(s,flags.run,flags.judgment && resolve(flags.judgment));}
     else if(event==='retry') {const s=src();if(captured && !flags.run && !flags.rejudge && !flags.launch && !flags['adopt-home']) retainedRun(s);result=retry(s,{run:flags.run,rejudge:!!flags.rejudge,launch:!!flags.launch,adoptHome:flags['adopt-home']});}
