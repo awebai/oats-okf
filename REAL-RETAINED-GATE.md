@@ -21,6 +21,11 @@ Developer verification is limited to the new pure/helper unit tests.
   input/run/judgment/transcript. Actual worker model turns and processed judgment/
   directory-publication receipts are REQUIRED. A legitimate no-change judgment
   is reported as such, never called a durable promotion.
+- Current native interface has no structured host-result receipt. Its exit marker
+  carries only dispatch ID, and recalled text does not establish the SDK header/
+  final assistant stop reason. Until an actual reviewed observer supplies those
+  facts, even successful worker/judgment observations end PARTIAL (exit2), never
+  a green host-completion claim. No guessed backend exit zero is substituted.
 - Public captured retirement/recovery/interactive/plugin/private-provider scope
   is not qualified. Final capture uses the existing exported kernel retire-HOOK
   API after observed print exit; homes, backends, history and receipts are NOT
@@ -143,10 +148,13 @@ retry, backend cleanup or source rewrite. No fake ready/model/worker outcome.
 - Exit1: a real stage refused/failed; inspect its typed stage/code and preserved
   native evidence. Missing native auth stays a native nonsecret failure for the
   user, not a credential repair opportunity.
-- Exit0 / `passed`: BOTH backends completed actual primary and provider-created
-  SOURCE-worker turns, genuine run/judgment/directory receipt processing and final
-  capture. It is still NOT public retirement/recovery/privacy/interactive/plugin
-  parity. No-change is not promotion, and pending backlog is reported.
+- Exit2 / `partial-completion-evidence`: BOTH backends supplied actual primary
+  and provider-created SOURCE-worker text, genuine run/judgment/directory receipt
+  processing and final capture, but native process success and structured final
+  SDK completion remain unqualified. This runner currently has NO green real-run
+  path until reviewed actual outcome observation is added. A numeric runPrintMode
+  return becoming a process exit code does not make that code observable through
+  the ID-only marker. No-change is not promotion; backlog is reported.
 - Any non-pass/source-drift/unsupported consumer or host is nonzero; no manual-
   helper-only or seeded-data path can make this version green.
 - No real execution result exists merely because pure unit tests pass. Actual

@@ -99,6 +99,15 @@ export function verifyTurnEvidence(capture,recalls,{home,root,nonce}){
   return {realNativeUserTurn:true,realNativeAssistantTurn:true,sessionCount:capture.sessions.length,nonce};
 }
 
+export function completionObservationLimits(){
+  // Current owner interface supplies no process exit code or structured final
+  // SDK outcome. A correlated marker and recalled text must not fill those gaps.
+  return [
+    {scope:'native host process success',status:'not-observed',reason:'dispatch-ID exit marker has no exit status; no backend outcome observer is implemented'},
+    {scope:'SDK header and successful final assistant outcome',status:'not-established',reason:'attributed recalled nonce text does not independently verify SDK header/final stop reason'}
+  ];
+}
+
 export async function runRealGate(config,{executeReal=false}={}){
   if(!executeReal)fail('E_REAL_OPT_IN','parent must explicitly invoke --execute-real; developers must not run live gate');
   const c=validateConfig(config),deadline=Date.parse(c.deadlineUtc),root=c.outputRoot;
@@ -234,10 +243,11 @@ export async function runRealGate(config,{executeReal=false}={}){
         save();
       }
     }
-    // A pass now REQUIRES actual provider-created runs, actual helper turns and
-    // real judgment/publication receipts. No-change is not called a promotion.
-    result.holds.push({scope:'public captured retirement/recovery/private-provider/interactive/plugin profiles',status:'not-qualified'});
-    result.status='passed';result.currentStage='real-worker-learning-cycle-complete-with-scoped-holds';save();
+    // Actual worker/judgment/publication evidence is retained, but the current
+    // interface cannot qualify process success or a final SDK outcome. Never
+    // infer exit zero from the ID-only marker, even after nonce-bearing text.
+    result.holds.push(...completionObservationLimits(),{scope:'public captured retirement/recovery/private-provider/interactive/plugin profiles',status:'not-qualified'});
+    result.status='partial-completion-evidence';result.currentStage='real-worker-learning-observed-host-completion-unqualified';save();
     return result;
   }catch(e){result.status='failed';result.failure={stage:result.currentStage,code:e.code||'E_GATE',message:'real acceptance stage did not complete; preserve all source/home/history/receipts; no automatic retry'};save();throw e;}
   finally{

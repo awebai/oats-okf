@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
-import {validateConfig,nativeGateEnvironment,verifyTurnEvidence,waitForExit,runRealGate,within} from '../scripts/real-retained-gate.mjs';
+import {validateConfig,nativeGateEnvironment,verifyTurnEvidence,waitForExit,runRealGate,within,completionObservationLimits} from '../scripts/real-retained-gate.mjs';
 function config(){const launch={runtime:'pi',executable:'/source/framework/bin/oats-pi-sdk-host.mjs',args:['--oats-pi-host','1','--mode','print','--thinking','medium','--sdk-root','/native/pi','--sdk-version','0.85.1'],env:{},model:'native/model',yolo:false};return {schemaVersion:1,frameworkRoot:'/source/framework',frameworkCommit:'a'.repeat(40),providerRoot:'/source/provider',providerCommit:'b'.repeat(40),outputRoot:'/private/tmp/new-real-gate',primaryLaunch:launch,helperLaunch:{...launch,model:'native/helper-model'},backends:[{backend:'tmux',binary:'/native/tmux',socket:'/private/tmp/owned-tmux',session:'owned'},{backend:'herdr',binary:'/native/herdr',socket:'/private/tmp/owned-herdr',protocol:22}],turnTimeoutMs:60000,deadlineUtc:'2026-09-18T12:01:00Z'};}
 
 test('unit: real gate requires explicit two-subject normal-auth launch and both backends',()=>{
@@ -40,6 +40,11 @@ test('unit: event-driven exit observation requires exact execution ID and is bou
   await assert.rejects(waitForExit(home,'expected-id',20),{code:'E_GATE_TURN_TIMEOUT'});
   const pending=waitForExit(home,'expected-id',1000);fs.writeFileSync(join(home,'.oats-start-exited'),'expected-id\n');
   assert.deepEqual(await pending,{executionId:'expected-id',exitObserved:true,exitStatusAvailable:false});
+});
+test('unit: current observations cannot qualify process success or final SDK completion',()=>{
+  const limits=completionObservationLimits();assert.equal(limits.length,2);
+  assert.deepEqual(limits.map(x=>x.status),['not-observed','not-established']);
+  assert.match(limits[0].reason,/no exit status/);assert.match(limits[1].reason,/final stop reason/);
 });
 test('unit: no real opt-in refuses before source import, filesystem or native operations',async()=>{
   await assert.rejects(runRealGate(config()),{code:'E_REAL_OPT_IN'});
