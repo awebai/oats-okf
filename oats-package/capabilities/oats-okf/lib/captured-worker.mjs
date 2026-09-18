@@ -11,11 +11,15 @@ const abs=v=>typeof v==='string'&&isAbsolute(v)&&resolve(v)===v&&!v.includes('\0
 const uuid=v=>typeof v==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(v);
 export const capturedSource=s=>['providerBinding','executionBinding','registration'].some(k=>Object.hasOwn(s,k));
 function binding(v){if(!obj(v)||v.schemaVersion!==1||!abs(v.deployment)||v.resolution?.schemaVersion!==1||!/^sha256-[a-f0-9]{64}$/.test(v.resolution.id))fail('E_CAPTURED_HELPER','invalid public execution binding');return v;}
+export function workerCallEnvironment(inherited){
+  // Preserve native HOME/profile/auth/Git helpers and the active OATS data
+  // scope, not invoking instance selectors (including legacy PI_AGENT aliases).
+  const env={...inherited};for(const key of Object.keys(env))if(/^(OATS_(?!HOME_DIR$)|OAS_|PI_AGENT_)/.test(key)||key==='PI_AGENTS_ROOT')delete env[key];
+  return env;
+}
 export function publicWorkerCall(source,args){
   let text,status=0;
-  // Preserve normal native auth/profile/helper environment (including Git
-  // helper context); remove only reserved invoking OATS selectors/snapshots.
-  const env={...process.env};for(const key of Object.keys(env))if(/^(OATS_(?!HOME_DIR$)|OAS_)/.test(key))delete env[key];
+  const env=workerCallEnvironment(process.env);
   try{text=exec(cliPath(),args,{cwd:source.context,env,timeout:90000});}
   catch(error){text=error.stdout;status=error.status??null;}
   let envelope;try{envelope=parseBindingJson(Buffer.from(text||''),BINDING_WIRE_LIMITS);}catch{fail('E_CAPTURED_HELPER_UNKNOWN','public helper outcome is unknown; retain run/home, never re-scaffold');}

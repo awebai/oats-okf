@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {invocationFor,helperSubject} from './helpers/invocation-fixture.mjs';
-import {qualifyCapturedWorker,validateWorkerSelection,readWorkerEndpoint,assertCapturedRun,capturedScaffold,capturedStart,retainCapturedWorkerCustody,assertCapturedWorkerHome} from '../oats-package/capabilities/oats-okf/lib/captured-worker.mjs';
+import {workerCallEnvironment,qualifyCapturedWorker,validateWorkerSelection,readWorkerEndpoint,assertCapturedRun,capturedScaffold,capturedStart,retainCapturedWorkerCustody,assertCapturedWorkerHome} from '../oats-package/capabilities/oats-okf/lib/captured-worker.mjs';
 const clone=v=>JSON.parse(JSON.stringify(v));
 function fixture(t){
  const root=fs.realpathSync(fs.mkdtempSync(join(tmpdir(),'captured-worker-unit-')));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
@@ -22,6 +22,13 @@ function fixture(t){
  const plan=()=>qualifyCapturedWorker(source,{context,nativeRequest:file},()=>clone(inspected));
  return {root,source,context,request,file,inspected,plan};
 }
+test('worker child environment removes legacy instance aliases, preserving native auth and Git context',()=>{
+ const inherited={HOME:'/native/home',PI_CODING_AGENT_DIR:'/native/profile',NATIVE_AUTH_HELPER:'synthetic-helper',ANTHROPIC_API_KEY:'SYNTHETIC-NOT-A-KEY',GIT_CONFIG_GLOBAL:'/native/gitconfig',GIT_SSH_COMMAND:'synthetic-ssh-helper',SSH_AUTH_SOCK:'/native/agent.sock',OATS_HOME_DIR:'/owned/oats-data',OATS_INSTANCE_HOME:'/parent/home',OATS_BINDING_FILE:'/parent/binding',OATS_INVOCATION_CONTEXT_FILE:'/parent/invocation',OAS_CONTEXT:'/parent/old-context',PI_AGENT_HOME:'/parent/home',PI_AGENT_INSTANCE:'parent',PI_AGENT_EXTRA:'legacy-selector',PI_AGENTS_ROOT:'/parent/agents'};
+ const before={...inherited},env=workerCallEnvironment(inherited);
+ for(const key of ['HOME','PI_CODING_AGENT_DIR','NATIVE_AUTH_HELPER','ANTHROPIC_API_KEY','GIT_CONFIG_GLOBAL','GIT_SSH_COMMAND','SSH_AUTH_SOCK','OATS_HOME_DIR'])assert.equal(env[key],inherited[key]);
+ for(const key of ['OATS_INSTANCE_HOME','OATS_BINDING_FILE','OATS_INVOCATION_CONTEXT_FILE','OAS_CONTEXT','PI_AGENT_HOME','PI_AGENT_INSTANCE','PI_AGENT_EXTRA','PI_AGENTS_ROOT'])assert.equal(Object.hasOwn(env,key),false);
+ assert.deepEqual(inherited,before);assert.notEqual(env,inherited);
+});
 test('captured worker requires current admitted persistent operation before public inspection',t=>{
  const f=fixture(t);let calls=0;const call=()=>{calls++;return f.inspected;};
  for(const context of [null,{...f.context,intent:null},{...f.context,action:{kind:'command',namespace:'okf',name:'harvest'}}])assert.throws(()=>qualifyCapturedWorker(f.source,{context,nativeRequest:f.file},call));
