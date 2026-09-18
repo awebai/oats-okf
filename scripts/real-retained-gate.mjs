@@ -171,17 +171,32 @@ export async function runRealGate(config,{executeReal=false}={}){
       try{fs.writeFileSync(fd,text);}finally{fs.closeSync(fd);}
     }
     const flags=['--deployment',deployment,'--resolution',prepared.resolution.id];
+    function captureRealTurn(home,nonce,label){
+      const captured=call(['capture','--home',home,'--root',env.TURN_RECORD_ROOT,'--quiet'],{native:true}),recalls=[];
+      for(const session of captured.sessions||[]){
+        const turns=[],pages=[];let after=null;
+        for(let page=0;page<40;page++){
+          const value=call(['recall','--thread',session.thread,'--until',session.lastTurnId,'--limit','60',...(after?['--after',after]:[]),'--root',env.TURN_RECORD_ROOT,'--json'],{native:true});
+          if(!Array.isArray(value.turns)||!value.turns.length)fail('E_REAL_CAPTURE','empty/non-progressing real record page');
+          pages.push(value);turns.push(...value.turns);const last=value.turns.at(-1).id;
+          if(last===after)fail('E_REAL_CAPTURE','record page did not progress');after=last;
+          if(value.remaining===0||after===session.lastTurnId)break;
+        }
+        if(after!==session.lastTurnId)fail('E_REAL_CAPTURE','bounded record read did not reach captured boundary');
+        recalls.push({thread:session.thread,value:{turns},pages});
+      }
+      const evidence=verifyTurnEvidence(captured,recalls,{home,root,nonce});
+      put(join(root,label+'-capture.json'),captured);put(join(root,label+'-turns.json'),recalls);return evidence;
+    }
     for(const backend of c.backends){
       const batch={backend:backend.backend,subjects:[]};result.backends.push(batch);
-      for(const kind of ['primary','helper']){
-        const home=join(homes,backend.backend+'-'+kind),binding=kind==='primary'?prepared.executionBinding:helper.executionBinding;
-        stage(backend.backend+':'+kind+':public-scaffold-hooks');
-        const scaffold=call(['spawn',kind==='primary'?'gate-primary':helper.helper.name,'--deployment',binding.deployment,'--resolution',binding.resolution.id,'--home',home,'--no-launch','--json']);
-        const metadata=json(join(home,'instance.json'));if(metadata.capabilityMeta?.['oats.okf']?.memory!==(kind==='primary'?'okf-v2':'none'))fail('E_GATE_PROFILE','actual OKF hook/profile missing');
+      for(const kind of ['primary']){
+        const home=join(homes,backend.backend+'-'+kind),binding=prepared.executionBinding;
+        stage(backend.backend+':primary:public-scaffold-hooks');
+        const scaffold=call(['spawn','gate-primary','--deployment',binding.deployment,'--resolution',binding.resolution.id,'--home',home,'--no-launch','--json']);
+        const metadata=json(join(home,'instance.json'));if(metadata.capabilityMeta?.['oats.okf']?.memory!=='okf-v2')fail('E_GATE_PROFILE','actual OKF hook/profile missing');
         const nonce='real-retained-'+randomUUID();
-        const task=kind==='primary'
-          ?`This is a bounded REAL runtime acceptance turn. Do not inspect credentials, native profiles or environment. In one short paragraph state why a retained path alone does not prove the original filesystem object's identity. Keep it as a candidate observation, not accepted knowledge. Include ${nonce} literally in your final assistant answer. Do not launch workers, alter accepted knowledge, or retire yourself.`
-          :`This is a bounded REAL SOURCE-edge runtime acceptance turn, NOT an issued OKF worker run. Load your required skill, then report that no durable worker run/input/staging has been supplied; do not invent one or perform judgment/publication/retirement. Include ${nonce} literally in your final assistant answer. Do not inspect credentials, profiles, environment or the source home. This proves only the real helper runtime turn, not an OKF worker/promotion.`;
+        const task=`This is a bounded REAL runtime acceptance turn. Do not inspect credentials, native profiles or environment. In one short paragraph state why a retained path alone does not prove the original filesystem object's identity. Keep it as a candidate observation, not accepted knowledge. Include ${nonce} literally in your final assistant answer. Do not launch workers, alter accepted knowledge, or retire yourself.`;
         const request=join(root,backend.backend+'-'+kind+'-request.json');put(request,{schemaVersion:1,backend,task});
         const row={kind,home,incarnationId:scaffold.incarnationId,nonce};batch.subjects.push(row);
         stage(backend.backend+':'+kind+':real-public-native-start');
@@ -190,20 +205,20 @@ export async function runRealGate(config,{executeReal=false}={}){
         row.dispatch=started;save();
         stage(backend.backend+':'+kind+':await-actual-print-exit');row.exit=await waitForExit(home,started.intent.executionId,budget());
         stage(backend.backend+':'+kind+':real-native-capture-recall');
-        const captured=call(['capture','--home',home,'--root',env.TURN_RECORD_ROOT,'--quiet'],{native:true}),recalls=[];
-        for(const session of captured.sessions||[]){
-          const turns=[],pages=[];let after=null;
-          for(let page=0;page<40;page++){
-            const value=call(['recall','--thread',session.thread,'--until',session.lastTurnId,'--limit','60',...(after?['--after',after]:[]),'--root',env.TURN_RECORD_ROOT,'--json'],{native:true});
-            if(!Array.isArray(value.turns)||!value.turns.length)fail('E_REAL_CAPTURE','empty/non-progressing real record page');
-            pages.push(value);turns.push(...value.turns);const last=value.turns.at(-1).id;
-            if(last===after)fail('E_REAL_CAPTURE','record page did not progress');after=last;
-            if(value.remaining===0||after===session.lastTurnId)break;
-          }
-          if(after!==session.lastTurnId)fail('E_REAL_CAPTURE','bounded record read did not reach captured boundary');
-          recalls.push({thread:session.thread,value:{turns},pages}); // aggregation of actual native replies, never a constructed transcript.
-        }
-        row.turn=verifyTurnEvidence(captured,recalls,{home,root,nonce});put(join(root,backend.backend+'-'+kind+'-capture.json'),captured);put(join(root,backend.backend+'-'+kind+'-turns.json'),recalls);
+        row.turn=captureRealTurn(home,nonce,backend.backend+'-primary');
+        stage(backend.backend+':admitted-automatic-OKF-worker');
+        const endpoint=join(root,backend.backend+'-worker-endpoint.json');put(endpoint,{schemaVersion:1,backend});
+        const operation=call(['operation','run','knowledge:harvest',...flags,'--home',home,'--arg','native-request='+endpoint,'--arg','worker-mode=launch','--json']);
+        const worker=operation.result;
+        if(!worker?.run||!absolute(worker.home)||!within(root,worker.home)||!worker.launch?.intent?.executionId||worker.launch.sourceExecutionBinding?.resolution.id!==prepared.resolution.id||worker.launch.executionBinding?.resolution.id!==helper.executionBinding.resolution.id)fail('E_REAL_WORKER','no actual registered SOURCE-worker dispatch receipt');
+        const helperMeta=json(join(worker.home,'instance.json'));
+        if(helperMeta.capabilityMeta?.['oats.okf']?.memory!=='none'||helperMeta.incarnationId!==worker.launch.incarnationId)fail('E_REAL_WORKER','actual helper recursion/incarnation correspondence failed');
+        const workerRow={kind:'automatic-worker',home:worker.home,run:worker.run,dispatch:worker.launch};batch.subjects.push(workerRow);save();
+        stage(backend.backend+':automatic-worker:actual-print-exit');workerRow.exit=await waitForExit(worker.home,worker.launch.intent.executionId,budget());
+        stage(backend.backend+':automatic-worker:real-turn-and-completion');workerRow.turn=captureRealTurn(worker.home,worker.run,backend.backend+'-automatic-worker');
+        const sourceFile=metadata.capabilityMeta['oats.okf'].source,source=json(sourceFile),run=json(join(dirname(sourceFile),'runs',worker.run,'run.json')),status=json(join(dirname(sourceFile),'status.json'));
+        if(run.source!==source.id||run.id!==worker.run||run.worker?.home!==worker.home||run.status!=='processed'||!run.judgment||!run.inputs?.length||!run.inputs.every(id=>status.processed.includes(id))||!Object.values(run.receipts||{}).length||!Object.values(run.receipts).every(r=>['accepted','no-change'].includes(r.status)))fail('E_REAL_LEARNING','actual worker judgment/publication receipt did not complete');
+        workerRow.learning={actualRun:run.id,processed:true,judgment:run.judgment,receipts:run.receipts,acceptedChange:Object.values(run.receipts).some(r=>r.status==='accepted'),remainingInputs:status.captured.inputs.filter(id=>!status.processed.includes(id)).length};
         if(kind==='primary'){
           stage(backend.backend+':primary:actual-OKF-final-capture-HOOK-not-retirement');
           const old={...process.env};try{
@@ -219,10 +234,10 @@ export async function runRealGate(config,{executeReal=false}={}){
         save();
       }
     }
-    // No invented durable run, worker result, model transcript or promotion.
-    result.holds.push({code:'E_CAPTURED_HELPER',scope:'automatic default-OKF worker/promotion',status:'not-exercised-or-qualified',reason:'exact86 worker launcher remains guarded; public helper turn is not a registered worker run'});
+    // A pass now REQUIRES actual provider-created runs, actual helper turns and
+    // real judgment/publication receipts. No-change is not called a promotion.
     result.holds.push({scope:'public captured retirement/recovery/private-provider/interactive/plugin profiles',status:'not-qualified'});
-    result.status='real-runtime-and-capture-passed-learning-held';result.currentStage='complete-with-explicit-holds';save();
+    result.status='passed';result.currentStage='real-worker-learning-cycle-complete-with-scoped-holds';save();
     return result;
   }catch(e){result.status='failed';result.failure={stage:result.currentStage,code:e.code||'E_GATE',message:'real acceptance stage did not complete; preserve all source/home/history/receipts; no automatic retry'};save();throw e;}
   finally{

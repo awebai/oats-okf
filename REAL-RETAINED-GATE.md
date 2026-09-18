@@ -12,14 +12,15 @@ Developer verification is limited to the new pure/helper unit tests.
   for retained runtime packages and applicable manifest requirements. Any required
   bridge/plugin causes refusal; the runner never strips requirements or substitutes
   a capability. Kernel host/hook eligibility remains authoritative as well.
-- The captured automatic OKF worker consumer is still held by E_CAPTURED_HELPER.
-  Its legacy spawn/start path is not repaired by public API2 availability. This
-  runner does NOT seed a run, staging map, judgment, transcript or fake worker.
-- The real SOURCE-helper turn explicitly reports missing worker prerequisites;
-  it is real execution of the selected memory-harvest soul, NOT a claim that an
-  issued OKF worker judged/promoted knowledge. Real primary model output can be
-  captured into genuine durable OKF inputs; accepted learning/promotion remains
-  held until an actually authorized captured worker consumer exists.
+- The captured consumer now supports ONLY a current admitted persistent SOURCE
+  knowledge:harvest operation with explicit backend request, exact public helper
+  launchSelection and custody (see CAPTURED-WORKER-STATUS.md). Raw/null-intent/
+  scheduled/recovery paths remain held; API2 alone is not permission.
+- The runner invokes that operation and consumes its ACTUAL provider-created run,
+  worker home and dispatch receipt. It never manually stages a helper or seeds
+  input/run/judgment/transcript. Actual worker model turns and processed judgment/
+  directory-publication receipts are REQUIRED. A legitimate no-change judgment
+  is reported as such, never called a durable promotion.
 - Public captured retirement/recovery/interactive/plugin/private-provider scope
   is not qualified. Final capture uses the existing exported kernel retire-HOOK
   API after observed print exit; homes, backends, history and receipts are NOT
@@ -114,19 +115,23 @@ map or arbitrary stderr/auth diagnostic is written to reports.
 3. Bootstrap one NEW empty private accepted directory base through provider init.
    This is operator setup, not fabricated learning. Delete ONLY the runner-owned
    source repository and poison current deployment config/lock.
-4. For tmux then Herdr, public scaffold/hooks for primary and actual retained
-   memory-harvest helper. Public session start uses SOURCE+exact helper edge,
-   independently retained model/host and explicit owned endpoint.
+4. For tmux then Herdr, public primary scaffold/hooks/start with explicit owned
+   endpoint. Then admitted knowledge:harvest creates its REAL run/staged helper
+   and dispatches SOURCE+exact helper edge using the independently retained host/
+   model. The gate does not substitute a manually scaffolded runtime-only helper.
 5. Await the EXISTING native wrapper's exact .oats-start-exited execution ID via
    a bounded filesystem watcher (no sleep/poll loop). The marker carries no exit
    status and alone is NOT successful authentication or model execution proof.
 6. Real public native capture/recall must yield complete attributed Pi history
    within the owned root and actual user AND assistant nonce-bearing turns.
    No mocked backend/process/session/transcript path is used by this runner.
-7. Primary's actual exported captured retire-HOOK must collect that native turn
-   into hash-verified durable OKF inputs. Keep the home/history; do not claim
-   public retirement or erase evidence. Helper turn remains runtime-only; no
-   source-home attachment or invented worker payload is supplied to it.
+7. The actual automatic worker must finish its own judgment/completion command.
+   Verify its run/source/home association, actual captured helper user+assistant
+   turns bearing the real run ID, processed input IDs and actual accepted/no-change
+   directory receipts. Report whether an accepted change occurred and remaining
+   captured backlog. Then primary's exported final capture-HOOK must preserve
+   hash-verified actual native inputs. Keep all homes/history; no public retirement
+   or fabricated worker payload/completion is supplied by the gate.
 8. Recheck source identity and retain every result/home/history on success/failure.
 
 `result.json`, per-call bounded diagnostics, retained selections and actual
@@ -138,10 +143,12 @@ retry, backend cleanup or source rewrite. No fake ready/model/worker outcome.
 - Exit1: a real stage refused/failed; inspect its typed stage/code and preserved
   native evidence. Missing native auth stays a native nonsecret failure for the
   user, not a credential repair opportunity.
-- Exit2 / `real-runtime-and-capture-passed-learning-held`: the four actual turns
-  and default-OKF capture succeeded, but automatic worker/promotion and broader
-  lifecycle remain UNQUALIFIED. This is deliberately NOT a green full-learning
-  gate. The parent must report the first cut's exact limitation, not drop it.
-- No real execution result exists merely because pure unit tests pass. A later
-  genuine worker slice requires actual provider-run authority and its own code
-  change; never turn a seeded judgment into proof of real learning.
+- Exit0 / `passed`: BOTH backends completed actual primary and provider-created
+  SOURCE-worker turns, genuine run/judgment/directory receipt processing and final
+  capture. It is still NOT public retirement/recovery/privacy/interactive/plugin
+  parity. No-change is not promotion, and pending backlog is reported.
+- Any non-pass/source-drift/unsupported consumer or host is nonzero; no manual-
+  helper-only or seeded-data path can make this version green.
+- No real execution result exists merely because pure unit tests pass. Actual
+  execution remains parent-only on assembled reviewed code with normal native
+  auth and complete record-witness guards. No developer live operation occurred.
