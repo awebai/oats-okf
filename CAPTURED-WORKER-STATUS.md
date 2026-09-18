@@ -17,6 +17,9 @@ native dispatch. Legacy v1 callers retain their old paths when these new args
 are absent. Captured raw harvest/run-source/schedulers and null-intent/receipt-
 only ingress remain held. Existing SOURCE complete/non-rejudging retained-run
 retry remains available; rejudge/adopt/recovery paths are not silently widened.
+This is worker creation triggered by an admitted persistent-instance operation,
+NOT qualification of schedules or always-on automatic lifecycle harvesting.
+Those entrypoints remain held; a real operation-launched worker does not qualify them.
 
 The native request is the existing version1 backend/optional stopGraceMs subset:
 provider generates the actual worker task. Task/env/model overrides in that file
@@ -35,8 +38,9 @@ requirements/host/approvals/witnesses before native effects.
 
 The public lookup must additionally expose:
 `helperSelection.launchSelection = null | {runtime, model}` from its verified
-retained launch. This is an explicit implementation dependency requested from
-parent/lifecycle; absence or mismatch refuses, never reads private kernel files.
+retained launch. The kernel implements this public field; it is a compatibility
+requirement, not an outstanding getter proposal. Absence or mismatch refuses,
+never reads private kernel files and never implies native readiness.
 Captured first slice is Pi with a nonempty independently retained model, matching
 any selected harvest-model pin; no fallback/parent model substitution.
 
@@ -93,6 +97,9 @@ Do not advertise the new path as supported by existing0.23.x installations.
 
 Focused consumer units use injected PUBLIC response data only; they verify
 refusals/argv/custody/unknown-state behavior, not current kernel admission or a
-real worker/model. Real parent gate is still required on assembled reviewed code
+real worker/model. A separate opt-in actual public prepare test covers retained
+admission, helper scaffold/staging and repeated prepare without native dispatch;
+that no-launch result is not model, schedule or lifecycle-harvesting qualification.
+Real parent gate is still required on assembled reviewed code
 and genuine existing native auth. No developer model/backend/account operation,
 record lib/bin edit, extra full suite or old source-review replay was performed.
