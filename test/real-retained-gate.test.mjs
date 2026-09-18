@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import {execFileSync} from 'node:child_process';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
-import {validateConfig,nativeGateEnvironment,verifyTurnEvidence,waitForExit,runRealGate,within,completionObservationLimits,materializePinnedPayload,gateExitCode} from '../scripts/real-retained-gate.mjs';
+import {validateConfig,nativeGateEnvironment,verifyTurnEvidence,waitForExit,runRealGate,within,completionObservationLimits,materializePinnedPayload,gateExitCode,outcomeInspectArgs,assessNativeOutcome} from '../scripts/real-retained-gate.mjs';
 function config(){const launch={runtime:'pi',executable:'/source/framework/bin/oats-pi-sdk-host.mjs',args:['--oats-pi-host','1','--mode','print','--thinking','medium','--sdk-root','/native/pi','--sdk-version','0.85.1'],env:{},model:'native/model',yolo:false};return {schemaVersion:1,frameworkRoot:'/source/framework',frameworkCommit:'a'.repeat(40),providerRoot:'/source/provider',providerCommit:'b'.repeat(40),outputRoot:'/private/tmp/new-real-gate',primaryLaunch:launch,helperLaunch:{...launch,model:'native/helper-model'},backends:[{backend:'tmux',binary:'/native/tmux',socket:'/private/tmp/owned-tmux',session:'owned'},{backend:'herdr',binary:'/native/herdr',socket:'/private/tmp/owned-herdr',protocol:22}],turnTimeoutMs:60000,deadlineUtc:'2026-09-18T12:01:00Z'};}
 
 test('unit: real gate requires explicit two-subject normal-auth launch and both backends',()=>{
@@ -60,10 +60,59 @@ test('unit: source drift/failure/unknown statuses cannot use the partial observa
   assert.equal(gateExitCode('passed'),0);assert.equal(gateExitCode('partial-completion-evidence'),2);
   for(const status of ['failed','failed-source-drift','running','arbitrary',undefined])assert.equal(gateExitCode(status),1);
 });
-test('unit: current observations cannot qualify process success or final SDK completion',()=>{
+test('unit: missing observations stay partial; exactly four validated completions lift only that hold',()=>{
   const limits=completionObservationLimits();assert.equal(limits.length,2);
   assert.deepEqual(limits.map(x=>x.status),['not-observed','not-established']);
   assert.match(limits[0].reason,/no exit status/);assert.match(limits[1].reason,/final stop reason/);
+  const rows=Array.from({length:4},()=>({completion:{qualified:true}}));assert.deepEqual(completionObservationLimits(rows),[]);
+  assert.equal(completionObservationLimits(rows.slice(1)).length,2);rows[2].completion.qualified=false;assert.equal(completionObservationLimits(rows).length,2);
+});
+function outcomeFixture(helper=false,backend='tmux'){
+  const root='/private/tmp/gate',home=root+(helper?'/worker':'/primary'),sourceBinding={schemaVersion:1,deployment:root+'/deployment',resolution:{schemaVersion:1,id:'sha256-'+'a'.repeat(64)}};
+  const executionBinding=helper?{...sourceBinding,resolution:{schemaVersion:1,id:'sha256-'+'b'.repeat(64)}}:sourceBinding;
+  const launch={...config().primaryLaunch,model:'native/'+(helper?'helper/model:literal':'model:literal')};
+  const incarnationId='11111111-1111-4111-8111-111111111111',nativeRecordId='22222222-2222-4222-8222-222222222222';
+  const intent={schemaVersion:1,incarnationId,executionId:'original-native-dispatch',attempt:1};
+  const target=backend==='tmux'?{backend,socket:root+'/tmux.sock',session:'owned',window:'actual'}:{backend,binary:'/native/herdr',socket:root+'/herdr.sock',protocol:22,workspaceId:'observed-workspace',paneId:'observed-pane',terminalId:'observed-terminal'};
+  const edge={key:'oats.okf:memory-harvest',name:'memory-harvest',subject:{kind:'helper'}};
+  const dispatch={home,nativeRecordId,incarnationId,intent,executionBinding,target,...(helper?{sourceExecutionBinding:sourceBinding,helper:edge}:{})};
+  const selected={runtime:'pi',provider:'native',id:launch.model.slice('native/'.length),sdkVersion:'0.85.1'},sessionDir=root+'/history';
+  const authority={home,sessionDir,nativeRecordId,incarnationId,intent,executionBinding,target,inputIntegrity:{format:'oats.json.v1',value:'sha256-'+'c'.repeat(64)},selected};
+  const outcome={schemaVersion:1,contract:'oats.pi-print-completion',nonAuthorizing:true,authority,status:'succeeded',qualified:true,processExitCode:0,sdkExitCode:0,finalObserved:true,evidence:{process:true,sdk:true,sessionFile:true},sdk:{sdkVersion:'0.85.1',header:{type:'session',version:3,id:'sdk-session',cwd:home,timestamp:'2026-09-18T10:00:00Z'},sessionId:'sdk-session',sessionFile:sessionDir+'/sdk-session.jsonl',model:{provider:selected.provider,id:selected.id},finalAssistant:{entryId:'actual-entry',provider:selected.provider,model:selected.id,responseModel:null,stopReason:'stop',timestamp:42}}};
+  return {expected:{home,root,sourceBinding,dispatch,launch,helper},query:{outcome,executionBinding,...(helper?{sourceExecutionBinding:sourceBinding,helper:edge}:{})}};
+}
+test('unit: actual public outcome shape requires both exit zeros and exact opaque model tuple on either backend',()=>{
+  for(const backend of ['tmux','herdr']){const f=outcomeFixture(false,backend);assert.equal(assessNativeOutcome(f.query,f.expected).qualified,true);assert.equal(assessNativeOutcome(f.query,f.expected).sessionFile,f.query.outcome.sdk.sessionFile);}
+  const f=outcomeFixture();assert.throws(()=>assessNativeOutcome({ok:true},f.expected),{code:'E_REAL_OUTCOME'});
+  assert.deepEqual(outcomeInspectArgs(f.expected.sourceBinding,f.expected.dispatch),['session','inspect','--deployment',f.expected.sourceBinding.deployment,'--resolution',f.expected.sourceBinding.resolution.id,'--home',f.expected.home,'--native-record',f.expected.dispatch.nativeRecordId,'--json']);
+});
+test('unit: helper outcome uses SOURCE plus exact edge, not the dedicated HELPER selector',()=>{
+  const f=outcomeFixture(true),args=outcomeInspectArgs(f.expected.sourceBinding,f.expected.dispatch,true);
+  assert.ok(args.includes(f.expected.sourceBinding.resolution.id));assert.equal(args.includes(f.expected.dispatch.executionBinding.resolution.id),false);assert.ok(args.includes('oats.okf:memory-harvest'));assert.equal(assessNativeOutcome(f.query,f.expected).qualified,true);
+  assert.throws(()=>assessNativeOutcome({...f.query,sourceExecutionBinding:f.query.executionBinding},f.expected),{code:'E_REAL_OUTCOME'});
+  assert.throws(()=>outcomeInspectArgs(f.expected.sourceBinding,{...f.expected.dispatch,nativeRecordId:undefined},true),{code:'E_REAL_OUTCOME'});
+});
+test('unit: nullable/incomplete completion never defaults to zero, while actual failure is not partial success',()=>{
+  const f=outcomeFixture(),change=o=>({...f.query,outcome:{...f.query.outcome,...o}});
+  assert.equal(assessNativeOutcome(change({status:'incomplete',qualified:false,processExitCode:null}),f.expected).qualified,false);
+  assert.equal(assessNativeOutcome(change({status:'incomplete',qualified:false,sdkExitCode:null,sdk:null,finalObserved:false}),f.expected).qualified,false);
+  for(const o of [{status:'failed',qualified:false,processExitCode:7},{qualified:false,sdkExitCode:143}])assert.throws(()=>assessNativeOutcome(change(o),f.expected),{code:'E_REAL_NATIVE_FAILURE'});
+  for(const o of [{processExitCode:null},{sdkExitCode:undefined},{qualified:true,status:'incomplete'},{status:'unknown'}])assert.throws(()=>assessNativeOutcome(change(o),f.expected),{code:'E_REAL_OUTCOME'});
+});
+test('unit: claimed success cannot substitute original dispatch/ref/model/header/session evidence',()=>{
+  const f=outcomeFixture();
+  const mutations=[q=>{q.outcome.authority.home+='/other';},q=>{q.outcome.authority.nativeRecordId='33333333-3333-4333-8333-333333333333';},q=>{q.outcome.authority.incarnationId='other';},q=>{q.outcome.authority.intent.attempt=2;},q=>{q.outcome.authority.executionBinding.resolution.id='foreign';},q=>{q.outcome.authority.target.window='foreign';},q=>{q.outcome.authority.selected.id='other';},q=>{q.outcome.sdk.model.id='other';},q=>{q.outcome.sdk.header.cwd='/foreign';},q=>{q.outcome.sdk.header.version=2;},q=>{q.outcome.sdk.sessionFile='/foreign/session.jsonl';},q=>{q.outcome.sdk.finalAssistant.stopReason='length';},q=>{q.outcome.evidence.process=false;}];
+  for(const mutate of mutations){const q=structuredClone(f.query);mutate(q);assert.throws(()=>assessNativeOutcome(q,f.expected),{code:'E_REAL_OUTCOME'});}
+  assert.equal(assessNativeOutcome(f.query,f.expected).qualified,true,'original attempt stays exact; a later reconciliation counter is not substituted');
+});
+test('unit: qualified outcome must match the actual captured SDK session, not another nonce-bearing thread',()=>{
+  const f=outcomeFixture(),completion=assessNativeOutcome(f.query,f.expected),nonce='unique-task';
+  const session={source:'pi',path:completion.sessionFile,sessionId:completion.sessionId,cwd:f.expected.home,thread:'pi:session:sdk-session'};
+  const capture={home:f.expected.home,complete:true,sessions:[session]},recalls=[{thread:session.thread,value:{turns:[{thread:session.thread,kind:'session',source:'pi',text:[{role:'user',text:nonce},{role:'assistant',text:nonce}]}]}}];
+  assert.equal(verifyTurnEvidence(capture,recalls,{...f.expected,nonce,completion}).realNativeAssistantTurn,true);
+  assert.throws(()=>verifyTurnEvidence(capture,recalls,{...f.expected,nonce,completion:{...completion,sessionId:'foreign'}}),{code:'E_REAL_CAPTURE'});
+  const other={...session,path:f.expected.root+'/other.jsonl',sessionId:'other',thread:'pi:session:other'};capture.sessions.push(other);recalls.push({thread:other.thread,value:{turns:[{thread:other.thread,kind:'session',source:'pi',text:[{role:'user',text:nonce},{role:'assistant',text:nonce}]}]}});recalls[0].value.turns[0].text[1].text='not the expected task';
+  assert.throws(()=>verifyTurnEvidence(capture,recalls,{...f.expected,nonce,completion}),{code:'E_REAL_MODEL_TURN'});
 });
 test('unit: no real opt-in refuses before source import, filesystem or native operations',async()=>{
   await assert.rejects(runRealGate(config()),{code:'E_REAL_OPT_IN'});

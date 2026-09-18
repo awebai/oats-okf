@@ -8,6 +8,7 @@ import {execFileSync,spawnSync} from 'node:child_process';
 import {createHash,randomUUID} from 'node:crypto';
 import {dirname,join,resolve,relative,isAbsolute,sep} from 'node:path';
 import {pathToFileURL} from 'node:url';
+import {isDeepStrictEqual as same} from 'node:util';
 const KEY='oats.okf:memory-harvest';
 function fail(code,message){throw Object.assign(new Error(message),{code});}
 function object(v){return v!==null&&typeof v==='object'&&!Array.isArray(v);}
@@ -115,10 +116,11 @@ export function waitForExit(home,id,timeoutMs){
     try{watcher=fs.watch(home,check);watcher.on('error',finish);timer=setTimeout(()=>finish(Object.assign(new Error('real native print exit was not observed before deadline; preserve home/backend'),{code:'E_GATE_TURN_TIMEOUT'})),timeoutMs);check();}catch(e){finish(e);}
   });
 }
-export function verifyTurnEvidence(capture,recalls,{home,root,nonce}){
+export function verifyTurnEvidence(capture,recalls,{home,root,nonce,completion}){
   if(!object(capture)||capture.home!==home||capture.complete!==true||!Array.isArray(capture.sessions)||!capture.sessions.length)fail('E_REAL_CAPTURE','complete attributed native capture required');
-  const roles=[];
-  for(const s of capture.sessions){
+  const roles=[],sessions=completion?.qualified?capture.sessions.filter(s=>s.path===completion.sessionFile&&s.sessionId===completion.sessionId&&s.cwd===home):capture.sessions;
+  if(completion?.qualified&&sessions.length!==1)fail('E_REAL_CAPTURE','qualified SDK session must correspond to exactly one actual captured session');
+  for(const s of sessions){
     if(s.source!=='pi'||!absolute(s.path)||!within(root,s.path))fail('E_REAL_CAPTURE','native session outside owned Pi history');
     const reply=recalls.find(r=>r.thread===s.thread)?.value;
     if(!reply||!Array.isArray(reply.turns)||!reply.turns.length)fail('E_REAL_CAPTURE','captured thread has no actual recall turns');
@@ -131,12 +133,32 @@ export function verifyTurnEvidence(capture,recalls,{home,root,nonce}){
   return {realNativeUserTurn:true,realNativeAssistantTurn:true,sessionCount:capture.sessions.length,nonce};
 }
 
-export function completionObservationLimits(){
-  // Current owner interface supplies no process exit code or structured final
-  // SDK outcome. A correlated marker and recalled text must not fill those gaps.
+export function outcomeInspectArgs(sourceBinding,dispatch,helper=false){
+  if(!absolute(dispatch?.home)||!/^([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})$/.test(dispatch.nativeRecordId??''))fail('E_REAL_OUTCOME','original dispatch home/native record ID required; no private lookup');
+  return ['session','inspect','--deployment',sourceBinding.deployment,'--resolution',sourceBinding.resolution.id,...(helper?['--helper',KEY]:[]),'--home',dispatch.home,'--native-record',dispatch.nativeRecordId,'--json'];
+}
+export function assessNativeOutcome(query,{home,root,sourceBinding,dispatch,launch,helper=false}){
+  const o=query?.outcome,a=o?.authority,split=launch.model.indexOf('/');
+  const selected={runtime:launch.runtime,provider:launch.model.slice(0,split),id:launch.model.slice(split+1),sdkVersion:launch.args[9]}; // colon/slashes in the opaque ID stay literal
+  if(o?.schemaVersion!==1||o.contract!=='oats.pi-print-completion'||o.nonAuthorizing!==true||!['succeeded','failed','incomplete'].includes(o.status)||typeof o.qualified!=='boolean'||typeof o.finalObserved!=='boolean')fail('E_REAL_OUTCOME','unsupported public completion observation');
+  if(split<1||!a||home!==dispatch.home||a.home!==home||a.nativeRecordId!==dispatch.nativeRecordId||a.incarnationId!==dispatch.incarnationId||!same(a.intent,dispatch.intent)||!same(a.executionBinding,dispatch.executionBinding)||!same(query.executionBinding,dispatch.executionBinding)||!same(a.target,dispatch.target)||!same(a.selected,selected)||!absolute(a.sessionDir)||!within(root,a.sessionDir))fail('E_REAL_OUTCOME','completion does not belong to the original selected dispatch');
+  if(helper?(!same(query.sourceExecutionBinding,sourceBinding)||!same(query.helper,dispatch.helper)):(!same(query.executionBinding,sourceBinding)||Object.hasOwn(query,'helper')||Object.hasOwn(query,'sourceExecutionBinding')))fail('E_REAL_OUTCOME','completion SOURCE/helper edge differs');
+  for(const value of [o.processExitCode,o.sdkExitCode])if(value!==null&&(!Number.isInteger(value)||value<0||value>255))fail('E_REAL_OUTCOME','missing/invalid actual process or SDK status');
+  if(o.status==='failed'||[o.processExitCode,o.sdkExitCode].some(value=>value!==null&&value!==0))fail('E_REAL_NATIVE_FAILURE','native process or SDK execution failed; not partial success');
+  const s=o.sdk,f=s?.finalAssistant;
+  const complete=o.status==='succeeded'&&o.qualified===true&&o.processExitCode===0&&o.sdkExitCode===0&&o.finalObserved===true
+    &&o.evidence?.process===true&&o.evidence.sdk===true&&o.evidence.sessionFile===true
+    &&s?.sdkVersion===selected.sdkVersion&&s.header?.type==='session'&&s.header.version===3&&s.header.cwd===home&&typeof s.sessionId==='string'&&s.sessionId.length>0&&s.header.id===s.sessionId
+    &&absolute(s.sessionFile)&&dirname(s.sessionFile)===a.sessionDir&&s.sessionFile.endsWith('.jsonl')&&same(s.model,{provider:selected.provider,id:selected.id})
+    &&f?.provider===selected.provider&&f.model===selected.id&&f.stopReason==='stop'&&typeof f.entryId==='string'&&f.entryId.length>0;
+  if((o.qualified||o.status==='succeeded')&&!complete)fail('E_REAL_OUTCOME','claimed completion lacks corresponding actual observations');
+  return {qualified:!!complete,status:o.status,nativeRecordId:a.nativeRecordId,processExitCode:o.processExitCode,sdkExitCode:o.sdkExitCode,sessionId:s?.sessionId??null,sessionFile:s?.sessionFile??null};
+}
+export function completionObservationLimits(subjects=[]){
+  if(subjects.length===4&&subjects.every(s=>s.completion?.qualified===true))return [];
   return [
-    {scope:'native host process success',status:'not-observed',reason:'dispatch-ID exit marker has no exit status; no backend outcome observer is implemented'},
-    {scope:'SDK header and successful final assistant outcome',status:'not-established',reason:'attributed recalled nonce text does not independently verify SDK header/final stop reason'}
+    {scope:'native host process success',status:'not-observed',reason:'not all four original dispatches have qualified public outcomes; the ID-only marker has no exit status'},
+    {scope:'SDK header and successful final assistant outcome',status:'not-established',reason:'missing/incomplete public observations cannot supply a final stop reason from recalled nonce text'}
   ];
 }
 
@@ -213,7 +235,12 @@ export async function runRealGate(config,{executeReal=false}={}){
       try{fs.writeFileSync(fd,text);}finally{fs.closeSync(fd);}
     }
     const flags=['--deployment',deployment,'--resolution',prepared.resolution.id];
-    function captureRealTurn(home,nonce,label){
+    function observeCompletion(row,launch,helper,label){
+      const query=call(outcomeInspectArgs(prepared.executionBinding,row.dispatch,helper));
+      put(join(root,label+'-outcome.json'),query); // public bounded nonsecret observation, never private receipt reads
+      row.completion=assessNativeOutcome(query,{home:row.home,root,sourceBinding:prepared.executionBinding,dispatch:row.dispatch,launch,helper});save();
+    }
+    function captureRealTurn(home,nonce,label,completion){
       const captured=call(['capture','--home',home,'--root',env.TURN_RECORD_ROOT,'--quiet'],{native:true}),recalls=[];
       for(const session of captured.sessions||[]){
         const turns=[],pages=[];let after=null;
@@ -227,7 +254,7 @@ export async function runRealGate(config,{executeReal=false}={}){
         if(after!==session.lastTurnId)fail('E_REAL_CAPTURE','bounded record read did not reach captured boundary');
         recalls.push({thread:session.thread,value:{turns},pages});
       }
-      const evidence=verifyTurnEvidence(captured,recalls,{home,root,nonce});
+      const evidence=verifyTurnEvidence(captured,recalls,{home,root,nonce,completion});
       put(join(root,label+'-capture.json'),captured);put(join(root,label+'-turns.json'),recalls);return evidence;
     }
     for(const backend of c.backends){
@@ -246,8 +273,9 @@ export async function runRealGate(config,{executeReal=false}={}){
         if(started.incarnationId!==scaffold.incarnationId||started.executionBinding.resolution.id!==binding.resolution.id||(kind==='helper'&&started.sourceExecutionBinding?.resolution.id!==prepared.resolution.id))fail('E_GATE_CUSTODY','actual dispatch differs from retained source/helper incarnation');
         row.dispatch=started;save();
         stage(backend.backend+':'+kind+':await-actual-print-exit');row.exit=await waitForExit(home,started.intent.executionId,budget());
+        stage(backend.backend+':primary:public-native-completion');observeCompletion(row,c.primaryLaunch,false,backend.backend+'-primary');
         stage(backend.backend+':'+kind+':real-native-capture-recall');
-        row.turn=captureRealTurn(home,nonce,backend.backend+'-primary');
+        row.turn=captureRealTurn(home,nonce,backend.backend+'-primary',row.completion);
         stage(backend.backend+':admitted-automatic-OKF-worker');
         const endpoint=join(root,backend.backend+'-worker-endpoint.json');put(endpoint,{schemaVersion:1,backend});
         const operation=call(['operation','run','knowledge:harvest',...flags,'--home',home,'--arg','native-request='+endpoint,'--arg','worker-mode=launch','--json']);
@@ -257,7 +285,8 @@ export async function runRealGate(config,{executeReal=false}={}){
         if(helperMeta.capabilityMeta?.['oats.okf']?.memory!=='none'||helperMeta.incarnationId!==worker.launch.incarnationId)fail('E_REAL_WORKER','actual helper recursion/incarnation correspondence failed');
         const workerRow={kind:'automatic-worker',home:worker.home,run:worker.run,dispatch:worker.launch};batch.subjects.push(workerRow);save();
         stage(backend.backend+':automatic-worker:actual-print-exit');workerRow.exit=await waitForExit(worker.home,worker.launch.intent.executionId,budget());
-        stage(backend.backend+':automatic-worker:real-turn-and-completion');workerRow.turn=captureRealTurn(worker.home,worker.run,backend.backend+'-automatic-worker');
+        stage(backend.backend+':automatic-worker:public-native-completion');observeCompletion(workerRow,c.helperLaunch,true,backend.backend+'-automatic-worker');
+        stage(backend.backend+':automatic-worker:real-turn-and-completion');workerRow.turn=captureRealTurn(worker.home,worker.run,backend.backend+'-automatic-worker',workerRow.completion);
         const sourceFile=metadata.capabilityMeta['oats.okf'].source,source=json(sourceFile),run=json(join(dirname(sourceFile),'runs',worker.run,'run.json')),status=json(join(dirname(sourceFile),'status.json'));
         if(run.source!==source.id||run.id!==worker.run||run.worker?.home!==worker.home||run.status!=='processed'||!run.judgment||!run.inputs?.length||!run.inputs.every(id=>status.processed.includes(id))||!Object.values(run.receipts||{}).length||!Object.values(run.receipts).every(r=>['accepted','no-change'].includes(r.status)))fail('E_REAL_LEARNING','actual worker judgment/publication receipt did not complete');
         workerRow.learning={actualRun:run.id,processed:true,judgment:run.judgment,receipts:run.receipts,acceptedChange:Object.values(run.receipts).some(r=>r.status==='accepted'),remainingInputs:status.captured.inputs.filter(id=>!status.processed.includes(id)).length};
@@ -276,11 +305,11 @@ export async function runRealGate(config,{executeReal=false}={}){
         save();
       }
     }
-    // Actual worker/judgment/publication evidence is retained, but the current
-    // interface cannot qualify process success or a final SDK outcome. Never
-    // infer exit zero from the ID-only marker, even after nonce-bearing text.
-    result.holds.push(...completionObservationLimits(),{scope:'public captured retirement/recovery/private-provider/interactive/plugin profiles',status:'not-qualified'});
-    result.status='partial-completion-evidence';result.currentStage='real-worker-learning-observed-host-completion-unqualified';save();
+    // Only actual correlated public outcomes plus the preceding genuine capture/
+    // worker/judgment checks can qualify this scoped cycle. Missing stays partial.
+    const missing=completionObservationLimits(result.backends.flatMap(b=>b.subjects));
+    result.holds.push(...missing,{scope:'replay/distinct restart/independent curriculum checks/public retirement/recovery/private-provider/interactive/plugin/scheduled/always-on harvesting',status:'not-qualified'});
+    result.status=missing.length?'partial-completion-evidence':'passed';result.currentStage=missing.length?'real-worker-learning-observed-host-completion-unqualified':'scoped-native-completion-capture-learning-observed';save();
     return result;
   }catch(e){result.status='failed';result.failure={stage:result.currentStage,code:e.code||'E_GATE',message:'real acceptance stage did not complete; preserve all source/home/history/receipts; no automatic retry'};save();throw e;}
   finally{

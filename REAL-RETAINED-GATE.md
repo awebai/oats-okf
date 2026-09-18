@@ -5,8 +5,9 @@ Only the parent may run real models/backends, after reviewing the combined new
 host, strict eligibility, history-witness/capture enforcement and both adapters.
 Developer verification is limited to focused pure/helper and offline payload tests.
 This is NOT the full final ZP1/release gate: exact replay/distinct restart and
-independent assertions of actual selected curriculum/native-model metadata are
-not exercised here. Parent must retain/obtain those separately scoped observations.
+independent selected-curriculum checks remain outside this runner. Parent must
+retain/obtain those separately scoped observations. Native model metadata is now
+compared through the actual public completion observer, not provider-side attestation.
 
 ## Current hard limits — not silently removed
 
@@ -24,11 +25,13 @@ not exercised here. Parent must retain/obtain those separately scoped observatio
   input/run/judgment/transcript. Actual worker model turns and processed judgment/
   directory-publication receipts are REQUIRED. A legitimate no-change judgment
   is reported as such, never called a durable promotion.
-- Current native interface has no structured host-result receipt. Its exit marker
-  carries only dispatch ID, and recalled text does not establish the SDK header/
-  final assistant stop reason. Until an actual reviewed observer supplies those
-  facts, even successful worker/judgment observations end PARTIAL (exit2), never
-  a green host-completion claim. No guessed backend exit zero is substituted.
+- Native completion uses the public read-only `session inspect --native-record`
+  observation for each ORIGINAL dispatch, with SOURCE +exact edge for helpers.
+  Query success is not execution success. Both actual process/SDK exit codes must
+  be zero, with qualified SDK header/session/file/model/final-stop observations
+  matching the original home/incarnation/intent/native ID/binding/target/selection.
+  Missing/incomplete observations remain PARTIAL (exit2); explicit failure or
+  contradictory success fails (exit1). No private receipt read or guessed zero.
 - Public captured retirement/recovery/interactive/plugin/private-provider scope
   is not qualified. Final capture uses the existing exported kernel retire-HOOK
   API after observed print exit; homes, backends, history and receipts are NOT
@@ -139,8 +142,11 @@ map or arbitrary stderr/auth diagnostic is written to reports.
 5. Await the EXISTING native wrapper's exact .oats-start-exited execution ID via
    a bounded filesystem watcher (no sleep/poll loop). The marker carries no exit
    status and alone is NOT successful authentication or model execution proof.
-6. Real public native capture/recall must yield complete attributed Pi history
-   within the owned root and actual user AND assistant nonce-bearing turns.
+6. Query the actual public observer using the dispatch's original nativeRecordId
+   (never an ID found through private paths or a later reconciliation counter).
+   Retain its non-authorizing result in `*-outcome.json`. Real protected capture/
+   recall must still yield user AND assistant nonce-bearing turns; qualified
+   completion must correspond to that exact captured SDK session ID/file/cwd.
    No mocked backend/process/session/transcript path is used by this runner.
 7. The actual automatic worker must finish its own judgment/completion command.
    Verify its run/source/home association, actual captured helper user+assistant
@@ -162,13 +168,16 @@ retry, backend cleanup or source rewrite. No fake ready/model/worker outcome.
   its typed stage/code and preserved
   native evidence. Missing native auth stays a native nonsecret failure for the
   user, not a credential repair opportunity.
-- Exit2 / `partial-completion-evidence`: BOTH backends supplied actual primary
-  and provider-created SOURCE-worker text, genuine run/judgment/directory receipt
-  processing and final capture, but native process success and structured final
-  SDK completion remain unqualified. This runner currently has NO green real-run
-  path until reviewed actual outcome observation is added. A numeric runPrintMode
-  return becoming a process exit code does not make that code observable through
-  the ID-only marker. No-change is not promotion; backlog is reported.
+- Exit2 / `partial-completion-evidence`: real worker/capture/judgment observations
+  exist but one or more of the four public completion observations is incomplete.
+  An ID-only marker or numeric SDK return alone cannot supply process success.
+- Exit0 / `passed`: BOTH actual backends supplied qualified primary AND admitted
+  operation-created SOURCE-worker completion, matching protected session capture/
+  recall and genuine processed judgment/publication receipts. This is only the
+  scoped cycle above, NOT full ZP1/release/privacy/retirement/replay/restart or
+  scheduled/always-on harvesting qualification. No-change is not promotion;
+  backlog and scope omissions remain explicit. The observer does not prove task
+  meaning, domain correctness or cryptographic provider/model attestation.
 - Any non-pass/source-drift/unsupported consumer or host is nonzero; no manual-
   helper-only or seeded-data path can make this version green.
 - No real execution result exists merely because pure unit tests pass. Actual
