@@ -69,8 +69,40 @@ function gitIdentity(root,expected){
   }
   return {commit:expected,tree,trackedEntries:entries.length,allTrackedBytesTypesModesMatch:true};
 }
+export function materializePinnedPayload(repository,commit,destination){
+  if(!/^[0-9a-f]{40}$/.test(commit)||fs.lstatSync(destination,{throwIfNoEntry:false}))fail('E_GATE_SOURCE','exact commit and new payload destination required');
+  const git=(...args)=>execFileSync('git',['--no-replace-objects','-C',repository,...args],{env:{...process.env,GIT_OPTIONAL_LOCKS:'0'},maxBuffer:32*1024*1024});
+  const tree=git('rev-parse',commit+':oats-package').toString('utf8').trim();
+  const entries=git('ls-tree','-rz',tree).toString('utf8').split('\0').filter(Boolean).map(entry=>{
+    const at=entry.indexOf('\t'),[mode,type,oid]=entry.slice(0,at).split(' '),name=entry.slice(at+1);
+    if(type!=='blob'||!['100644','100755','120000'].includes(mode)||!name||isAbsolute(name)||name.split('/').some(p=>!p||p==='.'||p==='..')||!within(destination,join(destination,name)))fail('E_GATE_SOURCE','unsupported pinned payload entry');
+    return {mode,oid,name};
+  });
+  if(!entries.length)fail('E_GATE_SOURCE','empty pinned payload');
+  fs.mkdirSync(destination,{recursive:true,mode:0o700});
+  const expected=new Set();
+  for(const {mode,oid,name} of entries){
+    expected.add(name);for(let dir=dirname(name);dir!=='.';dir=dirname(dir))expected.add(dir+'/');
+    const path=join(destination,name),bytes=git('cat-file','blob',oid);fs.mkdirSync(dirname(path),{recursive:true,mode:0o700});
+    if(mode==='120000')fs.symlinkSync(bytes,path);
+    else {fs.writeFileSync(path,bytes,{flag:'wx',mode:0o600});fs.chmodSync(path,mode==='100755'?0o755:0o644);}
+  }
+  // Verify the materialized inventory, raw blob bytes, symlinks and executable
+  // modes against the PINNED tree before Git add / preparation / approval.
+  const actual=[];
+  const walk=dir=>{for(const name of fs.readdirSync(join(destination,dir))){const key=dir?dir+'/'+name:name,path=join(destination,key),s=fs.lstatSync(path);if(s.isDirectory()){actual.push(key+'/');walk(key);}else actual.push(key);}};
+  walk('');if(JSON.stringify(actual.sort())!==JSON.stringify([...expected].sort()))fail('E_GATE_SOURCE','materialized payload inventory differs');
+  for(const {mode,oid,name} of entries){
+    const path=join(destination,name),s=fs.lstatSync(path);
+    if(mode==='120000'?!s.isSymbolicLink():!s.isFile()||!!(s.mode&0o111)!==(mode==='100755'))fail('E_GATE_SOURCE','materialized payload type/mode differs');
+    const bytes=mode==='120000'?fs.readlinkSync(path,{encoding:'buffer'}):readRegular(path,32*1024*1024);
+    if(createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex')!==oid)fail('E_GATE_SOURCE','materialized payload bytes differ');
+  }
+  return {commit,subtree:'oats-package',tree,trackedEntries:entries.length,exactMaterializedInventoryBytesTypesModes:true};
+}
+export function gateExitCode(status){return status==='passed'?0:status==='partial-completion-evidence'?2:1;}
 export function nativeGateEnvironment(inherited,root){
-  const env={...inherited};for(const key of Object.keys(env))if(/^(OATS_|OAS_)/.test(key))delete env[key];
+  const env={...inherited};for(const key of Object.keys(env))if(/^(OATS_|OAS_|PI_AGENT_)/.test(key)||key==='PI_AGENTS_ROOT')delete env[key];
   return {...env,OATS_HOME_DIR:join(root,'oats-state'),TURN_RECORD_ROOT:join(root,'record-store')};
 }
 export function waitForExit(home,id,timeoutMs){
@@ -145,7 +177,8 @@ export async function runRealGate(config,{executeReal=false}={}){
     put(join(repo,'agents/gate/soul.yaml'),{schemaVersion:1,name:'gate',work:'directory',runtime:'pi',requires:{knowledge:{capability:'oats.okf',source:'repo:packages/okf',settings}},knowledge:{contract:'oats.okf.locations',version:1,payload:{owner:'gate-owner',stores:{private:{fixed:{id:'gate-kb',kind:'directory',path:'path:'+join(root,'accepted')}}},reads:[],owns:[{node:'gate',destination:'private'}]}}});
     put(join(repo,'agents/gate/AGENTS.md'),'# Retained real acceptance source\nPerform only the controlled acceptance task. Do not inspect credentials, auth/profile files or environment; native harness authentication is user-managed. Never write accepted knowledge directly.\n');
     fs.symlinkSync('AGENTS.md',join(repo,'agents/gate/CLAUDE.md'));
-    fs.cpSync(join(c.providerRoot,'oats-package'),join(repo,'packages/okf'),{recursive:true,verbatimSymlinks:true});
+    const payload=materializePinnedPayload(c.providerRoot,c.providerCommit,join(repo,'packages/okf'));
+    put(join(root,'provider-payload.json'),payload);
     const gitConfig=join(root,'gitconfig');put(gitConfig,'');
     const gitEnv=Object.fromEntries(Object.entries(env).filter(([key])=>!key.startsWith('GIT_')));
     Object.assign(gitEnv,{GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:gitConfig,GIT_CONFIG_SYSTEM:'/dev/null',GIT_TERMINAL_PROMPT:'0',GIT_ALLOW_PROTOCOL:'file'});
@@ -262,6 +295,6 @@ if(process.argv[1]&&import.meta.url===pathToFileURL(resolve(process.argv[1])).hr
     const [mode,file,...extra]=process.argv.slice(2);if(extra.length||!['--check-config','--execute-real'].includes(mode)||!absolute(file))fail('E_GATE_USAGE','use --check-config ABS_JSON or PARENT ONLY --execute-real ABS_JSON');
     const config=validateConfig(json(file));
     if(mode==='--check-config')console.log(JSON.stringify({ok:true,kind:'configuration-shape-only',nativeExecution:false}));
-    else {const result=await runRealGate(config,{executeReal:true});console.log(JSON.stringify({status:result.status,resultFile:join(config.outputRoot,'result.json'),holds:result.holds}));process.exitCode=result.status==='passed'?0:2;}
+    else {const result=await runRealGate(config,{executeReal:true});console.log(JSON.stringify({status:result.status,resultFile:join(config.outputRoot,'result.json'),holds:result.holds}));process.exitCode=gateExitCode(result.status);}
   }catch(e){console.error(JSON.stringify({ok:false,code:e.code||'E_GATE',message:'acceptance refused/failed; inspect retained nonsecret evidence; no automatic retry or credential action'}));process.exitCode=1;}
 }

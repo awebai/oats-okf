@@ -3,7 +3,10 @@
 **Executable acceptance code, not a success claim or production launcher.**
 Only the parent may run real models/backends, after reviewing the combined new
 host, strict eligibility, history-witness/capture enforcement and both adapters.
-Developer verification is limited to the new pure/helper unit tests.
+Developer verification is limited to focused pure/helper and offline payload tests.
+This is NOT the full final ZP1/release gate: exact replay/distinct restart and
+independent assertions of actual selected curriculum/native-model metadata are
+not exercised here. Parent must retain/obtain those separately scoped observations.
 
 ## Current hard limits — not silently removed
 
@@ -48,10 +51,17 @@ node scripts/real-retained-gate.mjs --execute-real /absolute/real-gate.json
 
 Both framework and provider source roots must be physical, clean Git checkouts
 at the exact supplied commits, with all tracked bytes/link/execute modes verified
-before/after. The output is a NEW physical non-Git owned directory, disjoint from
+before/after. Provider payload is materialized ONLY from the exact committed
+`oats-package` Git tree, using raw blobs (no working-tree copy, smudge filters or
+archive attribute transformations). Its full inventory/bytes/symlinks/executable
+modes are verified against that tree before preparation/approval; ignored and
+untracked additions cannot enter the approved package. `provider-payload.json`
+records that identity. The output is a NEW physical non-Git owned directory, disjoint from
 source/provider/SDK roots. Existing dependencies/SDK are used; no install occurs.
-Do not run concurrently with source edits. Parent keeps the reviewed script bytes
-and this exact input in its execution-control evidence.
+Do not run concurrently with source edits. Parent externally hash-admits the
+reviewed runner and privately freezes it before execution, retaining that receipt
+and exact input/endpoints. A self-calculated hash of arbitrary mutable script
+bytes is NOT review authority.
 
 Example values below are placeholders, not authorization to choose credentials,
 a model, a different native profile or an unowned backend. The operator supplies
@@ -104,7 +114,9 @@ API-key/provider allowlist, secret inspection/copy/login or no-refresh substitut
 Empty `launch.env` is the first host slice's lack of OATS-managed contributions;
 it is NOT an empty process environment or empty credential store.
 
-Only caller OATS/OAS selectors are scrubbed; an owned OATS data scope and private
+Caller OATS/OAS selectors and legacy OATS-owned PI_AGENT_* / PI_AGENTS_ROOT
+aliases are scrubbed; PI_AGENT_HOME is an instance selector, NOT the native Pi
+profile. Real native PI_CODING_AGENT_DIR and HOME remain unchanged. An owned OATS data scope and private
 TURN_RECORD_ROOT isolate operational/journal state, not harness authentication.
 Source Git preparation alone uses private Git config and file-only transport;
 real native execution retains its ordinary Git/auth environment. No environment
@@ -145,7 +157,9 @@ retry, backend cleanup or source rewrite. No fake ready/model/worker outcome.
 
 ## Result interpretation
 
-- Exit1: a real stage refused/failed; inspect its typed stage/code and preserved
+- Exit1: a real stage refused/failed, source drift occurred, or a returned status
+  is unknown. Failure is NEVER classified as the partial-positive exit2; inspect
+  its typed stage/code and preserved
   native evidence. Missing native auth stays a native nonsecret failure for the
   user, not a credential repair opportunity.
 - Exit2 / `partial-completion-evidence`: BOTH backends supplied actual primary
