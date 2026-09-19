@@ -81,17 +81,20 @@ native recovery are explicitly unsupported in this smallest slice. A known
 failed operation's kernel --retry-intent does not itself authorize recreating
 an uncertain child. No new provider broker/store/admission/identity system.
 
-## Required publication metadata — parent-owned
+## Coordinated release metadata — publication remains parent-owned
 
-The new consumer requires the first-cut kernel **>=0.24.0**, INCLUDING the public
-helper launchSelection tuple, current admitted operation/paired input contract,
-actual captured native host/backends and complete record-witness guards. API2
-alone is insufficient. Version0.24.0 is planned, not an invented published tag.
-Before publication the parent must coordinate compatibility floor updates in
-`oats-package/oats-package.json` and `oats-package/capabilities/oats-okf/oats.json`
-(currently >=0.23.0). Current package version2.0.0 is unchanged; final package
-version, framework/catalog/mirror/registry delivery are parent's decisions.
-Do not advertise the new path as supported by existing0.23.x installations.
+The provider release candidate is **2.1.0**, requiring kernel **>=0.24.0** in
+both distribution and capability manifests. This is an additive v2-family
+release; wire, payload and record protocol versions are unchanged. The kernel
+must include public helper launchSelection, current admitted operation/paired
+inputs, actual captured host/backends and complete record-witness guards.
+API2 availability alone is insufficient; 0.23.x is not a supported pairing.
+
+These version values are chosen release targets, not evidence of published tags,
+installed verification or deployment. Parent owns publication order and exact
+framework/provider artifacts, mirror/catalog/inventory checks and release gates.
+This metadata-only successor does not change production JS or qualify raw,
+scheduled or always-on captured harvesting beyond the admitted operation above.
 
 ## Evidence limits
 

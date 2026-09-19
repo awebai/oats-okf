@@ -137,7 +137,10 @@ test('exported payload version, floor, required hooks and complete command inven
   for(const obsolete of ['oats.json','bin','agents','skills','injects']) assert.equal(fs.existsSync(join(ROOT,'oats-package',obsolete)),false,`obsolete unenumerated root payload: ${obsolete}`);
   assert.ok(fs.statSync(join(ROOT,'oats-package/LICENSE')).isFile());
   assert.equal(fs.readlinkSync(join(CAP,'agents/memory-harvest/CLAUDE.md')),'AGENTS.md','source compatibility alias preserves one canonical instruction file');
-  const m=readJSON(join(CAP,'oats.json'));assert.equal(m.version,'2.0.0');assert.equal(m.compatibility.oats,'>=0.23.0');assert.equal(m.hooks.spawn.required,true);
+  const m=readJSON(join(CAP,'oats.json')),distribution=readJSON(join(ROOT,'oats-package/oats-package.json'));
+  for(const manifest of [readJSON(join(ROOT,'package.json')),distribution,m])assert.equal(manifest.version,'2.1.0');
+  for(const manifest of [distribution,m])assert.equal(manifest.compatibility.oats,'>=0.24.0');
+  assert.equal(m.hooks.spawn.required,true);
   for(const c of ['harvest','inspect','setup','run-source','complete','retry','migrate','read','refresh','init']) assert.ok(m.commands[c]);
   const inj=fs.readFileSync(join(CAP,m.inject),'utf8');assert.doesNotMatch(inj,/harvest/i);assert.match(inj,/after compaction/);
   const skill=fs.readFileSync(join(CAP,'skills/memory-harvest/SKILL.md'),'utf8');assert.ok(skill.indexOf('### 3.2 The accept list')<skill.indexOf('## Independent input'));assert.match(skill,/Could it NOT have found this by reading the repository/);

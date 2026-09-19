@@ -1,7 +1,9 @@
 # oats.okf 2 — external knowledge, independent judgment
 
-The official OKF knowledge capability for **OATS >=0.23.0**. This is a breaking
-runtime change from soul-contained v1 knowledge. All knowledge lives in external
+The official OKF knowledge capability: **2.1.0**, requiring **OATS >=0.24.0**.
+This is an additive release in the v2 family; wire, payload and record protocol
+versions are unchanged. The v2 runtime is a breaking change from soul-contained
+v1 knowledge. All knowledge lives in external
 bases. Skills remain curated soul artifacts; v2 never automatically edits them.
 Procedure candidates may become external Playbook concepts.
 
@@ -10,8 +12,10 @@ Procedure candidates may become external Playbook concepts.
 `bin/`, `agents/`, `skills/` and `injects/` copies have been removed; they are not
 an alternative runtime. The distribution retains its manifest and LICENSE, and
 the capability is self-contained, including both runtime skills, worker soul,
-injections, validator and schemas. This remains the **2.0.0 pre-tag candidate**,
-not a published patch release.
+injections, validator and schemas. These are **2.1.0 release-candidate metadata**,
+not a claim that a tag was published or deployment/installed acceptance passed.
+Historical verification notes retain their original checkpoint versions; current
+compatibility is declared by the manifests and this guide.
 
 ## Configuration and ownership
 
@@ -95,13 +99,12 @@ receipt envelopes remain kernel contracts. Runtime also
 checks filesystem containment, identities, overlap, base metadata and complete
 OKF conformance; schema validation alone cannot establish these properties.
 
-## Portable source bindings (planned OATS >=0.24.0, unreleased)
+## Portable source bindings (2.1.0; OATS >=0.24.0)
 
-The repository contains the provider side of the next portable binding flow, but
-the published package baseline remains OATS 0.23.x. The coordinated framework
-and provider release will require **OATS >=0.24.0**. Until that release, keep
-using the legacy v2 configuration and migration procedures below; do not copy
-internal codec commands into an older installation.
+The coordinated first-cut target is OKF **2.1.0** with OATS **0.24.0** or later.
+Metadata is not runtime or publication proof, and this candidate does not claim
+compatibility with 0.23.x. Do not copy internal codec commands into an older
+installation. Final installed verification must use the actual release pair.
 
 A portable soul owns its knowledge declaration, not the deployment's concrete
 credentials or mutable readiness. Its decoded `knowledge` value uses
@@ -206,11 +209,13 @@ New captured persistent sources receive a schedule with
 `definitionVersion: 2`, `recurrencePolicy: "capture"`, explicit saved
 `--deployment`/`--resolution` selectors and `--json`. It omits legacy `--soul`
 selection. Read, refresh, inspect and existing-run completion use the exact frozen
-descriptor after source/config deletion. **Captured worker launch is gated:**
-run-source/harvest and worker-creating/relaunch/rejudge retry paths refuse until a
-qualified generic captured-helper API can carry retained helper/software authority.
-They never fall back to live `memory-harvest` selection, including --no-launch.
-The data-custody tests alone are not captured helper-dispatch qualification.
+descriptor after source/config deletion. **First-cut captured worker creation is
+operation-only:** a current admitted persistent-instance `knowledge:harvest`
+operation with an explicit backend request may create and launch its retained
+worker. See [the exact entrypoint and limits](CAPTURED-WORKER-STATUS.md).
+Raw/null-intent harvest/run-source, schedules, always-on lifecycle harvesting,
+relaunch/rejudge/adoption/recovery remain held. No live helper-selection fallback
+or broader qualification follows from API availability or data-custody tests.
 Captured `setup`, `init`, `migrate` and
 `unlock` deliberately return non-ready/refuse before mutation; run those only as
 separate explicit operator administration on the legacy/provisioning boundary.
@@ -648,11 +653,11 @@ as v2 processing proof**; replay can yield merge/drop judgments instead of loss.
 
 ```sh
 npm test
-# Full suite plus all three optional probes against an actual >=0.23.0 CLI:
+# Full suite plus all three optional probes against an actual >=0.24.0 CLI:
 OATS_OKF_CONSUMER_CLI=/absolute/oats/bin/oats.mjs npm test
 # Native capture/recall transport (60 x 350kB), plus idempotent scheduler probe:
 OATS_OKF_NATIVE_CLI=/absolute/oats/bin/oats.mjs node --test --test-name-pattern='R1 actual native' test/oats-okf.test.mjs
-# Full standalone suite with both public-boundary probes (source OATS >=0.23.0):
+# Full standalone suite with both public-boundary probes (source OATS >=0.24.0):
 OATS_OKF_CONSUMER_CLI=/absolute/oats/bin/oats.mjs OATS_OKF_NATIVE_CLI=/absolute/oats/bin/oats.mjs npm test
 ```
 
