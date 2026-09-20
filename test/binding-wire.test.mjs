@@ -16,6 +16,7 @@ import { tree } from '../oats-package/capabilities/oats-okf/lib/io.mjs';
 
 const ROOT=fileURLToPath(new URL('../',import.meta.url));
 const CLI=join(ROOT,'oats-package/capabilities/oats-okf/bin/oats-okf-binding.mjs');
+const declaredReasons=new Set(JSON.parse(fs.readFileSync(join(ROOT,'oats-package/capabilities/oats-okf/oats.json'))).binding.reasons);
 const contract='oats.okf.locations';
 const origin=(kind,pointer)=>({kind,document:{kind:'source',source:'git:https://example.test/source.git',revision:'a'.repeat(40),path:'soul.yaml',integrity:{format:'oats.bytes.v1',value:`sha256-${'b'.repeat(64)}`}},pointer});
 const locator=(id,path)=>({id,kind:'directory',path:`path:${path}`});
@@ -24,7 +25,9 @@ const call=(phase,request,env={})=>{
   const bytes=Buffer.isBuffer(request)?request:typeof request==='string'?request:JSON.stringify(request);
   const result=spawnSync(process.execPath,[CLI,phase],{input:bytes,encoding:Buffer.isBuffer(bytes)?undefined:'utf8',maxBuffer:2*1024*1024,env:{...process.env,...env}});
   const stdout=Buffer.isBuffer(result.stdout)?result.stdout.toString('utf8'):result.stdout;
-  return {...result,stdout,response:JSON.parse(stdout)};
+  const response=JSON.parse(stdout);
+  for(const message of [response.error?.message,...(response.result?.problems??[]).map(p=>p.message)].filter(v=>v!==undefined))assert.ok(declaredReasons.has(message),'emitted fixed reason must be declared byte-exactly');
+  return {...result,stdout,response};
 };
 const request=(phase,settings,input)=>({schemaVersion:1,phase,slot:'knowledge',capability:'oats.okf',settings,input});
 function selected(value,selectedBy) {return {value,selectedBy,constraints:[],considered:[{kind:selectedBy.kind,value,origin:selectedBy,disposition:'selected'}]};}
@@ -324,7 +327,9 @@ test('check diagnoses bound runtime constraints without using mutable settings o
 
 test('manifest owns all three binding phase commands',()=>{
   const manifest=JSON.parse(fs.readFileSync(join(ROOT,'oats-package/capabilities/oats-okf/oats.json'),'utf8'));
-  assert.deepEqual(manifest.binding,{version:1,normalize:'binding-normalize',bind:'binding-bind',check:'binding-check'});
+  const {reasons,...phases}=manifest.binding;
+  assert.deepEqual(phases,{version:1,normalize:'binding-normalize',bind:'binding-bind',check:'binding-check'});
+  assert.equal(reasons.length,7);assert.equal(new Set(reasons).size,7);assert.ok(reasons.every(reason=>typeof reason==='string'&&reason.length>0));
   for(const name of Object.values(manifest.binding).filter(value=>typeof value==='string')) assert.ok(Object.hasOwn(manifest.commands,name));
   assert.equal(manifest.settings['state-dir'].default,undefined);
 });

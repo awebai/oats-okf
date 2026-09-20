@@ -41,8 +41,12 @@ native-default intent at this codec boundary. The equivalent check validates the
 RETAINED bound runtime, not mutable request settings, before store access.
 Unrelated malformed envelopes and general errors remain code-only. This changes
 no wire/payload schema, selected-model/helper rule, readiness gate or remote
-validation policy. A kernel renderer may still suppress provider message text;
-provider emission alone does not establish CLI display, installation or readiness.
+validation policy. The manifest declares all seven strings in `binding.reasons`
+for a reasons-capable kernel's byte-exact allowlist; unlisted text still must not
+cross that boundary. Older closed binding-interface readers reject this new
+metadata, so it must be paired with the reasons-capable kernel release (the
+planned 0.24.4 wave), not inferred from the unchanged underlying runtime floor.
+Provider emission alone does not establish CLI display, installation or readiness.
 
 The **absolute** bindings document is capability-owned JSON:
 
