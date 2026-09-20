@@ -3,7 +3,7 @@
   "command": "okf",
   "version": "2.1.2",
   "compatibility": {
-    "oats": ">=0.24.0"
+    "oats": ">=0.24.4"
   },
   "layer": "knowledge",
   "description": "External OKF bases with owned nodes, immutable reader views, durable per-source evidence, independent workers, verified Git PR and recoverable non-Git directory delivery.",

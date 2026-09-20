@@ -1,6 +1,6 @@
 # oats.okf 2 — external knowledge, independent judgment
 
-The official OKF knowledge capability: **2.1.2**, requiring **OATS >=0.24.0**.
+The official OKF knowledge capability: **2.1.2**, requiring **OATS >=0.24.4**.
 This is an additive release in the v2 family; wire, payload and record protocol
 versions are unchanged. The v2 runtime is a breaking change from soul-contained
 v1 knowledge. All knowledge lives in external
@@ -44,8 +44,8 @@ no wire/payload schema, selected-model/helper rule, readiness gate or remote
 validation policy. The manifest declares all seven strings in `binding.reasons`
 for a reasons-capable kernel's byte-exact allowlist; unlisted text still must not
 cross that boundary. Older closed binding-interface readers reject this new
-metadata, so it must be paired with the reasons-capable kernel release (the
-planned 0.24.4 wave), not inferred from the unchanged underlying runtime floor.
+metadata, so both package and capability require OATS >=0.24.4. Release and
+upgrade the compatible kernel before selecting this provider release.
 Provider emission alone does not establish CLI display, installation or readiness.
 
 The **absolute** bindings document is capability-owned JSON:
@@ -679,11 +679,11 @@ as v2 processing proof**; replay can yield merge/drop judgments instead of loss.
 
 ```sh
 npm test
-# Full suite plus all three optional probes against an actual >=0.24.0 CLI:
+# Full suite plus all three optional probes against an actual >=0.24.4 CLI:
 OATS_OKF_CONSUMER_CLI=/absolute/oats/bin/oats.mjs npm test
 # Native capture/recall transport (60 x 350kB), plus idempotent scheduler probe:
 OATS_OKF_NATIVE_CLI=/absolute/oats/bin/oats.mjs node --test --test-name-pattern='R1 actual native' test/oats-okf.test.mjs
-# Full standalone suite with both public-boundary probes (source OATS >=0.24.0):
+# Full standalone suite with both public-boundary probes (source OATS >=0.24.4):
 OATS_OKF_CONSUMER_CLI=/absolute/oats/bin/oats.mjs OATS_OKF_NATIVE_CLI=/absolute/oats/bin/oats.mjs npm test
 ```
 
