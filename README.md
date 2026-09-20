@@ -1,6 +1,6 @@
 # oats.okf 2 — external knowledge, independent judgment
 
-The official OKF knowledge capability: **2.1.1**, requiring **OATS >=0.24.0**.
+The official OKF knowledge capability: **2.1.2**, requiring **OATS >=0.24.4**.
 This is an additive release in the v2 family; wire, payload and record protocol
 versions are unchanged. The v2 runtime is a breaking change from soul-contained
 v1 knowledge. All knowledge lives in external
@@ -12,8 +12,8 @@ Procedure candidates may become external Playbook concepts.
 `bin/`, `agents/`, `skills/` and `injects/` copies have been removed; they are not
 an alternative runtime. The distribution retains its manifest and LICENSE, and
 the capability is self-contained, including both runtime skills, worker soul,
-injections, validator and schemas. These are **2.1.0 release-candidate metadata**,
-not a claim that a tag was published or deployment/installed acceptance passed.
+injections, validator and schemas. Source version metadata is not a claim that
+a tag was published or deployment/installed acceptance passed.
 Historical verification notes retain their original checkpoint versions; current
 compatibility is declared by the manifests and this guide.
 
@@ -31,6 +31,22 @@ Portable provider-binding preparation additionally requires an explicit
 `state-dir` setting alongside `bindings-file`. Both are captured as host-owned
 absolute locations; the codec does not derive state from an instance home or
 reread the bindings file during normalize/bind.
+
+The **2.1.2 diagnostic correction** names a missing/invalid runtime setting in
+existing wire `error: {code: "needs-configuration", message: "..."}`. Only fixed
+setting names and constraints are emitted, never supplied values, paths, aliases,
+unknown keys or raw exception text. It covers `bindings-file`, `state-dir`,
+`harvest-runtime` and an invalid `harvest-model`; null/omitted model remains valid
+native-default intent at this codec boundary. The equivalent check validates the
+RETAINED bound runtime, not mutable request settings, before store access.
+Unrelated malformed envelopes and general errors remain code-only. This changes
+no wire/payload schema, selected-model/helper rule, readiness gate or remote
+validation policy. The manifest declares all seven strings in `binding.reasons`
+for a reasons-capable kernel's byte-exact allowlist; unlisted text still must not
+cross that boundary. Older closed binding-interface readers reject this new
+metadata, so both package and capability require OATS >=0.24.4. Release and
+upgrade the compatible kernel before selecting this provider release.
+Provider emission alone does not establish CLI display, installation or readiness.
 
 The **absolute** bindings document is capability-owned JSON:
 
@@ -152,6 +168,16 @@ Workspace, import-adoption and operator values remain separate candidates. OKF
 does not choose precedence; it emits requirements/candidates under
 `/bindings/knowledge/...` for the kernel's single resolver. Other providers own
 their own payloads—the kernel does not impose the OKF store/node model on them.
+
+In 2.1.2, normalization first derives the knowledge-owned binding addresses from
+that source's fixed/default/inherited stores and required write destinations.
+Only matching entries in workspace/adoption/operator maps are parsed as OKF
+locators. Sibling aweb human/team/consent entries and undeclared store addresses
+are ignored by OKF, not removed from the shared request or weakened for their
+own provider. Dotted aliases, declared custom inheritance and implicit
+`write.default` remain supported; malformed OWN values still fail and missing
+required fields remain resolver requirements. Declaration order does not change
+ownership, precedence or provenance; there is still one kernel resolver.
 
 Portable preparation selects explicit capability settings:
 
@@ -653,11 +679,11 @@ as v2 processing proof**; replay can yield merge/drop judgments instead of loss.
 
 ```sh
 npm test
-# Full suite plus all three optional probes against an actual >=0.24.0 CLI:
+# Full suite plus all three optional probes against an actual >=0.24.4 CLI:
 OATS_OKF_CONSUMER_CLI=/absolute/oats/bin/oats.mjs npm test
 # Native capture/recall transport (60 x 350kB), plus idempotent scheduler probe:
 OATS_OKF_NATIVE_CLI=/absolute/oats/bin/oats.mjs node --test --test-name-pattern='R1 actual native' test/oats-okf.test.mjs
-# Full standalone suite with both public-boundary probes (source OATS >=0.24.0):
+# Full standalone suite with both public-boundary probes (source OATS >=0.24.4):
 OATS_OKF_CONSUMER_CLI=/absolute/oats/bin/oats.mjs OATS_OKF_NATIVE_CLI=/absolute/oats/bin/oats.mjs npm test
 ```
 

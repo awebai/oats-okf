@@ -16,6 +16,7 @@ import { tree } from '../oats-package/capabilities/oats-okf/lib/io.mjs';
 
 const ROOT=fileURLToPath(new URL('../',import.meta.url));
 const CLI=join(ROOT,'oats-package/capabilities/oats-okf/bin/oats-okf-binding.mjs');
+const declaredReasons=new Set(JSON.parse(fs.readFileSync(join(ROOT,'oats-package/capabilities/oats-okf/oats.json'))).binding.reasons);
 const contract='oats.okf.locations';
 const origin=(kind,pointer)=>({kind,document:{kind:'source',source:'git:https://example.test/source.git',revision:'a'.repeat(40),path:'soul.yaml',integrity:{format:'oats.bytes.v1',value:`sha256-${'b'.repeat(64)}`}},pointer});
 const locator=(id,path)=>({id,kind:'directory',path:`path:${path}`});
@@ -24,7 +25,9 @@ const call=(phase,request,env={})=>{
   const bytes=Buffer.isBuffer(request)?request:typeof request==='string'?request:JSON.stringify(request);
   const result=spawnSync(process.execPath,[CLI,phase],{input:bytes,encoding:Buffer.isBuffer(bytes)?undefined:'utf8',maxBuffer:2*1024*1024,env:{...process.env,...env}});
   const stdout=Buffer.isBuffer(result.stdout)?result.stdout.toString('utf8'):result.stdout;
-  return {...result,stdout,response:JSON.parse(stdout)};
+  const response=JSON.parse(stdout);
+  for(const message of [response.error?.message,...(response.result?.problems??[]).map(p=>p.message)].filter(v=>v!==undefined))assert.ok(declaredReasons.has(message),'emitted fixed reason must be declared byte-exactly');
+  return {...result,stdout,response};
 };
 const request=(phase,settings,input)=>({schemaVersion:1,phase,slot:'knowledge',capability:'oats.okf',settings,input});
 function selected(value,selectedBy) {return {value,selectedBy,constraints:[],considered:[{kind:selectedBy.kind,value,origin:selectedBy,disposition:'selected'}]};}
@@ -214,9 +217,122 @@ test('check accepts optional full-subject invocation without changing scope chec
   }
 });
 
+test('shared binding maps keep only declared OKF addresses and ignore aweb siblings without effects or leaks',t=>{
+  const f=fixture(t),preload=noEffectsPreload(f.root),before=inventory(f.root),env={TMPDIR:f.root,NODE_OPTIONS:`--import=${JSON.stringify(preload)}`};
+  const store={id:'private-base',kind:'git',repository:'https://example.invalid/knowledge.git',root:'.',acceptedBranch:'main',pr:{repository:'example/knowledge'}};
+  for(const name of ['stores.oats','stores.team.kb','write.default','custom.location']){
+    const soul={kind:'soul',value:{knowledge:{contract,version:1,payload:{owner:'expert-owner',stores:{oats:{inherit:name}},reads:[],owns:[{node:'expert',destination:'oats'}]}}},origin:f.soulOrigin,origins:{}};
+    const operator={kind:'operator',value:{bindings:{[name]:store}},origin:f.operatorOrigin,origins:{}};
+    const base=request('normalize',f.settings,{declarations:[soul,operator],context:{kind:'standalone',key:'fixture'}}),control=call('normalize',base,env);
+    assert.equal(control.response.ok,true);const key=bindingChoiceKey(name);
+    const siblings={responsibleHuman:{provider:'oats.aweb',id:'SIBLING_PRIVATE_HUMAN'},privateTeam:{provider:'oats.aweb',id:'SIBLING_PRIVATE_TEAM:example.invalid'},wider:[],
+      'stores.unrequested':'SIBLING_PRIVATE_NOT_A_LOCATOR','aweb/private~field':{opaque:'SIBLING_PRIVATE_VALUE'}};
+    const shared=structuredClone(operator);Object.assign(shared.value.bindings,siblings);
+    for(const declarations of [[soul,shared],[shared,soul]]){
+      const result=call('normalize',{...base,input:{...base.input,declarations}},env);
+      assert.equal(result.status,0,result.stderr);assert.equal(result.response.ok,true,result.stdout);assert.deepEqual(result.response.result,control.response.result);
+      assert.deepEqual(result.response.result.candidates.map(c=>c.key),[key]);assert.doesNotMatch(result.stdout+result.stderr,/SIBLING_PRIVATE|responsibleHuman|privateTeam|stores\.unrequested/);
+      // One explicitly selected unit choice, not a provider-owned resolver.
+      const candidate=result.response.result.candidates[0],choices={[key]:selected(candidate.value,candidate.origin)};
+      const bound=call('bind',request('bind',{}, {model:result.response.result.model,choices,context:base.input.context}),env);
+      assert.equal(bound.response.ok,true,bound.stdout);assert.deepEqual(bound.response.result.payload.stores,{'private-base':store});assert.equal(bound.response.result.payload.owns[0].store,'private-base');
+      assert.doesNotMatch(bound.stdout+bound.stderr,/SIBLING_PRIVATE|responsibleHuman|privateTeam|stores\.unrequested/);assert.deepEqual(inventory(f.root),before);
+    }
+    const bad=structuredClone(shared);bad.value.bindings[name]={...store,repository:'https://example.invalid/knowledge.git?token=OWN_PRIVATE_VALUE'};
+    const refused=call('normalize',{...base,input:{...base.input,declarations:[soul,bad]}},env);assert.deepEqual(refused.response.error,{code:'invalid-binding'});assert.doesNotMatch(refused.stdout+refused.stderr,/OWN_PRIVATE|SIBLING_PRIVATE/);
+    const absent=structuredClone(shared);delete absent.value.bindings[name];
+    const missing=call('normalize',{...base,input:{...base.input,declarations:[soul,absent]}},env);assert.equal(missing.response.ok,true);assert.ok(missing.response.result.requirements.some(r=>r.key===key&&r.kind==='required'));
+    assert.deepEqual(call('bind',request('bind',{}, {model:missing.response.result.model,choices:{},context:base.input.context}),env).response.error,{code:'needs-configuration'});
+  }
+  assert.deepEqual(inventory(f.root),before);
+});
+
+test('owned default/fixed/implicit-write candidates retain their provenance while unused shared values are excluded',t=>{
+  const f=fixture(t),preload=noEffectsPreload(f.root),before=inventory(f.root),env={TMPDIR:f.root,NODE_OPTIONS:`--import=${JSON.stringify(preload)}`};
+  const declarations=structuredClone(f.declarations),soul=declarations[0].value.knowledge.payload;
+  // write.default is required by omitted ownership destination, not a stores.*
+  // prefix. A declared default and fixed store also own their candidate addresses.
+  delete soul.stores.destination;soul.stores.notes={default:locator('notes-base',join(f.root,'notes'))};soul.owns=[{node:'expert'}];
+  for(const item of declarations.slice(1)){
+    const values=item.kind==='workspace'?item.value.knowledge.stores[0].payload.bindings:item.value.bindings;
+    values['stores.reference']=locator('reference-base',f.readPath);values['stores.notes']=locator(`${item.kind}-notes`,join(f.root,`${item.kind}-notes`));
+    values.responsibleHuman={provider:'oats.aweb',id:'SIBLING_PRIVATE'};values['stores.unrequested']='SIBLING_PRIVATE';
+  }
+  const normalized=call('normalize',request('normalize',f.settings,{declarations,context:{}}),env);assert.equal(normalized.response.ok,true,normalized.stdout);
+  const result=normalized.response.result;
+  assert.ok(result.requirements.some(r=>r.key===bindingChoiceKey('write.default')&&r.kind==='required'));
+  for(const key of [bindingChoiceKey('write.default'),storeChoiceKey('reference'),storeChoiceKey('notes')]){
+    assert.deepEqual(result.candidates.filter(c=>c.key===key&&c.kind!=='soul-default').map(c=>[c.kind,c.origin.pointer]),[
+      ['workspace-default','/knowledge'],['import-adoption','/adoption'],['operator','/bindings']]);
+  }
+  assert.equal(result.candidates[0].kind,'soul-default');assert.doesNotMatch(normalized.stdout+normalized.stderr,/SIBLING_PRIVATE|stores\.unrequested/);
+  const bad=structuredClone(declarations);bad[3].value.bindings['stores.notes']={kind:'git',repository:'OWN_PRIVATE_VALUE'};
+  const refused=call('normalize',request('normalize',f.settings,{declarations:bad,context:{}}),env);assert.deepEqual(refused.response.error,{code:'invalid-binding'});assert.doesNotMatch(refused.stdout+refused.stderr,/OWN_PRIVATE|SIBLING_PRIVATE/);
+  const missing=call('normalize',request('normalize',{'harvest-runtime':'pi'},{declarations,context:{}}),env);
+  assert.deepEqual(missing.response.error,{code:'needs-configuration',message:'setting bindings-file is required (absolute host path)'});
+  assert.deepEqual(inventory(f.root),before);
+});
+
+test('normalize names missing or invalid runtime settings with fixed nonsecret messages and no effects',t=>{
+  const f=fixture(t),preload=noEffectsPreload(f.root),before=inventory(f.root),secret='SYNTHETIC_PRIVATE_VALUE',env={TMPDIR:f.root,NODE_OPTIONS:`--import=${JSON.stringify(preload)}`};
+  const cases=[
+    ['bindings-file',undefined,'setting bindings-file is required (absolute host path)'],
+    ['state-dir',undefined,'setting state-dir is required (absolute host path)'],
+    ['bindings-file',secret,'setting bindings-file must be a normalized absolute host path'],
+    ['state-dir',`/private/${secret}/../state`,'setting state-dir must be a normalized absolute host path'],
+    ['state-dir',{[secret]:secret},'setting state-dir must be a normalized absolute host path'],
+    ['harvest-runtime',undefined,'setting harvest-runtime is required (pi, claude or codex)'],
+    ['harvest-runtime',secret,'setting harvest-runtime must be pi, claude or codex'],
+    ['harvest-model',{[secret]:secret},'setting harvest-model must be null or a non-empty string'],
+    ['harvest-model',' ','setting harvest-model must be null or a non-empty string'],
+  ];
+  for(const [name,value,message] of cases){
+    const settings={...f.settings};if(value===undefined)delete settings[name];else settings[name]=value;
+    const result=call('normalize',request('normalize',settings,{declarations:f.declarations,context:{kind:'standalone',key:'fixture'}}),env);
+    assert.equal(result.status,0,result.stderr);assert.equal(result.response.ok,false);assert.deepEqual(result.response.error,{code:'needs-configuration',message});
+    assert.equal(result.stderr,'');assert.doesNotMatch(result.stdout,new RegExp(`${secret}|${f.root}`));assert.deepEqual(inventory(f.root),before);
+  }
+  // Null/omitted model remains native-default intent; do not silently add a
+  // required-model guard or change selected runtime/profile policy here.
+  for(const value of [null,undefined]){const settings={...f.settings};if(value===undefined)delete settings['harvest-model'];else settings['harvest-model']=value;
+    const result=call('normalize',request('normalize',settings,{declarations:f.declarations,context:{}}),env);assert.equal(result.response.ok,true);assert.equal(result.response.result.model.runtime.execution.model,null);}
+  const unknown=call('normalize',request('normalize',{...f.settings,[secret]:secret},{declarations:f.declarations,context:{}}),env);
+  assert.deepEqual(unknown.response.error,{code:'invalid-binding'});assert.doesNotMatch(unknown.stdout+unknown.stderr,new RegExp(secret));assert.deepEqual(inventory(f.root),before);
+});
+
+test('check diagnoses bound runtime constraints without using mutable settings or leaking values',t=>{
+  const {f,binding}=prepareBinding(t),preload=noEffectsPreload(f.root),before=inventory(f.root),secret='SYNTHETIC_PRIVATE_VALUE',env={TMPDIR:f.root,NODE_OPTIONS:`--import=${JSON.stringify(preload)}`};
+  const cases=[
+    [b=>{delete b.payload.runtime.descriptorFile;},'setting bindings-file is required (absolute host path)'],
+    [b=>{delete b.payload.runtime.bindings.stateDir;},'setting state-dir is required (absolute host path)'],
+    [b=>{b.payload.runtime.descriptorFile=secret;},'setting bindings-file must be a normalized absolute host path'],
+    [b=>{b.payload.runtime.bindings.stateDir=`/private/${secret}/../state`;},'setting state-dir must be a normalized absolute host path'],
+    [b=>{delete b.payload.execution.runtime;},'setting harvest-runtime is required (pi, claude or codex)'],
+    [b=>{b.payload.execution.runtime=secret;},'setting harvest-runtime must be pi, claude or codex'],
+    [b=>{b.payload.execution.model={[secret]:secret};},'setting harvest-model must be null or a non-empty string'],
+  ];
+  for(const [change,message] of cases){const b=structuredClone(binding);change(b);
+    const result=call('check',request('check',f.settings,{binding:b,context:{},action:{kind:'inspect'}}),env);
+    assert.equal(result.status,0,result.stderr);assert.deepEqual(result.response.error,{code:'needs-configuration',message});
+    assert.equal(result.stderr,'');assert.doesNotMatch(result.stdout,new RegExp(`${secret}|${f.root}`));assert.deepEqual(inventory(f.root),before);
+  }
+  const valid=call('check',request('check',{'bindings-file':secret,'state-dir':secret,'harvest-runtime':secret},{binding,context:{},action:{kind:'hook',capability:'oats.okf',name:'soul-scaffold'}}),env);
+  assert.deepEqual(valid.response.result,{status:'ready',problems:[]},'bound settings, not mutable request settings, remain authoritative');
+  for(const change of [b=>{b.payload.runtime[secret]=secret;},b=>{b.payload.runtime.bindings[secret]=secret;},b=>{b.payload.execution[secret]=secret;},b=>{delete b.payload.execution.model;},b=>{b.payload.runtime=null;}]){
+    const b=structuredClone(binding);change(b);const result=call('check',request('check',{}, {binding:b,context:{},action:{kind:'inspect'}}),env);
+    assert.deepEqual(result.response.error,{code:'invalid-binding'});assert.doesNotMatch(result.stdout+result.stderr,new RegExp(secret));
+  }
+  assert.deepEqual(inventory(f.root),before);
+});
+
 test('manifest owns all three binding phase commands',()=>{
   const manifest=JSON.parse(fs.readFileSync(join(ROOT,'oats-package/capabilities/oats-okf/oats.json'),'utf8'));
-  assert.deepEqual(manifest.binding,{version:1,normalize:'binding-normalize',bind:'binding-bind',check:'binding-check'});
+  const distribution=JSON.parse(fs.readFileSync(join(ROOT,'oats-package/oats-package.json'),'utf8'));
+  assert.equal(manifest.compatibility.oats,'>=0.24.4');
+  assert.equal(distribution.compatibility.oats,manifest.compatibility.oats);
+  const {reasons,...phases}=manifest.binding;
+  assert.deepEqual(phases,{version:1,normalize:'binding-normalize',bind:'binding-bind',check:'binding-check'});
+  assert.equal(reasons.length,7);assert.equal(new Set(reasons).size,7);assert.ok(reasons.every(reason=>typeof reason==='string'&&reason.length>0));
   for(const name of Object.values(manifest.binding).filter(value=>typeof value==='string')) assert.ok(Object.hasOwn(manifest.commands,name));
   assert.equal(manifest.settings['state-dir'].default,undefined);
 });

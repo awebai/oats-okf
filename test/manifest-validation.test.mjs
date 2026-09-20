@@ -56,6 +56,21 @@ test("validator accepts the actual exported release with no unenumerated payload
   assert.match(result.stdout, /1 capability manifest/);
 });
 
+test('binding reason declarations accept omission and the bounded literal vocabulary',t=>{
+  const f=fixture(t);
+  assert.equal(f.run().status,0);
+  delete f.manifest.binding.reasons;assert.equal(f.run().status,0,'old declarations remain valid');
+  f.manifest.binding.reasons=['x'.repeat(200)];assert.equal(f.run().status,0);
+  f.manifest.binding.reasons=Array.from({length:64},(_,i)=>`fixed reason ${i}`);assert.equal(f.run().status,0);
+});
+
+test('binding reason declarations reject invalid types, duplicates, bounds, controls and interpolation',t=>{
+  const f=fixture(t);
+  for(const reasons of [null,{},[],[7],[''],['same','same'],['x'.repeat(201)],Array.from({length:65},(_,i)=>`fixed reason ${i}`),['reason'+String.fromCharCode(10)+'line'],['reason'+String.fromCharCode(9)+'value'],['non-ASCII-é'],['setting ${suppliedValue}'],['reason {value}']]){
+    f.manifest.binding.reasons=reasons;rejected(f,/binding\.reasons/);
+  }
+});
+
 test("canonical referenced helper/input definitions remain closed", (t) => {
   for (const mutate of [
     m => { m.helperInjection = null; },
