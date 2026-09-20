@@ -165,6 +165,16 @@ does not choose precedence; it emits requirements/candidates under
 `/bindings/knowledge/...` for the kernel's single resolver. Other providers own
 their own payloads—the kernel does not impose the OKF store/node model on them.
 
+In 2.1.2, normalization first derives the knowledge-owned binding addresses from
+that source's fixed/default/inherited stores and required write destinations.
+Only matching entries in workspace/adoption/operator maps are parsed as OKF
+locators. Sibling aweb human/team/consent entries and undeclared store addresses
+are ignored by OKF, not removed from the shared request or weakened for their
+own provider. Dotted aliases, declared custom inheritance and implicit
+`write.default` remain supported; malformed OWN values still fail and missing
+required fields remain resolver requirements. Declaration order does not change
+ownership, precedence or provenance; there is still one kernel resolver.
+
 Portable preparation selects explicit capability settings:
 
 ```json

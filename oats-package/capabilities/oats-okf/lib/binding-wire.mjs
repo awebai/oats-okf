@@ -7,6 +7,7 @@ import {
   KNOWLEDGE_CONTRACT,
   KNOWLEDGE_CONTRACT_VERSION,
   bindKnowledgeDomain,
+  bindingChoiceKey,
   checkKnowledgeRuntime,
   normalizeKnowledgeBindingCandidates,
   normalizeKnowledgeDeclaration,
@@ -125,10 +126,20 @@ function runtimeSettings(settings) {
   if(model!==null && (typeof model!=='string' || !model.trim())) settingError('harvest-model:invalid');
   return {descriptorFile,stateDir,execution:{runtime,model}};
 }
+// Shared maps contain other providers' opaque values. Ownership comes from
+// this source's declared/default/required knowledge addresses, not from a value
+// looking like a locator or a blanket stores.* prefix. Validate OWN values later.
+function ownedBindings(bindings,ownedKeys) {
+  return Object.fromEntries(Object.entries(bindings).filter(([name])=>{
+    let key;try{key=bindingChoiceKey(name);}catch{return false;}
+    return ownedKeys.has(key);
+  }));
+}
 function normalizePhase(req) {
   keys(req.input,['declarations','context'],['declarations','context'],'normalize input');
   if(!Array.isArray(req.input.declarations) || !obj(req.input.context)) wireError('invalid-binding');
-  const requirements=[],candidates=[];let domain=null;
+  const requirements=[],candidates=[],bindingInputs=[];let domain=null;
+  const collect=input=>{if(!obj(input.bindings)) wireError('invalid-binding');bindingInputs.push(input);};
   for(const raw of req.input.declarations) {
     const item=declaration(raw);
     if(item.kind==='soul') {
@@ -146,14 +157,19 @@ function normalizePhase(req) {
         if(rawStore.contract!==KNOWLEDGE_CONTRACT) return;
         const store=contract(rawStore);
         keys(store.payload,['bindings'],['bindings'],'workspace OKF payload');
-        candidates.push(...normalizeKnowledgeBindingCandidates({bindings:store.payload.bindings,kind:'workspace-default',origin:item.origin,origins:item.origins,pointer:`/knowledge/stores/${index}/payload/bindings`}));
+        collect({bindings:store.payload.bindings,kind:'workspace-default',origin:item.origin,origins:item.origins,pointer:`/knowledge/stores/${index}/payload/bindings`});
       });
       continue;
     }
     if(item.value.bindings===undefined) continue;
-    candidates.push(...normalizeKnowledgeBindingCandidates({bindings:item.value.bindings,kind:item.kind==='adoption'?'import-adoption':'operator',origin:item.origin,origins:item.origins,pointer:'/bindings'}));
+    collect({bindings:item.value.bindings,kind:item.kind==='adoption'?'import-adoption':'operator',origin:item.origin,origins:item.origins,pointer:'/bindings'});
   }
   if(!domain) wireError('needs-configuration');
+  // Collect first so declaration order cannot change who owns a binding. Keep
+  // all declared addresses, including dotted aliases and explicit/implicit
+  // write.default or custom inheritance; the kernel still resolves precedence.
+  const ownedKeys=new Set([...domain.requirements,...domain.candidates].map(item=>item.key));
+  for(const input of bindingInputs) candidates.push(...normalizeKnowledgeBindingCandidates({...input,bindings:ownedBindings(input.bindings,ownedKeys)}));
   requirements.push(...domain.requirements);candidates.unshift(...domain.candidates);
   return {requirements,candidates,model:{domain,runtime:runtimeSettings(req.settings)}};
 }
