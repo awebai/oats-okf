@@ -1,6 +1,6 @@
 # oats.okf 2 — external knowledge, independent judgment
 
-The official OKF knowledge capability: **2.1.0**, requiring **OATS >=0.24.0**.
+The official OKF knowledge capability: **2.1.1**, requiring **OATS >=0.24.0**.
 This is an additive release in the v2 family; wire, payload and record protocol
 versions are unchanged. The v2 runtime is a breaking change from soul-contained
 v1 knowledge. All knowledge lives in external
