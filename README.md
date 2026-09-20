@@ -1,6 +1,6 @@
 # oats.okf 2 — external knowledge, independent judgment
 
-The official OKF knowledge capability: **2.1.1**, requiring **OATS >=0.24.0**.
+The official OKF knowledge capability: **2.1.2**, requiring **OATS >=0.24.0**.
 This is an additive release in the v2 family; wire, payload and record protocol
 versions are unchanged. The v2 runtime is a breaking change from soul-contained
 v1 knowledge. All knowledge lives in external
@@ -12,8 +12,8 @@ Procedure candidates may become external Playbook concepts.
 `bin/`, `agents/`, `skills/` and `injects/` copies have been removed; they are not
 an alternative runtime. The distribution retains its manifest and LICENSE, and
 the capability is self-contained, including both runtime skills, worker soul,
-injections, validator and schemas. These are **2.1.0 release-candidate metadata**,
-not a claim that a tag was published or deployment/installed acceptance passed.
+injections, validator and schemas. Source version metadata is not a claim that
+a tag was published or deployment/installed acceptance passed.
 Historical verification notes retain their original checkpoint versions; current
 compatibility is declared by the manifests and this guide.
 
