@@ -214,6 +214,58 @@ test('check accepts optional full-subject invocation without changing scope chec
   }
 });
 
+test('normalize names missing or invalid runtime settings with fixed nonsecret messages and no effects',t=>{
+  const f=fixture(t),preload=noEffectsPreload(f.root),before=inventory(f.root),secret='SYNTHETIC_PRIVATE_VALUE',env={TMPDIR:f.root,NODE_OPTIONS:`--import=${JSON.stringify(preload)}`};
+  const cases=[
+    ['bindings-file',undefined,'setting bindings-file is required (absolute host path)'],
+    ['state-dir',undefined,'setting state-dir is required (absolute host path)'],
+    ['bindings-file',secret,'setting bindings-file must be a normalized absolute host path'],
+    ['state-dir',`/private/${secret}/../state`,'setting state-dir must be a normalized absolute host path'],
+    ['state-dir',{[secret]:secret},'setting state-dir must be a normalized absolute host path'],
+    ['harvest-runtime',undefined,'setting harvest-runtime is required (pi, claude or codex)'],
+    ['harvest-runtime',secret,'setting harvest-runtime must be pi, claude or codex'],
+    ['harvest-model',{[secret]:secret},'setting harvest-model must be null or a non-empty string'],
+    ['harvest-model',' ','setting harvest-model must be null or a non-empty string'],
+  ];
+  for(const [name,value,message] of cases){
+    const settings={...f.settings};if(value===undefined)delete settings[name];else settings[name]=value;
+    const result=call('normalize',request('normalize',settings,{declarations:f.declarations,context:{kind:'standalone',key:'fixture'}}),env);
+    assert.equal(result.status,0,result.stderr);assert.equal(result.response.ok,false);assert.deepEqual(result.response.error,{code:'needs-configuration',message});
+    assert.equal(result.stderr,'');assert.doesNotMatch(result.stdout,new RegExp(`${secret}|${f.root}`));assert.deepEqual(inventory(f.root),before);
+  }
+  // Null/omitted model remains native-default intent; do not silently add a
+  // required-model guard or change selected runtime/profile policy here.
+  for(const value of [null,undefined]){const settings={...f.settings};if(value===undefined)delete settings['harvest-model'];else settings['harvest-model']=value;
+    const result=call('normalize',request('normalize',settings,{declarations:f.declarations,context:{}}),env);assert.equal(result.response.ok,true);assert.equal(result.response.result.model.runtime.execution.model,null);}
+  const unknown=call('normalize',request('normalize',{...f.settings,[secret]:secret},{declarations:f.declarations,context:{}}),env);
+  assert.deepEqual(unknown.response.error,{code:'invalid-binding'});assert.doesNotMatch(unknown.stdout+unknown.stderr,new RegExp(secret));assert.deepEqual(inventory(f.root),before);
+});
+
+test('check diagnoses bound runtime constraints without using mutable settings or leaking values',t=>{
+  const {f,binding}=prepareBinding(t),preload=noEffectsPreload(f.root),before=inventory(f.root),secret='SYNTHETIC_PRIVATE_VALUE',env={TMPDIR:f.root,NODE_OPTIONS:`--import=${JSON.stringify(preload)}`};
+  const cases=[
+    [b=>{delete b.payload.runtime.descriptorFile;},'setting bindings-file is required (absolute host path)'],
+    [b=>{delete b.payload.runtime.bindings.stateDir;},'setting state-dir is required (absolute host path)'],
+    [b=>{b.payload.runtime.descriptorFile=secret;},'setting bindings-file must be a normalized absolute host path'],
+    [b=>{b.payload.runtime.bindings.stateDir=`/private/${secret}/../state`;},'setting state-dir must be a normalized absolute host path'],
+    [b=>{delete b.payload.execution.runtime;},'setting harvest-runtime is required (pi, claude or codex)'],
+    [b=>{b.payload.execution.runtime=secret;},'setting harvest-runtime must be pi, claude or codex'],
+    [b=>{b.payload.execution.model={[secret]:secret};},'setting harvest-model must be null or a non-empty string'],
+  ];
+  for(const [change,message] of cases){const b=structuredClone(binding);change(b);
+    const result=call('check',request('check',f.settings,{binding:b,context:{},action:{kind:'inspect'}}),env);
+    assert.equal(result.status,0,result.stderr);assert.deepEqual(result.response.error,{code:'needs-configuration',message});
+    assert.equal(result.stderr,'');assert.doesNotMatch(result.stdout,new RegExp(`${secret}|${f.root}`));assert.deepEqual(inventory(f.root),before);
+  }
+  const valid=call('check',request('check',{'bindings-file':secret,'state-dir':secret,'harvest-runtime':secret},{binding,context:{},action:{kind:'hook',capability:'oats.okf',name:'soul-scaffold'}}),env);
+  assert.deepEqual(valid.response.result,{status:'ready',problems:[]},'bound settings, not mutable request settings, remain authoritative');
+  for(const change of [b=>{b.payload.runtime[secret]=secret;},b=>{b.payload.runtime.bindings[secret]=secret;},b=>{b.payload.execution[secret]=secret;},b=>{delete b.payload.execution.model;},b=>{b.payload.runtime=null;}]){
+    const b=structuredClone(binding);change(b);const result=call('check',request('check',{}, {binding:b,context:{},action:{kind:'inspect'}}),env);
+    assert.deepEqual(result.response.error,{code:'invalid-binding'});assert.doesNotMatch(result.stdout+result.stderr,new RegExp(secret));
+  }
+  assert.deepEqual(inventory(f.root),before);
+});
+
 test('manifest owns all three binding phase commands',()=>{
   const manifest=JSON.parse(fs.readFileSync(join(ROOT,'oats-package/capabilities/oats-okf/oats.json'),'utf8'));
   assert.deepEqual(manifest.binding,{version:1,normalize:'binding-normalize',bind:'binding-bind',check:'binding-check'});

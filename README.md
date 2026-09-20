@@ -32,6 +32,18 @@ Portable provider-binding preparation additionally requires an explicit
 absolute locations; the codec does not derive state from an instance home or
 reread the bindings file during normalize/bind.
 
+The **2.1.2 diagnostic correction** names a missing/invalid runtime setting in
+existing wire `error: {code: "needs-configuration", message: "..."}`. Only fixed
+setting names and constraints are emitted, never supplied values, paths, aliases,
+unknown keys or raw exception text. It covers `bindings-file`, `state-dir`,
+`harvest-runtime` and an invalid `harvest-model`; null/omitted model remains valid
+native-default intent at this codec boundary. The equivalent check validates the
+RETAINED bound runtime, not mutable request settings, before store access.
+Unrelated malformed envelopes and general errors remain code-only. This changes
+no wire/payload schema, selected-model/helper rule, readiness gate or remote
+validation policy. A kernel renderer may still suppress provider message text;
+provider emission alone does not establish CLI display, installation or readiness.
+
 The **absolute** bindings document is capability-owned JSON:
 
 ```json
