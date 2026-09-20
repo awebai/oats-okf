@@ -44,6 +44,24 @@ test('static API2 alone cannot qualify missing/mismatched helper selection or ex
  for(const change of [{launchSelection:null},{launchSelection:{runtime:'pi',model:'different'}},{workMode:'worktree'},{responsibleHuman:{provider:'other',id:'human'}}])assert.throws(()=>validateWorkerSelection(f.source,f.context,f.request,{...f.inspected,helperSelection:{...f.inspected.helperSelection,...change}}),{code:'E_CAPTURED_HELPER'});
  assert.throws(()=>validateWorkerSelection(f.source,f.context,f.request,{...f.inspected,capabilities:[...f.inspected.capabilities,{id:'requires.plugin',approval:'approved'}]}),{code:'E_CAPTURED_HELPER'});
 });
+test('ordinary native helper profiles preserve Claude/Codex model intent and the full approved capability closure',t=>{
+ for(const runtime of ['claude','codex'])for(const model of [null,'native/selected-model']){
+  const f=fixture(t);f.source.execution.runtime=runtime;f.source.execution.model=model;f.inspected.helperSelection.launchSelection={runtime,model};
+  f.inspected.capabilities.push({id:'oats.aweb',approval:'approved'},{id:'example.authoring',approval:'not-required'});
+  const before=clone(f.inspected),plan=f.plan();assert.deepEqual(plan.launchSelection,{runtime,model});assert.deepEqual(plan.helperBinding,f.inspected.helperSelection.executionBinding);assert.deepEqual(f.inspected,before);
+  const calls=[],home=join(f.root,'worker'),inc='22222222-2222-4222-8222-222222222222',run={capturedWorker:plan,worker:{home,incarnationId:inc}};
+  const returned={home,incarnationId:inc,executionBinding:plan.helperBinding,sourceExecutionBinding:plan.sourceBinding,helper:plan.helper,dispatchAccepted:true,intent:{executionId:'native-request',incarnationId:inc},runtime,model};
+  capturedStart(f.source,run,f.file,(_s,args)=>{calls.push(args);return returned;});assert.equal(calls.length,1);
+  for(const flag of ['--runtime','--model','--no-messaging','--skip-hooks'])assert.equal(calls[0].includes(flag),false);
+ }
+});
+test('ordinary native profile extension refuses unapproved/duplicate/missing helper closure and runtime/model substitutions',t=>{
+ const f=fixture(t);f.source.execution.runtime='claude';f.source.execution.model=null;f.inspected.helperSelection.launchSelection={runtime:'claude',model:null};
+ const extra={id:'oats.aweb',approval:'approved'};
+ for(const capabilities of [[],[extra],[{id:'oats.okf',approval:'not-required'},extra],[...f.inspected.capabilities,{...extra,approval:'pending'}],[...f.inspected.capabilities,extra,extra],[...f.inspected.capabilities,{id:'',approval:'approved'}]])assert.throws(()=>validateWorkerSelection(f.source,f.context,f.request,{...f.inspected,capabilities}),{code:'E_CAPTURED_HELPER'});
+ for(const launchSelection of [{runtime:'pi',model:null},{runtime:'unknown',model:null},{runtime:'claude',model:''},{runtime:'claude'},{runtime:'claude',model:42}])assert.throws(()=>validateWorkerSelection(f.source,f.context,f.request,{...f.inspected,helperSelection:{...f.inspected.helperSelection,launchSelection}}),{code:'E_CAPTURED_HELPER'});
+ f.source.execution.model='chosen';assert.throws(()=>f.plan(),{code:'E_CAPTURED_HELPER'});
+});
 test('public scaffold uses HELPER binding; start uses SOURCE plus exact edge, never legacy selectors',t=>{
  const f=fixture(t),plan=f.plan(),home=join(f.root,'worker'),inc='22222222-2222-4222-8222-222222222222',calls=[];
  const worker={home,instance:'memory-harvest-fixture',agent:'memory-harvest',work:'directory',incarnationId:inc,executionBinding:plan.helperBinding,launchPending:true,hooksPending:false,cleanupRequired:false};

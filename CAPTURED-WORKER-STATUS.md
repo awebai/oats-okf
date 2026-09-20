@@ -1,8 +1,26 @@
-# Captured worker first slice — source implementation, real gate pending
+# Captured operation worker — selected profiles and qualification limits
 
-This successor adds an actual captured worker branch to the existing OKF run,
-staging, judgment and publication lifecycle. It does not remove the general
-E_CAPTURED_HELPER guard or make API2 availability sufficient authority.
+## Phase1 selected-profile extension (source candidate)
+
+The published 2.1.0 consumer rejected every non-Pi or multi-capability helper.
+This source change permits explicitly retained **Claude/Codex** helper selections,
+including `model: null` for normal native model configuration, while validating
+the whole public capability approval list. The executable OKF helper must itself
+be approved; duplicate, missing or unapproved capabilities refuse. The exact
+retained helper binding carries the full resource/hook closure to the kernel;
+no messaging, authoring or runtime requirement is removed or replaced.
+
+Pi retains the previous strict explicit-model / sole-OKF restriction. This does
+not silently choose Claude/Codex for a Pi pilot or qualify an enriched strict-Pi
+profile. Inspector API2 availability and executable approvals remain distinct
+from native readiness, dispatch acceptance, worker completion and knowledge
+acceptance. A required messaging provider that is not ready still blocks the
+real public lifecycle. Release/version selection and live qualification remain
+maintainer/operator-owned; this change is not the published 2.1.0 tag's bytes.
+
+The captured branch uses the existing OKF run, staging, judgment and publication
+lifecycle. It does not remove the general E_CAPTURED_HELPER guard or make API2
+availability sufficient native authority.
 
 ## Only fresh entrypoint
 
@@ -32,17 +50,20 @@ Before capture/run/scaffold writes, consume the kernel-produced paired invocatio
 registered persistent SOURCE, exact source/context/human/binding, current non-null
 instance+intent and knowledge:harvest action. Read only the PUBLIC SOURCE helper
 lookup and require its exact provider/definition/key, work/context/human/bindings,
-approved default-OKF-only profile and API2. Own required Pi runtime/plugin/launch
-behavior stays held, never filtered away. Kernel still enforces actual retained
-requirements/host/approvals/witnesses before native effects.
+complete approved capability closure and API2. For Pi, the default-OKF-only
+restriction remains. Own required Pi runtime/plugin/launch behavior stays held,
+never filtered away. Kernel still enforces actual retained requirements, hooks,
+host eligibility, approvals and witnesses; inspection is not their completion.
 
 The public lookup must additionally expose:
 `helperSelection.launchSelection = null | {runtime, model}` from its verified
 retained launch. The kernel implements this public field; it is a compatibility
 requirement, not an outstanding getter proposal. Absence or mismatch refuses,
 never reads private kernel files and never implies native readiness.
-Captured first slice is Pi with a nonempty independently retained model, matching
-any selected harvest-model pin; no fallback/parent model substitution.
+Pi needs a nonempty independently retained model; ordinary Claude/Codex accept
+an explicit retained null/native-default choice. Every runtime must match the
+selected harvest runtime and any selected harvest-model pin. No fallback,
+parent model substitution, ambient profile emptying or auth handling is added.
 
 Create a REAL existing-format provider run from captured input IDs, preserving
 source ID/binding/outer admitted intent/incarnation and endpoint hash in that
@@ -81,7 +102,7 @@ native recovery are explicitly unsupported in this smallest slice. A known
 failed operation's kernel --retry-intent does not itself authorize recreating
 an uncertain child. No new provider broker/store/admission/identity system.
 
-## Coordinated release metadata — publication remains parent-owned
+## Historical coordinated 2.1.0 metadata checkpoint
 
 The provider release candidate is **2.1.0**, requiring kernel **>=0.24.0** in
 both distribution and capability manifests. This is an additive v2-family
