@@ -1,6 +1,6 @@
 {
   "name": "@awebai/oats-okf",
-  "version": "2.1.2",
+  "version": "2.1.3",
   "description": "Official OATS knowledge integration for Open Knowledge Format bundles and continuous memory harvesting.",
   "license": "MIT",
   "type": "module",
