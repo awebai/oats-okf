@@ -18,7 +18,7 @@ const PRODUCER=Object.freeze({
   base:'be2460c52bf5403d8edcc7058ffe8e0dc58d0952',
   patchSha256:'a29db161dc87a90360ec2ecde1629b6b294835368ce8363c1eac7587f81f78ac',
 });
-const SCHEMA_SHA='52f82d5c3456178863e020a16c8881b7b62b96b985aebc343a099408c989a3f4';
+const SCHEMA_SHA='a43b48076e2ec41a2c03cd429230d2c011f74959e5dd98ff080a46f27930c77d'; // 2.1.3: pin re-approved to the reasons-bearing schema landed in e9ea54d (the pin was not updated then)
 const framework=process.env.OATS_HELPER_INPUT_FRAMEWORK_ROOT;
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
 const json=file=>JSON.parse(fs.readFileSync(file,'utf8'));

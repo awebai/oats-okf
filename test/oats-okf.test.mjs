@@ -138,8 +138,8 @@ test('exported payload version, floor, required hooks and complete command inven
   assert.ok(fs.statSync(join(ROOT,'oats-package/LICENSE')).isFile());
   assert.equal(fs.readlinkSync(join(CAP,'agents/memory-harvest/CLAUDE.md')),'AGENTS.md','source compatibility alias preserves one canonical instruction file');
   const m=readJSON(join(CAP,'oats.json')),distribution=readJSON(join(ROOT,'oats-package/oats-package.json'));
-  for(const manifest of [readJSON(join(ROOT,'package.json')),distribution,m])assert.equal(manifest.version,'2.1.2');
-  for(const manifest of [distribution,m])assert.equal(manifest.compatibility.oats,'>=0.24.0');
+  for(const manifest of [readJSON(join(ROOT,'package.json')),distribution,m])assert.equal(manifest.version,'2.1.3');
+  for(const manifest of [distribution,m])assert.equal(manifest.compatibility.oats,'>=0.24.4');
   assert.equal(m.hooks.spawn.required,true);
   for(const c of ['harvest','inspect','setup','run-source','complete','retry','migrate','read','refresh','init']) assert.ok(m.commands[c]);
   const inj=fs.readFileSync(join(CAP,m.inject),'utf8');assert.doesNotMatch(inj,/harvest/i);assert.match(inj,/after compaction/);
@@ -664,6 +664,30 @@ test('R1 registration schedules idempotently, recreates missing jobs and preserv
   fs.rmSync(join(f.dir,'schedules.json'));f.source();assert.equal(readJSON(join(f.dir,'schedules.json'))[`okf-${s.id}`].enabled,false);
   capture(s,{final:true});assert.equal(loadStatus(s).auto,false);assert.deepEqual(loadStatus(s).captured.inputs,before.captured.inputs);assert.deepEqual(loadStatus(s).processed,before.processed);
   assert.ok(callsOf(f).every(c=>!c.a.includes('install')));
+});
+test('2.1.3 a soul without okf.json refuses the spawn hook with E_CONFIG naming the remedy, never a raw ENOENT',t=>{
+  const f=fixture(t);fs.rmSync(join(f.soul,'okf.json'));
+  const r=f.cli('spawn');assert.equal(r.status,1,r.stdout+r.stderr);
+  // Hook failures travel as {meta, warning}: the kernel quotes `warning` in its E_SPAWN_FAILED message.
+  assert.ok(r.out,`no JSON: ${r.stdout}\n${r.stderr}`);assert.match(r.out.warning,/no okf.json/);assert.match(r.out.warning,/oats okf init/);assert.match(r.out.warning,/nothing was created/);
+  assert.doesNotMatch(r.stdout+r.stderr,/ENOENT/);assert.equal(fs.existsSync(join(f.soul,'okf.json')),false,'no knowledge is created implicitly');
+  assert.ok(!fs.existsSync(join(f.home,'.okf-source.json')),'no source registered');
+});
+test('2.1.3 retirement switches a drained source\'s okf-<id> job off (never deletes it); a source with pending input keeps its job until the worker drains it',t=>{
+  const f=fixture(t),s=f.source();const jobs=()=>readJSON(join(f.dir,'schedules.json'))[`okf-${s.id}`];
+  assert.equal(jobs().enabled,true);
+  // Nothing captured yet → retire drains immediately → job disabled, definition kept.
+  const r=f.cli('retire');assert.equal(r.status,0,r.stdout);assert.equal(r.out.meta.retired,true);
+  assert.equal(r.out.meta.schedule.status,'disabled');assert.equal(jobs().enabled,false);assert.ok(jobs().argv.includes(s.file),'job definition retained as evidence');
+  assert.equal(loadStatus(s).auto,false);assert.equal(loadStatus(s).schedule.settled,true);
+  assert.ok(callsOf(f).some(c=>c.a[0]==='schedule' && c.a[1]==='disable' && c.a[2]===`okf-${s.id}`));
+  // Second retire is idempotent.
+  const again=f.cli('retire');assert.equal(again.status,0,again.stdout);assert.equal(again.out.meta.schedule.status,'already-disabled');
+  // A source WITH unprocessed input keeps its job enabled after retire (the worker must still deliver).
+  const g=fixture(t),s2=g.source();note(g);capture(s2);
+  const r2=g.cli('retire');assert.equal(r2.status,0,r2.stdout);
+  assert.equal(readJSON(join(g.dir,'schedules.json'))[`okf-${s2.id}`].enabled,true,'pending input: job stays on');assert.equal(r2.out.meta.schedule.status,'kept');
+  assert.equal(loadStatus(s2).auto,true);
 });
 test('R1 failed registration scheduling is reported and retry repairs the same source without losing evidence',t=>{
   const f=fixture(t);put(join(f.dir,'schedule-fail'),'1');const result=f.cli('spawn');assert.equal(result.status,1);assert.match(result.out.warning,/scheduler unavailable/);

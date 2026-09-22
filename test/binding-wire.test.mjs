@@ -8,7 +8,7 @@ import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { bindingChoiceKey, storeChoiceKey } from '../oats-package/capabilities/oats-okf/lib/portable-binding.mjs';
-import { loadInvocationKnowledgeBinding, parseBindingJson, sourceRuntimeFromKnowledgeBinding } from '../oats-package/capabilities/oats-okf/lib/binding-wire.mjs';
+import { CHECK_REASONS, loadInvocationKnowledgeBinding, parseBindingJson, sourceRuntimeFromKnowledgeBinding } from '../oats-package/capabilities/oats-okf/lib/binding-wire.mjs';
 import { bindingFingerprint, validateBindings } from '../oats-package/capabilities/oats-okf/lib/config.mjs';
 import { initBase } from '../oats-package/capabilities/oats-okf/lib/migration.mjs';
 import { loadSource, register } from '../oats-package/capabilities/oats-okf/lib/sources.mjs';
@@ -97,7 +97,7 @@ test('check validates real directory and private-staged Git acceptance read-only
   const before={read:tree(f.readPath),write:tree(f.writePath)};
   for(const name of ['setup','init','migrate','unlock']) {
     const administrative=call('check',request('check',{}, {binding,context:{kind:'standalone',key:'fixture'},action:{kind:'command',namespace:'okf',name}}));
-    assert.deepEqual(administrative.response.result,{status:'needs-configuration',problems:[{code:'provider-not-qualified'}]},name);
+    assert.deepEqual(administrative.response.result,{status:'needs-configuration',problems:[{code:'provider-not-qualified',message:'check action is not an admitted knowledge operation'}]},name);
   }
   assert.deepEqual({read:tree(f.readPath),write:tree(f.writePath)},before,'administrative readiness checks mutate no accepted base');
   const checked=call('check',request('check',{}, {binding,context:{kind:'standalone',key:'fixture'},action:{kind:'spawn'}}));
@@ -118,13 +118,13 @@ test('check validates real directory and private-staged Git acceptance read-only
   assert.equal(git(['rev-parse','HEAD']),remoteBefore);assert.deepEqual(fs.readdirSync(scratch),[],'private Git staging is removed after check');
   const wrongOwner=structuredClone(gitBinding);wrongOwner.payload.owns.push({store:'reference-base',node:'reference',steward:'expert-owner'});wrongOwner.payload.runtime.declaration.owns.push('reference-base/reference');
   const refused=call('check',request('check',{}, {binding:wrongOwner,context:{},action:{kind:'spawn'}}),transport);
-  assert.deepEqual(refused.response.result,{status:'needs-configuration',problems:[{code:'provider-not-qualified'}]});
+  assert.deepEqual(refused.response.result,{status:'needs-configuration',problems:[{code:'provider-not-qualified',message:'knowledge base owner or remote custody requirement not met'}]});
   assert.equal(git(['rev-parse','HEAD']),remoteBefore);assert.deepEqual(fs.readdirSync(scratch),[],'failed Git qualification also removes private staging');
 
   const rewriteHome=join(f.root,'rewrite-home');fs.mkdirSync(rewriteHome);fs.writeFileSync(join(rewriteHome,'.gitconfig'),`[url "file://${f.readPath}"]\n\tinsteadOf = https://example.test/knowledge.git\n`);
   const rewritten=structuredClone(binding);rewritten.payload.stores['reference-base']={...gitBinding.payload.stores['reference-base'],repository:'https://example.test/knowledge.git'};rewritten.payload.runtime.bindings.bases['reference-base']=rewritten.payload.stores['reference-base'];
   const redirected=call('check',request('check',{}, {binding:rewritten,context:{},action:{kind:'spawn'}}),{HOME:rewriteHome,TMPDIR:scratch});
-  assert.deepEqual(redirected.response.result,{status:'needs-configuration',problems:[{code:'provider-not-qualified'}]},'rewritten effective Git origins do not qualify');
+  assert.deepEqual(redirected.response.result,{status:'needs-configuration',problems:[{code:'provider-not-qualified',message:'knowledge base owner or remote custody requirement not met'}]},'rewritten effective Git origins do not qualify');
   assert.deepEqual(fs.readdirSync(scratch),[]);
 });
 
@@ -148,7 +148,7 @@ test('captured harvest command and knowledge operation check refuse before store
       const input={binding:capturedBinding,context,action,...(withInvocation?{invocation:invocationFor({binding:capturedBinding,context,action})}:{})};
       const result=call('check',request('check',{},input),{TMPDIR:f.root,NODE_OPTIONS:`--import=${JSON.stringify(preload)}`});
       assert.equal(result.status,0,result.stdout+result.stderr);assert.equal(result.response.ok,true);
-      assert.deepEqual(result.response.result,{status:'needs-configuration',problems:[{code:'provider-not-qualified'}]});
+      assert.deepEqual(result.response.result,{status:'needs-configuration',problems:[{code:'provider-not-qualified',message:'check action is not an admitted knowledge operation'}]});
       assert.equal(result.stderr,'');assert.deepEqual(inventory(f.root),before,'no scratch, native Git, registration or scheduler effects');
     }
   }
@@ -332,7 +332,11 @@ test('manifest owns all three binding phase commands',()=>{
   assert.equal(distribution.compatibility.oats,manifest.compatibility.oats);
   const {reasons,...phases}=manifest.binding;
   assert.deepEqual(phases,{version:1,normalize:'binding-normalize',bind:'binding-bind',check:'binding-check'});
-  assert.equal(reasons.length,7);assert.equal(new Set(reasons).size,7);assert.ok(reasons.every(reason=>typeof reason==='string'&&reason.length>0));
+  assert.equal(reasons.length,16);assert.equal(new Set(reasons).size,16);assert.ok(reasons.every(reason=>typeof reason==='string'&&reason.length>0));
+  // Every check-phase reason the wire can emit is in the manifest byte-exact —
+  // the kernel may only pass literals it was told about.
+  for(const reason of CHECK_REASONS) assert.ok(reasons.includes(reason),`manifest lacks check reason: ${reason}`);
+  assert.ok(reasons.every(r=>!/:\/\/|^\/|\s\/|\$\{|\{\{/.test(r) && r.length<=120),'reasons carry no URLs, paths, values or templates');
   for(const name of Object.values(manifest.binding).filter(value=>typeof value==='string')) assert.ok(Object.hasOwn(manifest.commands,name));
   assert.equal(manifest.settings['state-dir'].default,undefined);
 });
