@@ -15,7 +15,7 @@ const CLI=join(CAP,'bin/oats-okf.mjs');
 const mod=p=>import(new URL(`../oats-package/capabilities/oats-okf/lib/${p}.mjs`,import.meta.url));
 const {loadBindings,metadata,validateBindings,validateDeclaration}=await mod('config');
 const {tree,save,readJSON,atomic,digest,withLock,baseLock:unused,quote,command,hash}=await mod('io');
-const {register,registerCaptured,capture,input,loadStatus,loadSource,saveStatus,views,scheduleSource}=await mod('sources');
+const {register,registerCaptured,capture,input,loadStatus,loadSource,saveStatus,views,scheduleSource,settleRetiredSchedule}=await mod('sources');
 const {runSource,readRun,complete,retry,completionArgv,completionCommand}=await mod('worker');
 const {initBase,migrate,deliverMigration,cutoverMigration}=await mod('migration');
 const {stageBase,baseLock,journalPath,directoryPublish}=await mod('stores');
@@ -57,7 +57,8 @@ else if(a[0]==='schedule') {
   const persist=()=>fs.writeFileSync(p,JSON.stringify(jobs));
   if(a[1]==='add') {if(jobs[a[2]]) error('E_SCHEDULE_EXISTS','already exists');jobs[a[2]]=JSON.parse(fs.readFileSync(val('--file'),'utf8'));persist();out({schedule:jobs[a[2]]});}
   else if(a[1]==='show') {if(!jobs[a[2]]) error('E_SCHEDULE_UNKNOWN','missing');out({schedule:jobs[a[2]]});}
-  else if(['enable','disable'].includes(a[1])) {jobs[a[2]].enabled=a[1]==='enable';persist();out({schedule:jobs[a[2]]});}
+  else if(['enable','disable'].includes(a[1])) {if(!jobs[a[2]]) error('E_SCHEDULE_UNKNOWN','missing');jobs[a[2]].enabled=a[1]==='enable';persist();out({schedule:jobs[a[2]]});}
+  else if(a[1]==='remove') {if(!jobs[a[2]]) error('E_SCHEDULE_UNKNOWN','missing');if(fs.existsSync(join(root,'schedule-running-'+a[2]))) error('E_SCHEDULE_RUNNING','running');delete jobs[a[2]];persist();out({removed:a[2]});}
   else if(a[1]==='list') out({schedules:Object.values(jobs),scheduler:{installed:false,active:false}});
   else error('E_FIXTURE','unknown schedule call');
 }
@@ -673,21 +674,31 @@ test('2.1.3 a soul without okf.json refuses the spawn hook with E_CONFIG naming 
   assert.doesNotMatch(r.stdout+r.stderr,/ENOENT/);assert.equal(fs.existsSync(join(f.soul,'okf.json')),false,'no knowledge is created implicitly');
   assert.ok(!fs.existsSync(join(f.home,'.okf-source.json')),'no source registered');
 });
-test('2.1.3 retirement switches a drained source\'s okf-<id> job off (never deletes it); a source with pending input keeps its job until the worker drains it',t=>{
+test('2.1.4 retirement takes a drained source\'s okf-<id> job out of the scheduler (definition kept in schedule.json); a source with pending input keeps its job until the worker drains it; a running job stays disabled until it can be removed',t=>{
   const f=fixture(t),s=f.source();const jobs=()=>readJSON(join(f.dir,'schedules.json'))[`okf-${s.id}`];
   assert.equal(jobs().enabled,true);
-  // Nothing captured yet → retire drains immediately → job disabled, definition kept.
+  // Nothing captured yet → retire drains immediately → job disabled, then removed; definition kept beside the source.
   const r=f.cli('retire');assert.equal(r.status,0,r.stdout);assert.equal(r.out.meta.retired,true);
-  assert.equal(r.out.meta.schedule.status,'disabled');assert.equal(jobs().enabled,false);assert.ok(jobs().argv.includes(s.file),'job definition retained as evidence');
-  assert.equal(loadStatus(s).auto,false);assert.equal(loadStatus(s).schedule.settled,true);
-  assert.ok(callsOf(f).some(c=>c.a[0]==='schedule' && c.a[1]==='disable' && c.a[2]===`okf-${s.id}`));
-  // Second retire is idempotent.
-  const again=f.cli('retire');assert.equal(again.status,0,again.stdout);assert.equal(again.out.meta.schedule.status,'already-disabled');
+  assert.equal(r.out.meta.schedule.status,'removed');assert.equal(jobs(),undefined,'dead job no longer listed by the kernel');
+  assert.ok(readJSON(join(dirname(s.file),'schedule.json')).argv.includes(s.file),'job definition retained as evidence with the source');
+  assert.equal(loadStatus(s).auto,false);assert.equal(loadStatus(s).schedule.settled,true);assert.equal(loadStatus(s).schedule.removed,true);
+  const calls=callsOf(f).filter(c=>c.a[0]==='schedule' && c.a[2]===`okf-${s.id}`).map(c=>c.a[1]);
+  assert.ok(calls.indexOf('disable')<calls.indexOf('remove'),'switched off before removal');
+  // Second retire is idempotent and does not call the scheduler again.
+  const before=callsOf(f).length;
+  const again=f.cli('retire');assert.equal(again.status,0,again.stdout);assert.equal(again.out.meta.schedule.status,'already-removed');
+  assert.ok(!callsOf(f).slice(before).some(c=>c.a[0]==='schedule' && ['disable','remove'].includes(c.a[1])),'no repeat scheduler calls');
   // A source WITH unprocessed input keeps its job enabled after retire (the worker must still deliver).
   const g=fixture(t),s2=g.source();note(g);capture(s2);
   const r2=g.cli('retire');assert.equal(r2.status,0,r2.stdout);
   assert.equal(readJSON(join(g.dir,'schedules.json'))[`okf-${s2.id}`].enabled,true,'pending input: job stays on');assert.equal(r2.out.meta.schedule.status,'kept');
   assert.equal(loadStatus(s2).auto,true);
+  // A drained source whose job is still running: disabled now, removal deferred to the worker's next settle.
+  const h=fixture(t),s3=h.source();put(join(h.dir,`schedule-running-okf-${s3.id}`),'1');
+  const r3=h.cli('retire');assert.equal(r3.status,0,r3.stdout);assert.equal(r3.out.meta.schedule.status,'disabled-pending-removal');
+  assert.equal(readJSON(join(h.dir,'schedules.json'))[`okf-${s3.id}`].enabled,false);assert.equal(loadStatus(s3).schedule.settled,true);assert.equal(loadStatus(s3).schedule.removed,false);
+  fs.rmSync(join(h.dir,`schedule-running-okf-${s3.id}`));
+  assert.equal(settleRetiredSchedule(s3).status,'removed');assert.equal(readJSON(join(h.dir,'schedules.json'))[`okf-${s3.id}`],undefined);
 });
 test('R1 failed registration scheduling is reported and retry repairs the same source without losing evidence',t=>{
   const f=fixture(t);put(join(f.dir,'schedule-fail'),'1');const result=f.cli('spawn');assert.equal(result.status,1);assert.match(result.out.warning,/scheduler unavailable/);
