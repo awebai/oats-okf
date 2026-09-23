@@ -138,7 +138,7 @@ test('exported payload version, floor, required hooks and complete command inven
   assert.ok(fs.statSync(join(ROOT,'oats-package/LICENSE')).isFile());
   assert.equal(fs.readlinkSync(join(CAP,'agents/memory-harvest/CLAUDE.md')),'AGENTS.md','source compatibility alias preserves one canonical instruction file');
   const m=readJSON(join(CAP,'oats.json')),distribution=readJSON(join(ROOT,'oats-package/oats-package.json'));
-  for(const manifest of [readJSON(join(ROOT,'package.json')),distribution,m])assert.equal(manifest.version,'2.1.3');
+  for(const manifest of [readJSON(join(ROOT,'package.json')),distribution,m])assert.equal(manifest.version,'2.1.4');
   for(const manifest of [distribution,m])assert.equal(manifest.compatibility.oats,'>=0.24.4');
   assert.equal(m.hooks.spawn.required,true);
   for(const c of ['harvest','inspect','setup','run-source','complete','retry','migrate','read','refresh','init']) assert.ok(m.commands[c]);
@@ -862,12 +862,14 @@ function noPublication(f,s) {
   assert.equal(git(f.repo,['for-each-ref','--format=%(refname)','refs/heads/okf/']),'');
 }
 test('custody R1 ignored concept cannot disappear from the validated Git proposal',t=>{
+  // An ignore rule outside the base root is never materialized into the staging
+  // tree (only the base root is), so it cannot reach the add step: the validated
+  // concept is published exactly as validated. An ignore rule inside the base
+  // stays subject to the omission guard below.
   const f=fixture(t,{kind:'git'});put(join(f.repo,'.gitignore'),'**/decision.md\n');fixtureCommit(f.repo,'ordinary ignore rule');
   note(f);const {s,run}=prepared(f),j=judgment(f,s,run);
-  assert.throws(()=>complete(s,run.id,j),/publication tree omits validated proposal/);noPublication(f,s);
-  const retained=readRun(s,run.id);assert.equal(retained.receipts.project.commit,undefined);
-  assert.equal(fs.existsSync(join(run.stages.project.root,'expert/decision.md')),true);
-  assert.throws(()=>retry(s),/publication tree omits validated proposal/);noPublication(f,s);
+  const r=complete(s,run.id,j);assert.equal(r.processed,true);
+  assert.equal(git(f.repo,['cat-file','-t',`${r.receipts.project.commit}:knowledge/expert/decision.md`]),'blob');
 });
 test('custody R1 Git normalization cannot change validated CRLF proposal bytes',t=>{
   const f=fixture(t,{kind:'git'});put(join(f.repo,'.gitattributes'),'**/*.md text eol=lf\n');fixtureCommit(f.repo,'ordinary text normalization');
