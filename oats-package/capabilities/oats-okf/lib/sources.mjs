@@ -195,6 +195,7 @@ export function register(home) {
   const soul=fs.realpathSync(process.env.OATS_SOUL || join(home,'soul'));
   const work=fs.existsSync(join(home,'work'))?fs.realpathSync(join(home,'work')):join(home,'work');
   const decl=declaration(soul);
+  const soulId=process.env.OATS_SOUL_ID || null;
   const bindings=loadBindings(undefined,{sourceHome:home,sourceWork:work});
   const context=fs.realpathSync(process.env.OATS_CONTEXT || meta.repo || fail('E_CONFIG','source requires durable config context'));
   if(overlaps(home,context) && context.startsWith(home)) fail('E_PATH','config context cannot be in disposable home');
@@ -203,11 +204,7 @@ export function register(home) {
   if(!agent || !instance) fail('E_SOURCE','source instance/agent required');
   fs.mkdirSync(bindings.stateDir,{recursive:true,mode:0o700});
   const ownersFile=join(bindings.stateDir,'owners.json');
-  withLock(join(bindings.stateDir,'owners.lock'),()=>{
-    const owners=fs.existsSync(ownersFile)?readJSON(ownersFile):{};
-    if(Object.hasOwn(owners,decl.owner) && owners[decl.owner]!==soul) fail('E_OWNER','stable owner ID already identifies a different soul in this state namespace');
-    owners[decl.owner]=soul;save(ownersFile,owners);
-  });
+  pinOwner(ownersFile,decl.owner,{id:soulId,soulName:agent,path:soul});
   const id=randomUUID(); const dir=join(bindings.stateDir,'sources',id);
   // Copy only the role document, never instance.json wholesale, launch recipes,
   // environment, credentials, source worktree, or third-party message stores.
@@ -234,6 +231,24 @@ export function register(home) {
     throw e;
   }
   return finishRegistration({...source,file});
+}
+/** Pin a stable owner id to the soul it identifies. The kernel names a soul by
+ *  identity (OATS_SOUL_ID: repository key plus soul name) so the pin survives
+ *  the per-commit soul copies a workspace deployment materializes; a classic
+ *  soul keeps the resolved path. A row written by an earlier version as a path
+ *  under agents/<same soul name>/(soul|souls/<commit>) is rewritten to the
+ *  identity once; any other mismatch is a different soul and is refused. */
+export function pinOwner(ownersFile,owner,{id,soulName,path}) {
+  const value=id || path;
+  return withLock(join(dirname(ownersFile),'owners.lock'),()=>{
+    const owners=fs.existsSync(ownersFile)?readJSON(ownersFile):{};
+    if(!obj(owners)) fail('E_OWNER','invalid owner registry');
+    const prior=Object.hasOwn(owners,owner)?owners[owner]:undefined;
+    const samePath=typeof prior==='string' && new RegExp(`/agents/${soulName.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}/(soul|souls/[^/]+)$`).test(prior);
+    if(prior!==undefined && prior!==value && !(id && samePath)) fail('E_OWNER','stable owner ID already identifies a different soul in this state namespace');
+    if(prior!==value) {owners[owner]=value;save(ownersFile,owners);}
+    return value;
+  });
 }
 function enqueue(source,status,payload) {
   const id=hash(payload);const path=join(dirname(source.file),'inputs',`${id}.json`);

@@ -26,6 +26,9 @@
     },
     "state-dir": {
       "description": "Absolute host-owned durable state directory for portable bindings. It is never derived from an instance home."
+    },
+    "git-timeout": {
+      "description": "Seconds allowed for each Git operation that talks to a remote (clone, fetch, push, ls-remote); default 600. Local object reads keep a short fixed limit. Raise it for large repositories behind slow links."
     }
   },
   "agents": [

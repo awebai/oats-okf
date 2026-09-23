@@ -195,6 +195,24 @@ Portable preparation selects explicit capability settings:
 paths and neither is derived from a disposable instance home. `harvest-runtime`
 is selected (manifest default: `pi`); `harvest-model` is optional and is never
 guessed. These nonsecret values are captured into the effective binding.
+`git-timeout` (seconds, default 600) bounds every Git operation that talks to a
+remote: clone, fetch, push and ls-remote. Local object reads keep a short fixed
+limit. A Git base is staged as a single-branch partial clone (blobs fetched on
+first read) and only the base root is materialized, with every other index
+entry marked skip-worktree, so a large repository or one carrying large files
+outside the knowledge base costs nothing beyond the accepted branch's trees.
+
+Owner pins are keyed by the soul identity the kernel provides in
+`OATS_SOUL_ID` (repository key plus soul name for a workspace soul; the resolved
+soul path for a classic soul), so a workspace deployment's per-commit soul
+copies never re-identify a soul. A pin written by an earlier version as a path
+under `agents/<same soul name>/(soul|souls/<commit>)` is rewritten to the
+identity once; any other mismatch stays a refusal.
+
+`oats okf migrate --legacy` stages the accepted base before it writes any
+record, so an unreadable base leaves nothing behind; a failure after the record
+exists is written into it (`receipt.status: failed` with the error), and
+`oats okf migrate --forget ID` removes a record that never delivered.
 
 The manifest exposes broker-owned `binding-normalize`, `binding-bind`, and
 `binding-check` commands. They are bounded JSON protocol entrypoints, not manual
