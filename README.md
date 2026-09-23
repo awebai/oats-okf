@@ -390,12 +390,17 @@ setup failures are reported and retained for retry. Existing disabled jobs are
 not implicitly re-enabled. Its stable cwd is
 the deployment context; argv includes the durable descriptor and `--soul` source
 selector so dispatch remains activation/trust-gated after source retirement.
-Commands clear invoking-instance identity. Source retirement does not remove the
-job synchronously under the scheduler's host lock. Retire only captures/enqueues;
-it never waits for a model or GitHub. An idle retired source job returns empty.
+Commands clear invoking-instance identity. Retire only captures/enqueues; it
+never waits for a model or GitHub. Once a retired source is drained (every
+captured input processed) its `okf-<id>` job is switched off and then removed
+from the kernel scheduler, so `oats schedule list` does not accumulate dead
+rows; the job definition is kept as evidence in the source's own
+`schedule.json`. A source with pending input keeps its job enabled until the
+worker drains it, which then settles the job the same way; a job that is still
+running at that moment stays disabled and is removed on the next settle.
 Unexpected source disappearance still permits processing already-enqueued
 evidence, but reports `finalCaptureUncertified` instead of pretending the unseen
-last input was captured. Disable drained jobs explicitly if desired. No timer is installed automatically.
+last input was captured. No timer is installed automatically.
 
 ```sh
 oats okf inspect --source /absolute/state/sources/UUID/source.json --soul domain-expert --json
