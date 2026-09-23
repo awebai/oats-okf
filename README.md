@@ -198,9 +198,12 @@ guessed. These nonsecret values are captured into the effective binding.
 `git-timeout` (seconds, default 600) bounds every Git operation that talks to a
 remote: clone, fetch, push and ls-remote. Local object reads keep a short fixed
 limit. A Git base is staged as a single-branch partial clone (blobs fetched on
-first read) and only the base root is materialized, with every other index
-entry marked skip-worktree, so a large repository or one carrying large files
-outside the knowledge base costs nothing beyond the accepted branch's trees.
+first read) and only the base root is materialized; the index still carries the
+whole tree, and the scope check accepts an entry outside the root being absent
+from the staging tree, which is now true by construction, while anything
+present or staged outside the root is judged as before. A large repository, or
+one carrying large files outside the knowledge base, costs nothing beyond the
+accepted branch's trees.
 
 Owner pins are keyed by the soul identity the kernel provides in
 `OATS_SOUL_ID` (repository key plus soul name for a workspace soul; the resolved

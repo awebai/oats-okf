@@ -51,7 +51,8 @@ test('stageBase materializes only the base root and reads large objects without 
 test('stageBase clones a single branch and a partial clone when the server allows it',t=>{
   const f=largeRepoFixture(t);const dest=join(f.dir,'stage');
   stageBase(f.base,dest);
-  assert.equal(git(dest,['branch','-r']).split('\n').map(s=>s.trim()).filter(Boolean).join(','),'origin/main','only the accepted branch is fetched');
+  const remoteRefs=git(dest,['for-each-ref','--format=%(refname)','refs/remotes/origin/']).split('\n').filter(r=>r && !r.endsWith('/HEAD'));
+  assert.deepEqual(remoteRefs,['refs/remotes/origin/main'],'only the accepted branch is fetched');
   assert.equal(git(dest,['config','--get','remote.origin.promisor']),'true','partial clone in effect');
 });
 
