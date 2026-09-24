@@ -1,6 +1,6 @@
 # oats.okf 2 — external knowledge, independent judgment
 
-The official OKF knowledge capability: **2.1.2**, requiring **OATS >=0.24.4**.
+The official OKF knowledge capability: **2.1.5**, requiring **OATS >=0.24.4**.
 This is an additive release in the v2 family; wire, payload and record protocol
 versions are unchanged. The v2 runtime is a breaking change from soul-contained
 v1 knowledge. All knowledge lives in external
@@ -102,11 +102,15 @@ Each accepted base carries **`okf-base.json`**:
 ```
 
 Stable owner IDs must not ambiguously identify different souls in one state
-namespace. Nodes are nonoverlapping subdirectories with an index, owned by one
-stable ID. `owns` routes responsibility; `reads` selects initial context. Neither
-is an ACL. Every configured base is discoverable and readable. Missing explicit
-configuration, base metadata, ownership, or indexes fails required spawn safely;
-reads never silently bootstrap empty knowledge.
+namespace. If a stable owner ID already identifies a different soul in this state
+namespace (for example after renaming a knowledge-owning soul after it spawned),
+registration is refused and names both the existing soul and the new one. The two
+remedies are explicit: retire the existing registration first, or use a fresh
+state directory. Nodes are nonoverlapping subdirectories with an index, owned by
+one stable ID. `owns` routes responsibility; `reads` selects initial context.
+Neither is an ACL. Every configured base is discoverable and readable. Missing
+explicit configuration, base metadata, ownership, or indexes fails required spawn
+safely; reads never silently bootstrap empty knowledge.
 
 JSON Schemas are in `schemas/` in the capability and repository. The provider-
 specific portable forms are `okf-portable-declaration.schema.json` and
@@ -197,13 +201,24 @@ is selected (manifest default: `pi`); `harvest-model` is optional and is never
 guessed. These nonsecret values are captured into the effective binding.
 `git-timeout` (seconds, default 600) bounds every Git operation that talks to a
 remote: clone, fetch, push and ls-remote. Local object reads keep a short fixed
-limit. A Git base is staged as a single-branch partial clone (blobs fetched on
-first read) and only the base root is materialized; the index still carries the
-whole tree, and the scope check accepts an entry outside the root being absent
-from the staging tree, which is now true by construction, while anything
-present or staged outside the root is judged as before. A large repository, or
-one carrying large files outside the knowledge base, costs nothing beyond the
-accepted branch's trees.
+limit. Every configured base must be usable at spawn: this is a deployment
+invariant, not a per-soul optimization, because `oats okf read --base <alias>`
+may target any configured base and partial availability would make reads
+ambiguous. A bad base therefore blocks every knowledge source in that deployment,
+and the required hook names the base alias, repository and remedy: fix the
+binding for that alias in the bindings file, or remove the base from the
+bindings. Git base clone, fetch and checkout/materialization failures are typed
+as `E_BASE_UNAVAILABLE` with `{base, repository, step, reason}` where `reason` is
+`timeout`, `auth`, `not-found`, `network` or `unknown`; an `unknown` reason also
+includes the original Git failure text, and raw `spawnSync ETIMEDOUT` is not an
+operator-facing diagnostic. Shallow Git bases are refused before registration as
+`E_BASE_SHALLOW`; bind a full repository instead. A Git base is staged as a
+single-branch partial clone (blobs fetched on first read) and only the base root
+is materialized; the index still carries the whole tree, and the scope check
+accepts an entry outside the root being absent from the staging tree, which is
+now true by construction, while anything present or staged outside the root is
+judged as before. A large repository, or one carrying large files outside the
+knowledge base, costs nothing beyond the accepted branch's trees.
 
 Owner pins are keyed by the soul identity the kernel provides in
 `OATS_SOUL_ID` (repository key plus soul name for a workspace soul; the resolved

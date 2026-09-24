@@ -15,7 +15,7 @@ const CLI=join(CAP,'bin/oats-okf.mjs');
 const mod=p=>import(new URL(`../oats-package/capabilities/oats-okf/lib/${p}.mjs`,import.meta.url));
 const {loadBindings,metadata,validateBindings,validateDeclaration}=await mod('config');
 const {tree,save,readJSON,atomic,digest,withLock,baseLock:unused,quote,command,hash}=await mod('io');
-const {register,registerCaptured,capture,input,loadStatus,loadSource,saveStatus,views,scheduleSource,settleRetiredSchedule}=await mod('sources');
+const {register,registerCaptured,capture,input,loadStatus,loadSource,saveStatus,views,scheduleSource,settleRetiredSchedule,pinOwner}=await mod('sources');
 const {runSource,readRun,complete,retry,completionArgv,completionCommand}=await mod('worker');
 const {initBase,migrate,deliverMigration,cutoverMigration}=await mod('migration');
 const {stageBase,baseLock,journalPath,directoryPublish}=await mod('stores');
@@ -139,7 +139,7 @@ test('exported payload version, floor, required hooks and complete command inven
   assert.ok(fs.statSync(join(ROOT,'oats-package/LICENSE')).isFile());
   assert.equal(fs.readlinkSync(join(CAP,'agents/memory-harvest/CLAUDE.md')),'AGENTS.md','source compatibility alias preserves one canonical instruction file');
   const m=readJSON(join(CAP,'oats.json')),distribution=readJSON(join(ROOT,'oats-package/oats-package.json'));
-  for(const manifest of [readJSON(join(ROOT,'package.json')),distribution,m])assert.equal(manifest.version,'2.1.4');
+  for(const manifest of [readJSON(join(ROOT,'package.json')),distribution,m])assert.equal(manifest.version,'2.1.5');
   for(const manifest of [distribution,m])assert.equal(manifest.compatibility.oats,'>=0.24.4');
   assert.equal(m.hooks.spawn.required,true);
   for(const c of ['harvest','inspect','setup','run-source','complete','retry','migrate','read','refresh','init']) assert.ok(m.commands[c]);
@@ -227,6 +227,42 @@ test('symlink, hardlink, traversal, overlapping paths and ambiguous owners fail 
 test('missing bases never bootstrap during required spawn; legacy bundles get migration diagnostic',t=>{
   const f=fixture(t);put(join(f.soul,'knowledge/index.md'),'legacy remains');const r=f.cli('spawn');assert.equal(r.status,1);assert.match(r.out.warning,/legacy.*migration|legacy.*migrate/);assert.equal(fs.readFileSync(join(f.soul,'knowledge/index.md'),'utf8'),'legacy remains');
   fs.rmSync(join(f.soul,'knowledge'),{recursive:true});fs.rmSync(f.base.path,{recursive:true});const missing=f.cli('spawn');assert.equal(missing.status,1);assert.equal(fs.existsSync(f.base.path),false);
+});
+test('2.1.5 spawn requires OATS_SOUL from the kernel, never the home soul link fallback',t=>{
+  const f=fixture(t),env={...process.env};delete env.OATS_SOUL;
+  const r=spawnSync(process.execPath,[CLI,'spawn','--json'],{cwd:f.home,env,encoding:'utf8',timeout:30000,maxBuffer:16*1024*1024});
+  const out=JSON.parse(r.stdout);assert.equal(r.status,1,r.stdout+r.stderr);
+  assert.match(out.warning,/E_OATS_SOUL_MISSING/);assert.match(out.warning,/OATS_SOUL is not set; oats\.okf hooks and commands run only under the OATS kernel/);
+});
+test('2.1.5 unusable git bases fail with typed alias-specific deployment binding errors before source registration',t=>{
+  const f=fixture(t,{kind:'git'}),raw=readJSON(f.bindingFile),missing=join(f.dir,'missing.git');
+  raw.bases={unreachable:{...raw.bases.project,id:'missing-base',repository:missing},project:raw.bases.project};save(f.bindingFile,raw);
+  const r=f.cli('spawn');assert.equal(r.status,1,r.stdout+r.stderr);assert.equal(fs.existsSync(join(f.home,'.okf-source.json')),false);assert.equal(fs.existsSync(join(f.bindings.stateDir,'owners.json')),false);
+  assert.match(r.out.warning,/E_BASE_UNAVAILABLE/);assert.match(r.out.warning,/unreachable/);assert.match(r.out.warning,/missing\.git/);assert.match(r.out.warning,/reason: not-found/);
+  assert.match(r.out.warning,/required by the deployment's bindings/);assert.doesNotMatch(r.out.warning,/not by this soul/);assert.match(r.out.warning,/fix the binding for base alias "unreachable" in the bindings file, or remove the base from the bindings/);
+});
+test('2.1.5 unclassified git failures keep reason unknown and include the original message',t=>{
+  const f=fixture(t,{kind:'git'});gitWrapper(f,`if(a.includes('clone')) {console.error('strange transport fixture');process.exit(87);}`);
+  let error;assert.throws(()=>{try{stageBase(f.base,join(f.dir,'unknown-git-failure'),{alias:'project'});}catch(e){error=e;throw e;}});
+  assert.equal(error.code,'E_BASE_UNAVAILABLE');assert.equal(error.reason,'unknown');assert.match(error.message,/reason: unknown/);assert.match(error.message,/strange transport fixture/);
+});
+test('2.1.5 shallow git bases are refused with E_BASE_SHALLOW before durable source state',t=>{
+  const f=fixture(t,{kind:'git'}),shallow=join(f.dir,'shallow.git');
+  execFileSync('git',['clone','--bare','--depth','1',`file://${f.repo}`,shallow],{env:{...process.env,PATH:hostPath},stdio:'ignore'});
+  assert.equal(git(shallow,['rev-parse','--is-shallow-repository']),'true');
+  const raw=readJSON(f.bindingFile);raw.bases={shallow:{...raw.bases.project,id:'shallow-base',repository:shallow},project:raw.bases.project};save(f.bindingFile,raw);
+  const r=f.cli('spawn');assert.equal(r.status,1,r.stdout+r.stderr);assert.equal(fs.existsSync(join(f.home,'.okf-source.json')),false);assert.equal(fs.existsSync(join(f.bindings.stateDir,'owners.json')),false);
+  assert.match(r.out.warning,/E_BASE_SHALLOW/);assert.match(r.out.warning,/shallow/);assert.match(r.out.warning,/shallow\.git/);
+  assert.match(r.out.warning,/required by the deployment's bindings/);assert.doesNotMatch(r.out.warning,/not by this soul/);assert.match(r.out.warning,/fix the binding for base alias "shallow" in the bindings file, or remove the base from the bindings/);
+});
+test('2.1.5 owner rename refusal names the old and new souls and both remedies',t=>{
+  const dir=fs.realpathSync(fs.mkdtempSync(join(tmpdir(),'okf-owner-')));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+  const owners=join(dir,'owners.json');pinOwner(owners,'owner-1',{id:'repo:source',soulName:'source',path:'/old/source'});
+  assert.throws(()=>pinOwner(owners,'owner-1',{id:'repo:renamed',soulName:'renamed',path:'/new/renamed'}),error=>{
+    assert.equal(error.code,'E_OWNER');assert.match(error.message,/stable owner ID already identifies a different soul in this state namespace/);
+    assert.match(error.message,/existing .*repo:source/);assert.match(error.message,/new .*repo:renamed/);
+    assert.match(error.message,/retire the existing registration first/i);assert.match(error.message,/fresh state directory/i);return true;
+  });
 });
 test('no-launch sources and service workers never trigger scheduled model launches or recursive capture',t=>{
   const f=fixture(t);const s=f.source();note(f);save(join(f.home,'instance.json'),{instance:'source-one',agent:'source',repo:f.context,work:'directory',launched:false});const before=fs.readFileSync(f.calls,'utf8');assert.equal(runSource(s).status,'skipped');assert.equal(fs.readFileSync(f.calls,'utf8'),before);
