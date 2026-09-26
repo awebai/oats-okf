@@ -21,10 +21,14 @@ function fixture(t) {
   }
   const payload = join(dir, "oats-package");
   const packageManifest = readJson(join(ROOT, "oats-package/oats-package.json"));
-  assert.equal(packageManifest.capabilities.length, 1);
+  assert.equal(packageManifest.capabilities.length, 3);
+  // The whole enumerated payload: three capabilities, the package souls and
+  // the trigger templates. Mutations target the knowledge capability.
+  for (const path of [...packageManifest.capabilities, ...(packageManifest.souls || []), ...(packageManifest.triggers || []).map((t) => t.file)]) {
+    cpSync(join(ROOT, "oats-package", path), join(payload, path), { recursive: true, verbatimSymlinks: true });
+  }
   const capabilityDir = packageManifest.capabilities[0];
   const capabilityRoot = join(payload, capabilityDir);
-  cpSync(join(ROOT, "oats-package", capabilityDir), capabilityRoot, { recursive: true, verbatimSymlinks: true });
   const manifest = readJson(join(capabilityRoot, "oats.json"));
   return {
     dir, payload, capabilityRoot, packageManifest, manifest,
@@ -53,7 +57,7 @@ function rejected(f, message, mutateFiles) {
 test("validator accepts the actual exported release with no unenumerated payload", (t) => {
   const result = fixture(t).run();
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /1 capability manifest/);
+  assert.match(result.stdout, /3 capability manifest\(s\), 2 package soul\(s\) and 1 trigger template\(s\)/);
 });
 
 test('binding reason declarations accept omission and the bounded literal vocabulary',t=>{
@@ -110,13 +114,41 @@ for (const ref of ['https://example.invalid/schema.json', '#/$defs/missing', '#/
 test("validator rejects a missing capability enumeration", (t) => {
   const f = fixture(t);
   delete f.packageManifest.capabilities;
-  rejected(f, /must enumerate exactly one capability directory \(found 0\)/);
+  rejected(f, /must enumerate at least one capability directory/);
 });
 
 test("validator rejects extra capability enumerations", (t) => {
   const f = fixture(t);
   f.packageManifest.capabilities.push("extra-capability");
-  rejected(f, /must enumerate exactly one capability directory \(found 2\)/);
+  rejected(f, /capability directory cannot be resolved: ENOENT/);
+});
+
+test("validator rejects a duplicate capability, a foreign capability id, a version skew and capability agents", (t) => {
+  const f = fixture(t);
+  f.packageManifest.capabilities.push(f.packageManifest.capabilities[0]);
+  rejected(f, /duplicate capability id oats\.okf/);
+  const g = fixture(t);
+  g.manifest.capability = "acme.other"; g.manifest.version = "9.9.9"; g.manifest.agents = ["agents/x"];
+  const r = rejected(g, /must be oats\.okf or oats\.okf-<role>/);
+  assert.match(r.stderr, /must match the package version 4\.0\.0/); assert.match(r.stderr, /capability agents are replaced by package souls/);
+});
+
+test("validator checks package souls and trigger templates", (t) => {
+  const f = fixture(t);
+  f.run(() => writeFileSync(join(f.payload, "souls/knowledge-harvester/soul.yaml"), "schemaVersion: 2\nname: other\nwork: directory\ncapabilities:\n  acme.missing: { from: here }\n"));
+  rejected(f, /name must equal the directory name knowledge-harvester[\s\S]*acme\.missing \(from: here\) is not provided by this package/, () => writeFileSync(join(f.payload, "souls/knowledge-harvester/soul.yaml"), "schemaVersion: 2\nname: other\nwork: directory\ncapabilities:\n  acme.missing: { from: here }\n"));
+  const g = fixture(t);
+  rejected(g, /may name only \{repo\}[\s\S]*found \{title\}/, () => {
+    const file = join(g.payload, "triggers/harvest-review.json"), template = readJson(file);
+    template.definition.spawn.task = "Review {title}"; writeJson(file, template);
+  });
+  const h = fixture(t);
+  rejected(h, /names oats\.okf\/nobody, which this package does not ship/, () => {
+    const file = join(h.payload, "triggers/harvest-review.json"), template = readJson(file);
+    template.definition.spawn.soul = "oats.okf/nobody"; writeJson(file, template);
+  });
+  const i = fixture(t);
+  rejected(i, /soul instructions cannot be resolved: ENOENT/, () => rmSync(join(i.payload, "souls/knowledge-maintainer/AGENTS.md")));
 });
 
 for (const candidate of [null, 42, "", "../scripts", "/tmp", "C:\\outside", "..\\scripts"]) {
@@ -146,7 +178,7 @@ for (const [name, mutate] of [
   });
 }
 
-for (const subtree of ["skills", "agents/memory-harvest", "lib"]) {
+for (const subtree of ["skills", "skills/okf-consultation", "lib"]) {
   test(`validator checks nested resources under exported ${subtree}`, (t) => {
     const f = fixture(t);
     symlinkSync(join(f.dir, "scripts"), join(f.capabilityRoot, subtree, "outside"));
@@ -221,13 +253,15 @@ test("validator accepts package-contained shared skills and required spawn hooks
 test("validator accepts leaf skills and does not impose OKF baseline names on other capabilities", (t) => {
   const f = fixture(t);
   f.packageManifest.package = f.manifest.capability = "example.notes";
+  f.packageManifest.capabilities = [f.packageManifest.capabilities[0]];
+  delete f.packageManifest.souls; delete f.packageManifest.triggers;
   mkdirSync(join(f.capabilityRoot, "custom-skill"));
   writeFileSync(join(f.capabilityRoot, "custom-skill/SKILL.md"), "# Custom skill\n");
   f.manifest.skills = ["custom-skill"];
   let result = f.run();
   assert.equal(result.status, 0, result.stderr);
   // No skills is valid generically. The OKF baseline, not manifest validation,
-  // requires this release's okf + memory-harvest closure.
+  // requires this release's okf-consultation + okf-instance-knowledge closure.
   f.manifest.skills = [];
   result = f.run();
   assert.equal(result.status, 0, result.stderr);
@@ -253,7 +287,7 @@ for (const [name, mutate, message] of [
   }, /skill tree contains no discoverable skill/],
   ["symlink-child-only skill tree", (f) => {
     mkdirSync(join(f.capabilityRoot, "linked-children"));
-    symlinkSync(join(f.capabilityRoot, "skills/okf"), join(f.capabilityRoot, "linked-children/okf"));
+    symlinkSync(join(f.capabilityRoot, "skills/okf-consultation"), join(f.capabilityRoot, "linked-children/okf-consultation"));
     f.manifest.skills = ["linked-children"];
   }, /skill tree contains no discoverable skill/],
   ["undeclared operation command", (f) => { f.manifest.operations.inspect.command = "not-declared"; }, /operations.inspect.command: must name one of the manifest's commands/],
@@ -314,16 +348,18 @@ test("baseline mutation harness accepts the unmodified installed payload", (t) =
 });
 
 for (const [name, mutate, validationStatus, diagnostic] of [
-  ["deleted memory-harvest skill", (f) => {
-    rmSync(join(f.capabilityRoot, "skills/memory-harvest"), { recursive: true });
-  }, 0, /missing required baseline skill memory-harvest/],
-  ["non-file memory-harvest SKILL.md", (f) => {
-    const doc = join(f.capabilityRoot, "skills/memory-harvest/SKILL.md");
+  ["deleted okf-instance-knowledge skill", (f) => {
+    rmSync(join(f.capabilityRoot, "skills/okf-instance-knowledge"), { recursive: true });
+  }, 0, /missing required baseline skill okf-instance-knowledge/],
+  ["non-file okf-consultation SKILL.md", (f) => {
+    const doc = join(f.capabilityRoot, "skills/okf-consultation/SKILL.md");
     rmSync(doc);
     mkdirSync(doc);
-  }, 0, /missing required baseline skill memory-harvest/],
-  ["empty skills declaration", (f) => { f.manifest.skills = []; }, 0, /missing required baseline skill okf/],
-  ["undeclared memory-harvest skill", (f) => { f.manifest.skills = ["skills/okf"]; }, 0, /missing required baseline skill memory-harvest/],
+  }, 0, /missing required baseline skill okf-consultation/],
+  ["empty skills declaration", (f) => { f.manifest.skills = []; }, 0, /missing required baseline skill okf-consultation/],
+  ["harvest doctrine shipped to working souls", (f) => {
+    cpSync(join(f.payload, "capabilities/oats-okf-harvest/skills/knowledge-theory"), join(f.capabilityRoot, "skills/knowledge-theory"), { recursive: true });
+  }, 0, /oats\.okf ships no harvest doctrine \(knowledge-theory\)/],
   ["empty skills directory", (f) => {
     rmSync(join(f.capabilityRoot, "skills"), { recursive: true });
     mkdirSync(join(f.capabilityRoot, "skills"));

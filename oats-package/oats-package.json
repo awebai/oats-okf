@@ -1,11 +1,20 @@
 {
   "package": "oats.okf",
-  "version": "3.0.0",
-  "description": "Official OATS knowledge integration for Open Knowledge Format bundles and continuous memory harvesting.",
+  "version": "4.0.0",
+  "description": "Official OATS knowledge operations on Open Knowledge Format bases: the working-soul knowledge slot (consultation and instance knowledge), the knowledge harvester and maintainer capabilities and package souls, and the harvest-review trigger template.",
   "compatibility": {
-    "oats": ">=0.26.0"
+    "oats": ">=0.29.0"
   },
   "capabilities": [
-    "capabilities/oats-okf"
+    "capabilities/oats-okf",
+    "capabilities/oats-okf-harvest",
+    "capabilities/oats-okf-maintenance"
+  ],
+  "souls": [
+    "souls/knowledge-harvester",
+    "souls/knowledge-maintainer"
+  ],
+  "triggers": [
+    { "id": "harvest-review", "file": "triggers/harvest-review.json" }
   ]
 }

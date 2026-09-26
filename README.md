@@ -2,6 +2,101 @@
 
 The official OKF knowledge capability: **3.0.0**, requiring **OATS >=0.26.0**.
 
+## 4.0.0 — knowledge operations: harvest, maintenance, triggers
+
+Requires OATS **>=0.29.0** (package souls, triggers and workspace automations).
+
+**Three capabilities in one package.**
+
+| Capability | For | Skills | Commands |
+|---|---|---|---|
+| `oats.okf` (knowledge slot) | every working soul with OKF knowledge | `okf-consultation`, `okf-instance-knowledge` | consult (`bases index cat ls links search`), `setup`, `harvest-status`, `init`/`migrate`, source custody (`run-source complete retry`), the spawn and retire hooks |
+| `oats.okf-harvest` | the harvester soul | `knowledge-theory`, `knowledge-harvest`, `okf-authoring` | `okf-harvest complete`, `okf-harvest harvest-status` |
+| `oats.okf-maintenance` | the maintainer soul | `knowledge-theory`, `knowledge-review`, `okf-authoring`, `okf-trigger-setup` | `okf-maintenance review-context`, `okf-maintenance notify-harvester` |
+
+- `knowledge-theory` (the OKF promotion doctrine, formerly `memory-harvest`)
+  and `okf-authoring` (formerly `okf`) ship as identical copies in the two
+  role capabilities; a test fails if they differ.
+- Working souls get no harvest doctrine at all.
+
+**Two package souls.**
+- `oats.okf/knowledge-harvester` and `oats.okf/knowledge-maintainer`: `work:
+  directory`, `team: okf`, `knowledge: none`, each with its own capability
+  `from: here`.
+- They replace the `agents/memory-harvest` capability agent. The manifest has
+  no `agents:`.
+
+**The harvester.**
+- `run-source` spawns `oats.okf/knowledge-harvester` for each run. It joins
+  the okf team through the soul's messaging capability, taken from `spawn
+  --preview`, the same way a trigger spawn does.
+- It must read the notes AND every transcript window. The judgment receipt
+  cites the turn ids a record-fed promotion relied on (`outcomes[].turns`,
+  enforced) and the task refs it saw (`tasks.refs`).
+- `oats okf-harvest complete` runs the source's frozen `oats okf complete`
+  from the source deployment, so there is still ONE publication path. If
+  oats.okf cannot run there, it answers `E_SOURCE_INACTIVE`, and the
+  harvester reports and stays.
+- The PR carries the label `okf-harvest` (created if missing) and a fenced
+  `okf-harvest` provenance block (C3): `{version, run, input[], source: {soul,
+  soulId, instance, ownedNodes, readNodes, bases}, tasks: {provider, refs},
+  harvester: {instance, alias}}`.
+- The harvester stays alive until the PR is merged or closed.
+  `okf-harvest harvest-status` answers `stay`, `retire` or `max-age`.
+  `harvester-max-age` defaults to 7d. The harvester never closes the PR.
+
+**The maintainer.**
+- It is spawned per PR by the `harvest-review` trigger template:
+  `triggers/harvest-review.json`, `repo` required, label `okf-harvest`, soul
+  `oats.okf/knowledge-maintainer`, teams `[okf]`, `max 2, perKey 1`, templated
+  only from whitelisted fields.
+- `review-context` validates the provenance as untrusted input and returns a
+  reading list. The maintainer then merges, amends and merges, requests
+  changes, or closes.
+- It never silently supersedes a human-accepted decision: such a PR gets
+  `okf-needs-human` and goes to a human.
+- `okf-trigger-setup` teaches the workspace automation file first
+  (`oats-triggers/okf-harvest-review.yaml`, `kind: oats-trigger`, `from:
+  oats.okf:harvest-review`, `runsOn`, `owner`), and `oats trigger add` as the
+  machine-private alternative.
+
+**The harvest switch.**
+- `harvest: on|off` is an `oats.okf` setting, **default off**, set per host in
+  `oats-local.yaml` (`oats okf setup --harvest on|off` writes it).
+- A soul may only opt out, with `knowledge: { harvest: off }` in soul.yaml, and
+  the opt-out is absolute. It is read from the soul's own soul.yaml, because
+  the kernel's merged settings are later-wins. An unreadable opt-out counts
+  as off, and so does a soul `harvest: on` (which is also reported).
+- With the switch off, spawn registers no source and there is no schedule,
+  capture or custody. Retire has nothing to capture, and a manual `harvest`
+  answers `E_HARVEST_OFF`.
+- An already registered source's `run-source` does nothing while the
+  deployment's switch is off. Nothing drains when it is switched on.
+- `oats okf harvest-status [--soul X]` reports the effective value, why, and
+  the registered sources.
+
+**Working souls.**
+- The inject teaches the work mode: consult soul and instance knowledge at
+  task start and after compaction; update instance knowledge before
+  compaction; consult again every so often and before decisions; capture with
+  judgment.
+- `okf-instance-knowledge` teaches the capture test, what to capture and what
+  not to, the note form (type, claim, why, evidence, generality) and when to
+  write.
+
+**Removed.**
+- `oats okf read` (`E_REMOVED`; use `cat`).
+- The `memory-harvest` and `okf` skills from `oats.okf`.
+- The `agents/memory-harvest` capability agent.
+
+**Upgrading.**
+- Pin `oats.okf` 4.0.0 on OATS >=0.29.0.
+- Declare the `okf` team with its messaging mapping.
+- Harvest is off until a host sets `harvest: on`, including for sources
+  registered by 3.x.
+- Install the review trigger on the one merge-capable host (see
+  `okf-trigger-setup`).
+
 ## 3.0.0 — consult knowledge remotely; no per-instance copy
 
 **Changed.**

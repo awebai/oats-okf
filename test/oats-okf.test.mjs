@@ -50,7 +50,8 @@ else if(a[0]==='--deployment') {
   const r=spawnSync(process.execPath,[target.cli,...a.slice(5)],{env:{...process.env,OATS_BINDING_FILE:target.bindingFile,...(target.invocationFile?{OATS_INVOCATION_CONTEXT_FILE:target.invocationFile}:{})},encoding:'utf8'});
   process.stdout.write(r.stdout);process.stderr.write(r.stderr);process.exit(r.status ?? 94);
 }
-else if(a[0]==='spawn') {const instance='memory-harvest-'+val('--purpose'),home=join(root,'workers',instance);fs.mkdirSync(join(home,'work'),{recursive:true});fs.writeFileSync(join(home,'instance.json'),JSON.stringify({instance,agent:'memory-harvest',work:'directory',repo:val('--repo'),kind:'capability',launched:false}));fs.copyFileSync(val('--task-file'),join(home,'TASK.md'));out({instance,home,work:'directory',launched:false});}
+else if(a[0]==='spawn' && a.includes('--preview')) {const p=join(root,'preview.json');out(fs.existsSync(p)?JSON.parse(fs.readFileSync(p,'utf8')):{modules:[{name:'oats.okf-harvest',layer:null},{name:'oats.fixture-chat',layer:'messaging'}]});}
+else if(a[0]==='spawn') {if(a[1]!=='oats.okf/knowledge-harvester') {console.error('fixture spawns only the harvester package soul');process.exit(95);}const instance='oats-okf-knowledge-harvester-'+val('--purpose'),home=join(root,'workers',instance);fs.mkdirSync(join(home,'work'),{recursive:true});fs.writeFileSync(join(home,'instance.json'),JSON.stringify({instance,agent:'oats-okf--knowledge-harvester',work:'directory',kind:'persistent',launched:false}));fs.copyFileSync(val('--task-file'),join(home,'TASK.md'));out({instance,home,work:'directory',launched:false});}
 else if(a[0]==='version' && fs.existsSync(join(root,'version.json'))) console.log(fs.readFileSync(join(root,'version.json'),'utf8'));
 else if(a[0]==='session') {console.error('NO MODEL SESSIONS IN FIXTURES');process.exit(91);}
 else if(a[0]==='schedule') {
@@ -73,14 +74,16 @@ else {console.error('unknown fixture call '+JSON.stringify(a));process.exit(90);
 import * as fs from 'node:fs';import {join} from 'node:path';import {execFileSync} from 'node:child_process';
 const a=process.argv.slice(2),val=k=>a[a.indexOf(k)+1],root=process.env.FIXTURE_ROOT,p=join(root,'pr.json');
 fs.appendFileSync(join(root,'gh-calls.jsonl'),JSON.stringify(a)+'\\n');
-if(a[1]==='list') {if(fs.existsSync(join(root,'gh-unavailable'))) process.exit(45);console.log(JSON.stringify((fs.existsSync(p)?JSON.parse(fs.readFileSync(p,'utf8')):[]).filter(pr=>pr.headRefName===val('--head') && (!a.includes('--base') || pr.baseRefName===val('--base')))));}
+if(a[0]==='label') {if(a[1]!=='create' || !a.includes('--force')) process.exit(48);process.exit(fs.existsSync(join(root,'gh-label-fail'))?49:0);}
+else if(a[0]!=='pr') process.exit(44);
+else if(a[1]==='list') {if(fs.existsSync(join(root,'gh-unavailable'))) process.exit(45);console.log(JSON.stringify((fs.existsSync(p)?JSON.parse(fs.readFileSync(p,'utf8')):[]).filter(pr=>pr.headRefName===val('--head') && (!a.includes('--base') || pr.baseRefName===val('--base')))));}
 else if(a[1]==='view') {if(fs.existsSync(join(root,'gh-unavailable'))) process.exit(45);const pr=(fs.existsSync(p)?JSON.parse(fs.readFileSync(p,'utf8')):[]).find(pr=>pr.number===Number(a[2]));if(!pr) {console.error('known PR missing');process.exit(46);}console.log(JSON.stringify(pr));}
-else if(a[1]==='create') {if(fs.existsSync(join(root,'gh-fail'))) process.exit(42);const branch=val('--head'),oid=execFileSync('git',['ls-remote','origin','refs/heads/'+branch],{encoding:'utf8'}).trim().split(/\\s/)[0];const rows=fs.existsSync(p)?JSON.parse(fs.readFileSync(p,'utf8')):[],number=rows.length+1;rows.push({number,url:'https://github.com/fixture/knowledge/pull/'+number,state:'OPEN',headRefName:branch,headRefOid:oid,baseRefName:val('--base'),mergedAt:null,mergeCommit:null});fs.writeFileSync(p,JSON.stringify(rows));if(fs.existsSync(join(root,'gh-uncertain'))) process.exit(43);console.log('https://github.com/fixture/knowledge/pull/1');}
+else if(a[1]==='create') {if(fs.existsSync(join(root,'gh-fail'))) process.exit(42);const branch=val('--head'),oid=execFileSync('git',['ls-remote','origin','refs/heads/'+branch],{encoding:'utf8'}).trim().split(/\\s/)[0];const rows=fs.existsSync(p)?JSON.parse(fs.readFileSync(p,'utf8')):[],number=rows.length+1;rows.push({number,url:'https://github.com/fixture/knowledge/pull/'+number,state:'OPEN',headRefName:branch,headRefOid:oid,baseRefName:val('--base'),mergedAt:null,mergeCommit:null});fs.writeFileSync(join(root,'pr-'+number+'-created.json'),JSON.stringify({title:val('--title'),body:val('--body'),labels:a.filter((x,i)=>a[i-1]==='--label')}));fs.writeFileSync(p,JSON.stringify(rows));if(fs.existsSync(join(root,'gh-uncertain'))) process.exit(43);console.log('https://github.com/fixture/knowledge/pull/1');}
 else process.exit(44);
 `);fs.chmodSync(gh,0o755);
   const repo=join(dir,'accepted-repo'); const base=kind==='directory'?{id:'base-1',kind,path:'base'}:{id:'base-1',kind,repository:repo,root,acceptedBranch:'main',pr:{repository:'fixture/knowledge'}};
   if(kind==='git') {process.env.PATH+=`:${hostPath}`;fs.mkdirSync(repo);git(repo,['init','-q','--initial-branch=main']);}
-  const bindingFile=join(dir,'bindings.json');save(bindingFile,{version:1,stateDir:'state',bases:{project:base}});process.env.OATS_SETTINGS=JSON.stringify({'bindings-file':bindingFile});
+  const bindingFile=join(dir,'bindings.json');save(bindingFile,{version:1,stateDir:'state',bases:{project:base}});process.env.OATS_SETTINGS=JSON.stringify({'bindings-file':bindingFile,harvest:'on'});
   const nodesFile=join(dir,'nodes.json');save(nodesFile,nodes);
   const bindings=loadBindings();
   if(kind==='directory') initBase(bindings,'project',nodesFile,undefined,{confirm:true});
@@ -127,9 +130,11 @@ function capturedExecutionEnv(f,receipt,event,{scope=false}={}) {
 function git(repo,args) {return execFileSync('git',['-C',repo,...args],{encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();}
 function note(f,name='decision.md',text='The human chose explicit custody because hidden fallbacks conceal delivery failures.') {put(join(f.home,'notes',name),`---\ntype: Decision\ntitle: Explicit custody\ndescription: Why custody is explicit.\n---\n\n${text}\n`);}
 function prepared(f,s=f.source()) {capture(s);const r=runSource(s,{manual:true,noLaunch:true});return {s,run:readRun(s,r.run)};}
-function judgment(f,s,run,{drop=false,base='project',node='expert',secret=false}={}) {
+function judgment(f,s,run,{drop=false,base='project',node='expert',secret=false,cite=true}={}) {
   const stage=run.stages[base]; const file=join(run.worker.home,'work','judgment.json');
-  const outcomes=run.inputs.map(id=>({input:id,verdict:drop?'drop':'promote',reason:drop?'Task residue.':'Human accepted rationale passes both tests.',concepts:drop?[]:[{base,path:`${node}/decision.md`}]}));
+  // okf 4.0.0: a promotion from a transcript (record) input cites its turn ids.
+  const turns=id=>{const v=input(s,id);return v.kind==='record' && cite?{turns:v.turns.map(t=>t.id)}:{};};
+  const outcomes=run.inputs.map(id=>({input:id,verdict:drop?'drop':'promote',reason:drop?'Task residue.':'Human accepted rationale passes both tests.',concepts:drop?[]:[{base,path:`${node}/decision.md`}],...turns(id)}));
   if(!drop) {
     put(join(stage.root,node,'decision.md'),`---\ntype: Decision\ntitle: Explicit custody\ndescription: Why custody is explicit.\n---\n\nExplicit custody prevents hidden delivery fallback.\n${secret?'ghp_abcdefghijklmnopqrstuvwxyz0123456789':''}\n${run.inputs.map(id=>'Evidence: OKF input '+id).join('\n')}\n`);
     fs.appendFileSync(join(stage.root,node,'index.md'),'* [Explicit custody](decision.md) - Why custody is explicit.\n');
@@ -144,14 +149,15 @@ test('exported payload version, floor, required hooks and complete command inven
   // npm drops symlinks from published tarballs: the capability tree ships none.
   const links=[];(function walk(dir){for(const d of fs.readdirSync(dir,{withFileTypes:true})){const p=join(dir,d.name);if(d.isSymbolicLink())links.push(p.slice(CAP.length+1));else if(d.isDirectory())walk(p);}})(CAP);
   assert.deepEqual(links,[],'no symlinks anywhere under the capability root');
-  assert.ok(fs.statSync(join(CAP,'agents/memory-harvest/AGENTS.md')).isFile(),'the worker soul keeps its one canonical instruction file');
+  assert.equal(fs.existsSync(join(CAP,'agents')),false,'the harvester is the package soul oats.okf/knowledge-harvester, not a capability agent');
+  assert.ok(fs.statSync(join(ROOT,'oats-package/souls/knowledge-harvester/AGENTS.md')).isFile(),'the harvester soul keeps its one canonical instruction file');
   const m=readJSON(join(CAP,'oats.json')),distribution=readJSON(join(ROOT,'oats-package/oats-package.json'));
-  for(const manifest of [readJSON(join(ROOT,'package.json')),distribution,m])assert.equal(manifest.version,'3.0.0');
-  for(const manifest of [distribution,m])assert.equal(manifest.compatibility.oats,'>=0.26.0');
+  for(const manifest of [readJSON(join(ROOT,'package.json')),distribution,m])assert.equal(manifest.version,'4.0.0');
+  for(const manifest of [distribution,m])assert.equal(manifest.compatibility.oats,'>=0.29.0');
   assert.equal(m.hooks.spawn.required,true);
-  for(const c of ['harvest','inspect','setup','run-source','complete','retry','migrate','read','refresh','init','bases','index','cat','ls','links','search']) assert.ok(m.commands[c]);
-  const inj=fs.readFileSync(join(CAP,m.inject),'utf8');assert.doesNotMatch(inj,/harvest/i);assert.match(inj,/after compaction/);
-  const skill=fs.readFileSync(join(CAP,'skills/memory-harvest/SKILL.md'),'utf8');assert.ok(skill.indexOf('### 3.2 The accept list')<skill.indexOf('## Independent input'));assert.match(skill,/Could it NOT have found this by reading the repository/);
+  for(const c of ['harvest','inspect','setup','run-source','complete','retry','migrate','read','refresh','init','bases','index','cat','ls','links','search','harvest-status']) assert.ok(m.commands[c]);
+  const inj=fs.readFileSync(join(CAP,m.inject),'utf8');assert.doesNotMatch(inj,/memory-harvest|knowledge-theory/);assert.match(inj,/after compaction/);
+  const skill=fs.readFileSync(join(ROOT,'oats-package/capabilities/oats-okf-harvest/skills/knowledge-theory/SKILL.md'),'utf8');assert.ok(skill.indexOf('### 3.2 The accept list')<skill.indexOf('## One canonical home'));assert.match(skill,/Could it NOT have found this by reading the repository/);
 });
 test('c77 OKF declares only own helper omission and unchanged lifecycle input opt-ins',()=>{
   const m=readJSON(join(CAP,'oats.json'));
@@ -180,7 +186,7 @@ test('notes AND complete bounded record backlog are durable before final home de
   fs.rmSync(f.home,{recursive:true});
   const r=runSource(loadSource(s.file),{manual:true,noLaunch:true});const run=readRun(s,r.run);
   const evidence=readJSON(join(run.worker.home,'work/input.json'));assert.equal(evidence.inputs.filter(i=>i.kind==='record').flatMap(i=>i.turns).length,145);assert.equal(evidence.inputs.filter(i=>i.kind==='note').length,1);
-  const calls=fs.readFileSync(f.calls,'utf8').trim().split('\n').map(JSON.parse);const spawn=calls.find(c=>c.a[0]==='spawn');assert.equal(spawn.a.includes('--parent'),false);assert.equal(spawn.a.includes('--work-dir'),false);assert.equal(spawn.a.includes('--branch'),false);
+  const calls=fs.readFileSync(f.calls,'utf8').trim().split('\n').map(JSON.parse);const spawn=calls.find(c=>c.a[0]==='spawn' && !c.a.includes('--preview'));assert.equal(spawn.a.includes('--parent'),false);assert.equal(spawn.a.includes('--work-dir'),false);assert.equal(spawn.a.includes('--branch'),false);
 });
 test('capture incomplete, held, skipped, failed and uncertified results retain home and evidence',t=>{
   const f=fixture(t);const s=f.source();note(f);
@@ -193,11 +199,28 @@ test('notes content rewrite is captured, replay is idempotent, completion never 
   const f=fixture(t);note(f);const {s,run}=prepared(f);note(f,'decision.md','Revised observation while the worker is running.');capture(s);const before=loadStatus(s);assert.equal(before.captured.inputs.length,2);capture(s);assert.equal(loadStatus(s).captured.inputs.length,2);
   const result=complete(s,run.id,judgment(f,s,run));assert.equal(result.processed,true);assert.equal(result.receipts.project.status,'accepted');assert.match(fs.readFileSync(join(f.home,'notes/decision.md'),'utf8'),/Revised/);assert.equal(loadStatus(s).processed.length,1);
 });
+test('harvest worker spawn without a messaging capability records it and spawns without join',t=>{
+  const f=fixture(t);save(join(f.dir,'preview.json'),{modules:[{name:'oats.okf-harvest',layer:null}]});note(f);prepared(f);
+  const calls=fs.readFileSync(f.calls,'utf8').trim().split('\n').map(JSON.parse),spawn=calls.find(c=>c.a[0]==='spawn' && !c.a.includes('--preview')).a;
+  assert.equal(spawn.includes('--provider'),false);
+  const s=register(f.home),run=readRun(s,loadStatus(s).activeRun);assert.deepEqual(run.team,{team:'okf',messaging:null});
+  const task=fs.readFileSync(join(run.worker.home,'TASK.md'),'utf8');
+  assert.match(task,/Load the knowledge-harvest skill first/);assert.match(task,/the notes AND every transcript window; cite the turn ids/);
+  assert.match(task,/'oats' 'okf-harvest' 'complete' '--source'/);assert.match(task,/'oats' 'okf-harvest' 'harvest-status'/);
+  assert.match(task,/stay alive in the okf team until your PR is merged or closed/);assert.match(task,/Never close the PR yourself/);
+  assert.doesNotMatch(task,/memory-harvest|retire normally/);
+});
 for(const [features,flag] of [[['schedule','harness'],'--harness'],[['schedule'],'--runtime'],[null,'--runtime']]) test(`harvest worker spawn passes ${flag} when oats version features are ${JSON.stringify(features)}`,t=>{
   const f=fixture(t);if(features) save(join(f.dir,'version.json'),{schemaVersion:1,name:'@awebai/oats',version:'0.27.1',features});
   note(f);prepared(f);
-  const calls=fs.readFileSync(f.calls,'utf8').trim().split('\n').map(JSON.parse),spawn=calls.find(c=>c.a[0]==='spawn').a;
+  const calls=fs.readFileSync(f.calls,'utf8').trim().split('\n').map(JSON.parse),spawn=calls.find(c=>c.a[0]==='spawn' && !c.a.includes('--preview')).a;
   assert.equal(spawn[spawn.indexOf(flag)+1],'pi');assert.equal(spawn.includes(flag==='--harness'?'--runtime':'--harness'),false);
+  // okf 4.0.0: the harvester is the package soul, joining the okf team through
+  // the messaging capability its preview resolves; no capability-agent flags.
+  assert.equal(spawn[1],'oats.okf/knowledge-harvester');
+  assert.deepEqual(spawn.slice(spawn.indexOf('--provider'),spawn.indexOf('--provider')+3),['--provider','oats.fixture-chat','join=okf']);
+  for(const gone of ['--repo','--work']) assert.equal(spawn.includes(gone),false,gone);
+  assert.ok(calls.some(c=>c.a[0]==='spawn' && c.a[1]==='oats.okf/knowledge-harvester' && c.a.includes('--preview')),'the messaging capability comes from spawn --preview');
   assert.ok(calls.some(c=>c.a[0]==='version' && c.a[1]==='--json'),'the kernel was asked, not guessed');
 });
 test('no-change/all-drop succeeds without invented Git or PR receipt',t=>{
@@ -379,7 +402,7 @@ test('captured registration freezes qualified identity, binding and v2 schedule 
   save(snapshot,receipt.binding);const capturedEnv={OATS_BINDING_FILE:snapshot,OATS_SETTINGS:JSON.stringify({'bindings-file':join(f.dir,'poison.json'),'state-dir':join(f.dir,'poison-state')})},alias=f.base.id;
   const inspected=f.cli('inspect',[],capturedEnv);assert.equal(inspected.status,0);assert.deepEqual(inspected.out.result.authority,{schemaVersion:1,registration:'captured',capture:'recorded',migrationRequired:false,sourceIdentity:receipt.sourceIdentity,executionBinding:receipt.executionBinding,responsibleHuman:{status:'disabled'}});
   for(const [key,value] of [['source',s.file],['owns',s.decl.owns],['reads',s.decl.reads],['bases',s.bindings.bases],['acceptedView',s.acceptedView],['status',loadStatus(s)]]) assert.deepEqual(inspected.out.result[key],value,`existing inspect field ${key} is unchanged`);
-  assert.equal(f.cli('read',['--base',alias],capturedEnv).status,0);assert.equal(f.cli('index',[],capturedEnv).status,0);assert.equal(f.cli('cat',['--base',alias,'/expert/index.md'],capturedEnv).status,0);assert.equal(f.cli('refresh',[],capturedEnv).out.error.code,'E_REMOVED');
+  assert.equal(f.cli('read',['--base',alias],capturedEnv).out.error.code,'E_REMOVED');assert.equal(f.cli('index',[],capturedEnv).status,0);assert.equal(f.cli('cat',['--base',alias,'/expert/index.md'],capturedEnv).status,0);assert.equal(f.cli('refresh',[],capturedEnv).out.error.code,'E_REMOVED');
   const schedulesBefore=fs.readFileSync(join(f.dir,'schedules.json'));const unsupported=f.cli('setup',['--source',s.file],capturedEnv);assert.equal(unsupported.status,1);assert.equal(unsupported.out.error.code,'E_MIGRATION');assert.deepEqual(fs.readFileSync(join(f.dir,'schedules.json')),schedulesBefore);
   save(join(f.home,'instance.json'),{instance:'source-one',agent:'source',kind:'capability',launched:true});assert.equal(f.cli('spawn',[],capturedEnv).out.meta.memory,'okf-v2','captured marker outranks poisoned live service kind');
   note(f);const retired=f.cli('retire',[],capturedEnv);assert.equal(retired.status,0,retired.stdout);assert.equal(retired.out.meta.retired,true,'captured retire uses the exact registered source');
@@ -433,7 +456,7 @@ test('public legacy harvest still registers and replays its existing worker',t=>
   const first=f.cli('harvest',['--no-launch']);assert.equal(first.status,0,first.stdout+first.stderr);assert.equal(first.out.result.status,'ready');
   const second=f.cli('harvest',['--no-launch']);assert.equal(second.status,0,second.stdout+second.stderr);assert.equal(second.out.result.run,first.out.result.run);
   const calls=fs.readFileSync(f.calls,'utf8').trim().split('\n').map(JSON.parse);
-  assert.equal(calls.filter(({a})=>a[0]==='spawn').length,1,'fixture scaffold only, never a real model');assert.ok(calls.some(({a})=>a[0]==='schedule'));
+  assert.equal(calls.filter(({a})=>a[0]==='spawn' && !a.includes('--preview')).length,1,'fixture scaffold only, never a real model');assert.ok(calls.some(({a})=>a[0]==='schedule'));
   assert.equal(calls.some(({a})=>a[0]==='session' || a.includes('install')),false);
 });
 
@@ -566,7 +589,7 @@ function declaredRun(f,name,args=[],operation=false) {
   const r=spawnSync(process.execPath,[join(CAP,entry),...fixed,...args,'--json'],{cwd:f.home,env:process.env,encoding:'utf8',timeout:10000,maxBuffer:16*1024*1024});
   assert.equal(r.status,0,r.stdout+r.stderr);return JSON.parse(r.stdout);
 }
-test('baseline exports the readable okf and memory-harvest skill closure',()=>{
+test('baseline exports the readable okf-consultation and okf-instance-knowledge skill closure',()=>{
   const hasDoc=p=>{try{return fs.statSync(join(p,'SKILL.md')).isFile();}catch{return false;}};
   const skills=new Map();
   for(const declared of manifest.skills || []) {
@@ -574,11 +597,12 @@ test('baseline exports the readable okf and memory-harvest skill closure',()=>{
     const entries=hasDoc(dir)?[{name:dir.split('/').at(-1),dir}]:fs.readdirSync(dir,{withFileTypes:true}).filter(e=>e.isDirectory() && hasDoc(join(dir,e.name))).map(e=>({name:e.name,dir:join(dir,e.name)}));
     for(const e of entries) skills.set(e.name,fs.readFileSync(join(e.dir,'SKILL.md'),'utf8'));
   }
-  for(const name of ['okf','memory-harvest']) {assert.ok(skills.has(name),`missing required baseline skill ${name}`);assert.match(skills.get(name),new RegExp(`^name: ${name}$`,'m'));}
-  assert.ok(fs.statSync(join(CAP,'skills/okf/scripts/okf-validate.mjs')).isFile());
+  for(const name of ['okf-consultation','okf-instance-knowledge']) {assert.ok(skills.has(name),`missing required baseline skill ${name}`);assert.match(skills.get(name),new RegExp(`^name: ${name}$`,'m'));}
+  for(const name of ['okf','memory-harvest','knowledge-theory','okf-authoring']) assert.equal(skills.has(name),false,`oats.okf ships no harvest doctrine (${name})`);
+  assert.ok(fs.statSync(join(CAP,'lib/okf-validate.mjs')).isFile());
 });
 test('baseline harvest operation dispatches its declared command without a hook event',t=>{
-  const f=fixture(t);f.source();note(f);const r=declaredRun(f,'harvest',['--no-launch'],true);assert.equal(r.schemaVersion,1);assert.equal(r.ok,true);assert.equal(r.result.status,'ready');assert.match(r.result.instance,/^memory-harvest-okf-/);
+  const f=fixture(t);f.source();note(f);const r=declaredRun(f,'harvest',['--no-launch'],true);assert.equal(r.schemaVersion,1);assert.equal(r.ok,true);assert.equal(r.result.status,'ready');assert.match(r.result.instance,/^oats-okf-knowledge-harvester-okf-/);
 });
 for(const operation of [false,true]) test(`baseline inspect ${operation?'operation':'command'} returns provider receipts through declared dispatch`,t=>{
   const f=fixture(t);const s=f.source();const status=loadStatus(s);status.diagnostic='large α receipt\n'.repeat(10000);saveStatus(s,status);
@@ -789,10 +813,11 @@ for(const alias of ['input.json','view.json','staging.json','judgment.json','bas
   const r=complete(s,run.id,judgment(f,s,run,{base:alias}));assert.equal(r.receipts[alias].status,'accepted');assert.equal(loadStatus(s).processed.length,1);
   assert.match(readAccepted(s,'/expert/decision.md',alias).text,/Explicit custody/);
   const refresh=f.cli('refresh');assert.equal(refresh.status,1);assert.equal(refresh.out.error.code,'E_REMOVED');
-  const read=f.cli('read',['--base',alias,'--path','expert/decision.md']);assert.equal(read.status,0,read.stdout);
+  const read=f.cli('cat',['--base',alias,'expert/decision.md']);assert.equal(read.status,0,read.stdout);
   assert.equal(read.out.result.receipt.base,alias);assert.equal(read.out.result.path,'expert/decision.md');assert.match(read.out.result.text,/Explicit custody/);
   assertNoLocalCopy(f.home);
-  assert.equal(f.cli('read',['--base',alias,'--path','../../view.json']).out.error.code,'E_PATH');
+  assert.equal(f.cli('cat',['--base',alias,'../../view.json']).out.error.code,'E_PATH');
+  assert.equal(f.cli('read',['--base',alias,'--path','expert/decision.md']).out.error.code,'E_REMOVED');
 });
 // Fail real filesystem renames in-process, then restore the built-in export.
 // No test-only fault controls are added to the shipped implementation.
@@ -1430,7 +1455,7 @@ for(const mode of ['live','retired','missing','reused']) test(`descriptor-select
   if(mode==='reused') {put(join(f.home,'STATE.md'),'replacement home');save(join(f.home,'.okf-source.json'),{version:1,id:'replacement',source:'untrusted'});}
   const before=fs.readdirSync(f.context).sort(),homeFiles=fs.existsSync(f.home)?fs.readdirSync(f.home).sort():null;
   const sourceFiles=fs.readdirSync(dirname(s.file)).sort();
-  const read=externalView(f,'read',['--source',s.file,'--base','project','--path','expert/index.md']);
+  const read=externalView(f,'cat',['--source',s.file,'--base','project','expert/index.md']);
   assert.equal(read.path,'expert/index.md');assert.equal(read.text,fs.readFileSync(join(f.base.path,'expert/index.md'),'utf8'));
   assert.equal(externalView(f,'cat',['--source',s.file,'--base','project','/expert/index.md']).text,read.text);
   const refresh=spawnSync(process.execPath,[CLI,'refresh','--source',s.file,'--json'],{cwd:f.context,env:{...process.env,OATS_HOME:f.context,OATS_INSTANCE_HOME:f.context},encoding:'utf8'});
@@ -1440,7 +1465,7 @@ for(const mode of ['live','retired','missing','reused']) test(`descriptor-select
 });
 test('descriptor-selected reads still reject traversal and non-Markdown paths',t=>{
   const f=fixture(t),s=f.source();capture(s,{final:true});
-  for(const [path,code] of [['../../../../status.json','E_PATH'],['../view.json','E_PATH'],['okf-base.json','E_NOT_MARKDOWN']]) {const r=f.cli('read',['--source',s.file,'--base','project','--path',path]);assert.equal(r.status,1);assert.equal(r.out.error.code,code,path);}
+  for(const [path,code] of [['../../../../status.json','E_PATH'],['../view.json','E_PATH'],['okf-base.json','E_NOT_MARKDOWN']]) {const r=f.cli('cat',['--source',s.file,'--base','project',path]);assert.equal(r.status,1);assert.equal(r.out.error.code,code,path);}
   assert.equal(fs.readdirSync(f.home).some(p=>p.startsWith('knowledge-view-')),false);
 });
 
@@ -1614,8 +1639,8 @@ test('closed proposal recovery: uncertain replacement spawn is linked once and e
   const next=readRun(s,loadStatus(s).activeRun);assert.equal(next.status,'spawn-intent');assert.equal(loadStatus(s).recoveries[run.id],next.id);
   assert.equal(retry(s,{run:run.id,rejudge:true}).run,next.id);
   assert.throws(()=>retry(s,{rejudge:true}),/uncertain worker/);assert.throws(()=>retry(s,{run:next.id,rejudge:true}),/unjudged worker/);
-  const home=join(f.dir,'workers',`memory-harvest-okf-${next.id}`);assert.equal(retry(s,{adoptHome:home}).status,'ready');
-  const calls=fs.readFileSync(f.calls,'utf8').trim().split('\n').map(JSON.parse);assert.equal(calls.filter(c=>c.a[0]==='spawn').length,2);
+  const home=join(f.dir,'workers',`oats-okf-knowledge-harvester-okf-${next.id}`);assert.equal(retry(s,{adoptHome:home}).status,'ready');
+  const calls=fs.readFileSync(f.calls,'utf8').trim().split('\n').map(JSON.parse);assert.equal(calls.filter(c=>c.a[0]==='spawn' && !c.a.includes('--preview')).length,2);
   assert.equal(complete(s,next.id,judgment(f,s,readRun(s,next.id),{drop:true})).processed,true);assert.equal(readJSON(join(f.dir,'pr.json')).length,1);
 });
 
@@ -1709,5 +1734,70 @@ test('recovery identity observation: failed recovery retains discovery before a 
   result=descriptorCLI(f,'retry',['--source',s.file]);assert.equal(result.status,1,result.stdout);
   assert.equal(readJSON(join(f.dir,'pr.json')).length,1);
   const queries=fs.readFileSync(join(f.dir,'gh-calls.jsonl'),'utf8').trim().split('\n').map(JSON.parse);
-  assert.equal(queries.filter(q=>q[1]==='create').length,1);assert.equal(queries.at(-1)[1],'view');
+  assert.equal(queries.filter(q=>q[0]==='pr' && q[1]==='create').length,1);assert.equal(queries.at(-1)[1],'view');
+});
+
+// okf 4.0.0: the harvest switch (deployment on AND soul not off), turn
+// citation, and the provenance-carrying harvest PR.
+const offSettings=f=>({OATS_SETTINGS:JSON.stringify({'bindings-file':f.bindingFile,harvest:'off'})});
+const hasCalls=f=>fs.existsSync(f.calls)?callsOf(f):[];
+test('4.0.0 switch: deployment off spawns with instance knowledge only; retire and manual harvest honour it',t=>{
+  const f=fixture(t);const r=f.cli('spawn',[],offSettings(f));assert.equal(r.status,0,r.stdout+r.stderr);
+  assert.equal(r.out.meta.harvest,'off');assert.match(r.out.meta.reason,/deployment/);assert.match(r.out.brief,/Harvest is off/);assert.match(r.out.brief,/instance knowledge/);
+  assert.equal(fs.existsSync(join(f.home,'.okf-source.json')),false,'no source registered');assert.deepEqual(hasCalls(f),[],'no schedule, capture or spawn call');
+  assert.equal(readJSON(join(f.home,'.okf-instance.json')).harvest,'off');for(const p of ['STATE.md','log.md','notes']) assert.ok(fs.existsSync(join(f.home,p)),p);
+  note(f);const h=f.cli('harvest',[],offSettings(f));assert.equal(h.status,1);assert.equal(h.out.error.code,'E_HARVEST_OFF');
+  const retire=f.cli('retire',[],offSettings(f));assert.equal(retire.status,0,retire.stdout+retire.stderr);assert.deepEqual(retire.out.meta,{retired:true,reason:'harvest-off'});assert.deepEqual(hasCalls(f),[]);
+});
+test('4.0.0 switch: the soul opt-out is absolute; a soul "on" never switches harvest on',t=>{
+  const f=fixture(t);put(join(f.soul,'soul.yaml'),'name: source\nwork: directory\nknowledge: { harvest: off }\n');
+  const r=f.cli('spawn');assert.equal(r.status,0,r.stdout+r.stderr);assert.equal(r.out.meta.harvest,'off');assert.match(r.out.meta.reason,/soul/);assert.equal(fs.existsSync(join(f.home,'.okf-source.json')),false);
+  const g=fixture(t);put(join(g.soul,'soul.yaml'),'name: source\nwork: directory\nknowledge:\n  harvest: on\n');
+  const on=g.cli('spawn');assert.equal(on.status,0,on.stdout+on.stderr);assert.equal(on.out.meta.harvest,'off');assert.match(on.out.warning,/on/);
+  const bad=fixture(t);put(join(bad.soul,'soul.yaml'),'name: source\nknowledge: {harvest: {nested: off}}\n');
+  const closed=bad.cli('spawn');assert.equal(closed.out.meta.harvest,'off','unreadable soul fails closed');
+  const yes=fixture(t);const reg=yes.cli('spawn');assert.equal(reg.status,0,reg.stdout+reg.stderr);assert.equal(reg.out.meta.harvest,'on');assert.ok(fs.existsSync(join(yes.home,'.okf-source.json')));
+});
+test('4.0.0 switch: a registered source captures nothing once the deployment turns harvest off',t=>{
+  const f=fixture(t);const s=f.source();note(f);const before=hasCalls(f).length;
+  const r=f.cli('run-source',['--source',s.file,'--manual','--no-launch'],offSettings(f));assert.equal(r.status,0,r.stdout+r.stderr);assert.equal(r.out.result.status,'harvest-off');
+  assert.equal(hasCalls(f).length,before,'no capture, recall or spawn');assert.equal(loadStatus(s).captured.inputs.length,0);assert.equal(loadStatus(s).activeRun ?? null,null);
+});
+test('4.0.0 harvest-status and setup --harvest report and edit only the deployment setting',t=>{
+  const f=fixture(t);f.source();const st=f.cli('harvest-status');assert.equal(st.status,0,st.stdout+st.stderr);
+  assert.equal(st.out.result.harvest,'on');assert.equal(st.out.result.instance.spawnedWith,'on');assert.equal(st.out.result.sources.length,1);assert.equal(st.out.result.sources[0].soul,'source');
+  const other=f.cli('harvest-status',['--soul','nobody']);assert.deepEqual(other.out.result.sources,[]);
+  const ws=join(f.dir,'ws');put(join(ws,'oats-local.yaml'),'# local\nsettings:\n  oats.okf:\n    bindings-file: b.json\n');
+  const w=f.cli('setup',['--harvest','on'],{OATS_WORKSPACE:ws});assert.equal(w.status,0,w.stdout+w.stderr);assert.equal(w.out.result.written,true);
+  assert.equal(fs.readFileSync(join(ws,'oats-local.yaml'),'utf8'),'# local\nsettings:\n  oats.okf:\n    harvest: on\n    bindings-file: b.json\n');
+  f.cli('setup',['--harvest','off'],{OATS_WORKSPACE:ws});assert.match(fs.readFileSync(join(ws,'oats-local.yaml'),'utf8'),/ {4}harvest: off\n/);
+  put(join(ws,'oats-local.yaml'),'settings: {oats.okf: {harvest: off}}\n');const flow=f.cli('setup',['--harvest','on'],{OATS_WORKSPACE:ws});assert.equal(flow.out.result.written,false);assert.match(flow.out.result.add,/harvest: on/);
+  assert.equal(f.cli('setup',['--harvest','yes'],{OATS_WORKSPACE:ws}).out.error.code,'E_USAGE');assert.equal(f.cli('setup',['--harvest','on','--enable'],{OATS_WORKSPACE:ws}).out.error.code,'E_USAGE');
+});
+test('4.0.0 judgment: transcript promotions cite their turn ids; task refs are bounded strings',t=>{
+  const f=fixture(t),s=f.source();records(f,2,64);capture(s);const r=runSource(s,{manual:true,noLaunch:true});const run=readRun(s,r.run);
+  const file=judgment(f,s,run,{cite:false});assert.throws(()=>complete(s,run.id,file),/must cite the turn ids/);
+  const j=readJSON(file);j.outcomes[0].turns=['turn-404'];save(file,j);assert.throws(()=>complete(s,run.id,file),/turns must be turn ids/);
+  const cited=judgment(f,s,run);const k=readJSON(cited);
+  for(const tasks of [{refs:[42]},{refs:['x'.repeat(257)]},{refs:['a\nb']},{refs:Array(101).fill('t')},{refs:['t'],extra:1},['t']]) {save(cited,{...k,tasks});assert.throws(()=>complete(s,run.id,cited),/tasks must be/);}
+  save(cited,{...k,tasks:{refs:['aweb:task-7','aweb:task-7']}});const done=complete(s,run.id,cited);assert.equal(done.processed,true);
+});
+test('4.0.0 note inputs carry no turns',t=>{
+  const f=fixture(t);note(f);const {s,run}=prepared(f);const file=judgment(f,s,run);const j=readJSON(file);j.outcomes[0].turns=['turn-0'];save(file,j);
+  assert.throws(()=>complete(s,run.id,file),/only transcript/);j.outcomes[0].turns=[];save(file,j);assert.equal(complete(s,run.id,file).processed,true);
+});
+test('4.0.0 Git delivery opens a labelled okf-harvest PR carrying the provenance block',t=>{
+  const f=fixture(t,{kind:'git'});note(f);const {s,run}=prepared(f);const file=judgment(f,s,run);save(file,{...readJSON(file),tasks:{refs:['aweb:task-7']}});
+  const r=complete(s,run.id,file);assert.equal(r.receipts.project.status,'delivered');
+  const gh=fs.readFileSync(join(f.dir,'gh-calls.jsonl'),'utf8').trim().split('\n').map(JSON.parse);
+  assert.ok(gh.some(a=>a[0]==='label' && a[1]==='create' && a[2]==='okf-harvest' && a.includes('--repo') && a.includes('fixture/knowledge')),'the label is ensured first');
+  const pr=readJSON(join(f.dir,'pr-1-created.json'));assert.deepEqual(pr.labels,['okf-harvest']);assert.equal(pr.title,`okf-harvest: ${run.id}`);
+  const m=/```okf-harvest\n([\s\S]*?)\n```/.exec(pr.body);assert.ok(m,'fenced provenance block');const p=JSON.parse(m[1]);
+  assert.equal(p.version,1);assert.equal(p.run,run.id);assert.deepEqual(p.input,run.inputs);assert.equal(p.source.soul,'source');assert.equal(p.source.instance,'source-one');
+  assert.deepEqual(p.source.ownedNodes,['project/expert']);assert.deepEqual(p.tasks.refs,['aweb:task-7']);assert.equal(p.harvester.instance,run.worker.instance);
+  assert.equal(git(f.repo,['log','-1','--format=%s',r.receipts.project.branch]),`okf-harvest: ${run.id}`);
+});
+test('4.0.0 a failing label create never blocks the PR',t=>{
+  const f=fixture(t,{kind:'git'});note(f);put(join(f.dir,'gh-label-fail'),'');const {s,run}=prepared(f);
+  assert.equal(complete(s,run.id,judgment(f,s,run)).receipts.project.status,'delivered');assert.deepEqual(readJSON(join(f.dir,'pr-1-created.json')).labels,['okf-harvest']);
 });

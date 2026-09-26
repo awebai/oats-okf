@@ -1,0 +1,8 @@
+schemaVersion: 2
+name: knowledge-harvester
+description: Judges one source instance's captured evidence (notes and session transcript) against the OKF promotion doctrine, stages owned-node edits, opens the harvest PR, and stays in the okf team until it is merged or closed.
+work: directory
+team: okf
+knowledge: none
+capabilities:
+  oats.okf-harvest: { from: here }
