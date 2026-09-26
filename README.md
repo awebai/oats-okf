@@ -1,8 +1,59 @@
-# oats.okf 2 — external knowledge, independent judgment
+# oats.okf 3 — external knowledge, consulted remotely, independent judgment
 
-The official OKF knowledge capability: **2.1.5**, requiring **OATS >=0.24.4**.
-This is an additive release in the v2 family; wire, payload and record protocol
-versions are unchanged. The v2 runtime is a breaking change from soul-contained
+The official OKF knowledge capability: **3.0.0**, requiring **OATS >=0.26.0**.
+
+## 3.0.0 — consult knowledge remotely; no per-instance copy
+
+**Changed.**
+- Instances consult their soul's knowledge **remotely, at the accepted state**:
+  no knowledge bytes are copied into an instance home. A new consult CLI ships
+  in the capability — `oats okf bases`, `index`, `cat`, `ls`, `links` and
+  `search` (all with `--json`) — reading a Git base's accepted commit from a
+  host-wide bare partial clone at `<stateDir>/cache/<base-id>.git` (blobs are
+  fetched on first read), and a directory base in place under its cooperative
+  lock. Only the accepted commit is ever served; `--fresh` refetches the
+  accepted branch, otherwise it is refetched when older than the new
+  `consult-max-age` setting (seconds, default 300). A failed fetch serves the
+  last fetched accepted commit with `stale: true` and the reason. Every answer
+  carries a receipt `{base, kind, commit|digest, fetchedAt, stale}`. Paths
+  resolve like OKF links and never leave the base root.
+- A new full skill, **`okf-consultation`** (plus `references/consult.md`),
+  teaches the consult CLI: the model, the task-start checklist,
+  consult-while-working triggers, navigation, search, citing, freshness and
+  gotchas. The `okf` skill stays the format/authoring craft and points to it.
+  The injection names two kinds of knowledge and tells every instance to
+  consult both at the start of every task, after compaction and while it
+  works, to make decisions and to understand things:
+  - **soul knowledge**, the accepted bases, read by consultation: load
+    `okf-consultation`, then use `oats okf index`, `cat` and `search`;
+  - **instance knowledge**: its own STATE.md, log.md and notes/.
+- Spawn registers the accepted resolution (per base: commit or digest, and its
+  nodes, validated once per commit and cached) without materializing files;
+  the spawn brief points at `oats okf index`. `read --base A --path P` stays as
+  an alias of `cat` (same `path`/`text`/`receipt` fields).
+- The memory-harvest worker is spawned with `--harness` when `oats version`
+  reports the `harness` feature, else `--runtime`. The kernel composes no okf
+  injection for a capability agent, so the consultation protocol does not
+  apply to the worker. Its `AGENTS.md` says it judges owned nodes from its
+  staged roots in `./work`, never through `oats okf index|cat|search`: those
+  serve the accepted state, not its staging.
+
+**Removed.** The `./knowledge/` snapshot and every per-call
+`knowledge-view-<uuid>` directory. The memory-harvest worker soul's
+`CLAUDE.md -> AGENTS.md` symlink (npm drops symlinks; the capability tree now
+ships none and a test enforces it — the kernel composes each instance's
+`CLAUDE.md` itself). `oats okf refresh` returns `E_REMOVED` (okf
+3.0.0 has no per-instance views; `index`/`cat` always read the accepted state).
+Harvest staging, which is a worker scratch rather than an instance copy, is
+unchanged.
+
+**Upgrading.** Nothing to do on the host. A 2.x instance's `./knowledge/` is
+ignored — `oats okf inspect` reports it as `legacy-local-view` — and may be
+deleted by hand. Wire, payload and record protocol versions are unchanged.
+
+## Background
+
+The v2 runtime was a breaking change from soul-contained
 v1 knowledge. All knowledge lives in external
 bases. Skills remain curated soul artifacts; v2 never automatically edits them.
 Procedure candidates may become external Playbook concepts.
@@ -202,7 +253,7 @@ guessed. These nonsecret values are captured into the effective binding.
 `git-timeout` (seconds, default 600) bounds every Git operation that talks to a
 remote: clone, fetch, push and ls-remote. Local object reads keep a short fixed
 limit. Every configured base must be usable at spawn: this is a deployment
-invariant, not a per-soul optimization, because `oats okf read --base <alias>`
+invariant, not a per-soul optimization, because `oats okf cat --base <alias>`
 may target any configured base and partial availability would make reads
 ambiguous. A bad base therefore blocks every knowledge source in that deployment,
 and the required hook names the base alias, repository and remedy: fix the
@@ -270,7 +321,7 @@ incarnation or grant new worker/native authority. See
 New captured persistent sources receive a schedule with
 `definitionVersion: 2`, `recurrencePolicy: "capture"`, explicit saved
 `--deployment`/`--resolution` selectors and `--json`. It omits legacy `--soul`
-selection. Read, refresh, inspect and existing-run completion use the exact frozen
+selection. Consult reads, inspect and existing-run completion use the exact frozen
 descriptor after source/config deletion. **First-cut captured worker creation is
 operation-only:** a current admitted persistent-instance `knowledge:harvest`
 operation with an explicit backend request may create and launch its retained
@@ -329,39 +380,46 @@ They are not instructed to run harvesting or told how a harvester operates.
 After compaction/resume, re-read state and relevant indexes. Consult prior
 rationale before re-deriving it. Do not bulk-load bases or mirror repository code.
 
-Spawn creates an **immutable accepted snapshot** at `./knowledge/`; `view.json`
-records each base's relative `path` (`bases/<alias>`), digest and Git accepted
-head. Base content lives only under `./knowledge/bases/<alias>/`, separate from
-the control receipt; aliases such as `view.json` remain valid. Root links such as
-`/steward/decision.md` resolve from that base's snapshot, not filesystem `/`.
-Fresh provider reads coordinate with publication:
+There is **no local copy** of any base in an instance home (3.0.0). Spawn
+records the accepted resolution (per base: Git commit or directory digest, and
+its nodes) in the source descriptor; the instance reads through the consult CLI,
+from its home:
 
 ```sh
-oats okf read --base project --path expert/index.md --json
-oats okf refresh --json    # returns a NEW immutable view path; old views remain
+oats okf index                                   # owned then read nodes' indexes
+oats okf cat --base project /expert/decisions/retry-policy.md
+oats okf links --base project /expert/decisions/retry-policy.md
+oats okf cat --base project ../lessons/storm.md --from /expert/decisions/retry-policy.md
+oats okf ls --base project /expert/lessons       # entries + frontmatter type/title/description
+oats okf search backoff                          # [--base A | --all] [--node N] [--regex]
+oats okf bases                                   # accepted commit, freshness, validity, owns/reads
 # From deployment context, including after source retirement:
-oats okf read --source /absolute/state/sources/UUID/source.json --base project --path expert/index.md --soul domain-expert --json
-oats okf refresh --source /absolute/state/sources/UUID/source.json --soul domain-expert --json
+oats okf cat --source /absolute/state/sources/UUID/source.json --base project expert/index.md --soul domain-expert --json
 ```
 
-Home-selected reads/refreshes create `./knowledge-view-<uuid>/` in that home.
-**Every `--source` read/refresh creates its new view under
-`<stateDir>/sources/<source-id>/views/knowledge-view-<uuid>/`**, even if the source
-is still live. It never writes a cache into the invoking context/repository,
-a replacement home, or a retired/missing home. `path` and base receipts identify
-the actual materialized view. Choose either `--home` or `--source`, not both.
+Paths resolve like OKF links: `/node/x.md` from the base root, a relative path
+against `--from`'s directory, a bare `node/x.md` from the root. `..` escapes,
+filesystem paths, URLs, hidden paths, symlinks and submodules are refused.
 
-Directory readers hold the same cooperative lock as publication while copying
-accepted bytes. A pending journal blocks fresh views rather than exposing a
-half-update. A view is published only after all bases and node references validate;
-failed builds remove only their private staging directory and can be retried at
-the same destination. Registration prepares its view before saving the durable
-source pointer, then publishes it; retries after that pointer resume the same
-source and snapshot without resetting evidence. Pre-existing unregistered views
-are preserved and reported, not deleted. Existing views remain valid older snapshots. Git readers clone the
-configured accepted branch; an open PR is not accepted knowledge. Views have no
-automatic garbage collection. Cannot-write is explicit guidance, **not an OS
-sandbox**; all tools run with the user's ordinary access.
+Git bases are read from one host-wide **bare partial clone** per base
+(`<stateDir>/cache/<base-id>.git`, `--filter=blob:none --single-branch`) at the
+fetched `refs/heads/<acceptedBranch>`: the same preflight, shallow, remote and
+hardening checks as staging apply; blobs arrive on first read (a batched fetch
+precedes `ls`/`search`). A per-base lock serializes clone/fetch; a cold cache is
+built aside and renamed into place. The accepted branch is refetched when
+`consult-max-age` has passed or with `--fresh`; a failed fetch serves the
+cached commit with `stale: true` and its reason; with nothing cached the read
+fails with `E_BASE_UNAVAILABLE`. `bases` reports whether the accepted commit
+validates; the verdict is cached per commit (computing it materializes the
+base root into a transient host scratch, removed immediately).
+
+Directory readers hold the same cooperative lock as publication while reading
+accepted bytes in place (staging and publication queue behind them for up to
+10 s). A pending journal refuses reads with `E_RECOVERY` rather than exposing a
+half-update. An open PR is not accepted knowledge. A `./knowledge/` left by okf
+2.x is never read or deleted; inspect reports it as `legacy-local-view`.
+Cannot-write is explicit guidance, **not an OS sandbox**; all tools run with the
+user's ordinary access.
 
 ## Durable per-source capture and automation
 
@@ -395,7 +453,7 @@ State layout (private, local, **no automatic evidence deletion**):
 <stateDir>/sources/<uuid>/runs/<uuid>/previous.json # frozen predecessor on recovery
 <stateDir>/sources/<uuid>/recovery-observations/<hash>.json
                                             # first verified PR identity per publication
-<stateDir>/sources/<uuid>/views/             # descriptor-selected read/refresh caches
+<stateDir>/cache/<base-id>.git               # host-wide consult cache (bare partial clone)
 <stateDir>/migrations/<uuid>/               # explicit migration preservation
 ```
 

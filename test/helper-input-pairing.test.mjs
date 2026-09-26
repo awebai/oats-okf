@@ -18,7 +18,7 @@ const PRODUCER=Object.freeze({
   base:'be2460c52bf5403d8edcc7058ffe8e0dc58d0952',
   patchSha256:'a29db161dc87a90360ec2ecde1629b6b294835368ce8363c1eac7587f81f78ac',
 });
-const SCHEMA_SHA='a43b48076e2ec41a2c03cd429230d2c011f74959e5dd98ff080a46f27930c77d'; // 2.1.3: pin re-approved to the reasons-bearing schema landed in e9ea54d (the pin was not updated then)
+const SCHEMA_SHA='8f0f14799de6abdcfd19486a1c266594dd162c93ab55b3450ff8b4763e0b67f5'; // 3.0.0: byte-identical to oats v0.27.1 docs/capability-manifest.schema.json (was a43b4807… for 2.1.3)
 const framework=process.env.OATS_HELPER_INPUT_FRAMEWORK_ROOT;
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
 const json=file=>JSON.parse(fs.readFileSync(file,'utf8'));

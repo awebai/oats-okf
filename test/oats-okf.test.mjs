@@ -15,7 +15,10 @@ const CLI=join(CAP,'bin/oats-okf.mjs');
 const mod=p=>import(new URL(`../oats-package/capabilities/oats-okf/lib/${p}.mjs`,import.meta.url));
 const {loadBindings,metadata,validateBindings,validateDeclaration}=await mod('config');
 const {tree,save,readJSON,atomic,digest,withLock,baseLock:unused,quote,command,hash}=await mod('io');
-const {register,registerCaptured,capture,input,loadStatus,loadSource,saveStatus,views,scheduleSource,settleRetiredSchedule,pinOwner}=await mod('sources');
+const {register,registerCaptured,capture,input,loadStatus,loadSource,saveStatus,scheduleSource,settleRetiredSchedule,pinOwner}=await mod('sources');
+const {cat:consultCat,acceptedResolution}=await mod('consult');
+/** An okf 3.0.0 consult read of one accepted file (no local view). */
+const readAccepted=(s,path='/expert/index.md',alias=Object.keys(s.bindings.bases)[0])=>consultCat(s,{base:alias},[path]).result;
 const {runSource,readRun,complete,retry,completionArgv,completionCommand}=await mod('worker');
 const {initBase,migrate,deliverMigration,cutoverMigration}=await mod('migration');
 const {stageBase,baseLock,journalPath,directoryPublish}=await mod('stores');
@@ -48,6 +51,7 @@ else if(a[0]==='--deployment') {
   process.stdout.write(r.stdout);process.stderr.write(r.stderr);process.exit(r.status ?? 94);
 }
 else if(a[0]==='spawn') {const instance='memory-harvest-'+val('--purpose'),home=join(root,'workers',instance);fs.mkdirSync(join(home,'work'),{recursive:true});fs.writeFileSync(join(home,'instance.json'),JSON.stringify({instance,agent:'memory-harvest',work:'directory',repo:val('--repo'),kind:'capability',launched:false}));fs.copyFileSync(val('--task-file'),join(home,'TASK.md'));out({instance,home,work:'directory',launched:false});}
+else if(a[0]==='version' && fs.existsSync(join(root,'version.json'))) console.log(fs.readFileSync(join(root,'version.json'),'utf8'));
 else if(a[0]==='session') {console.error('NO MODEL SESSIONS IN FIXTURES');process.exit(91);}
 else if(a[0]==='schedule') {
   if(a.includes('install')) {console.error('NO HOST TIMERS IN FIXTURES');process.exit(92);}
@@ -137,12 +141,15 @@ function judgment(f,s,run,{drop=false,base='project',node='expert',secret=false}
 test('exported payload version, floor, required hooks and complete command inventory',()=>{
   for(const obsolete of ['oats.json','bin','agents','skills','injects']) assert.equal(fs.existsSync(join(ROOT,'oats-package',obsolete)),false,`obsolete unenumerated root payload: ${obsolete}`);
   assert.ok(fs.statSync(join(ROOT,'oats-package/LICENSE')).isFile());
-  assert.equal(fs.readlinkSync(join(CAP,'agents/memory-harvest/CLAUDE.md')),'AGENTS.md','source compatibility alias preserves one canonical instruction file');
+  // npm drops symlinks from published tarballs: the capability tree ships none.
+  const links=[];(function walk(dir){for(const d of fs.readdirSync(dir,{withFileTypes:true})){const p=join(dir,d.name);if(d.isSymbolicLink())links.push(p.slice(CAP.length+1));else if(d.isDirectory())walk(p);}})(CAP);
+  assert.deepEqual(links,[],'no symlinks anywhere under the capability root');
+  assert.ok(fs.statSync(join(CAP,'agents/memory-harvest/AGENTS.md')).isFile(),'the worker soul keeps its one canonical instruction file');
   const m=readJSON(join(CAP,'oats.json')),distribution=readJSON(join(ROOT,'oats-package/oats-package.json'));
-  for(const manifest of [readJSON(join(ROOT,'package.json')),distribution,m])assert.equal(manifest.version,'2.1.5');
-  for(const manifest of [distribution,m])assert.equal(manifest.compatibility.oats,'>=0.24.4');
+  for(const manifest of [readJSON(join(ROOT,'package.json')),distribution,m])assert.equal(manifest.version,'3.0.0');
+  for(const manifest of [distribution,m])assert.equal(manifest.compatibility.oats,'>=0.26.0');
   assert.equal(m.hooks.spawn.required,true);
-  for(const c of ['harvest','inspect','setup','run-source','complete','retry','migrate','read','refresh','init']) assert.ok(m.commands[c]);
+  for(const c of ['harvest','inspect','setup','run-source','complete','retry','migrate','read','refresh','init','bases','index','cat','ls','links','search']) assert.ok(m.commands[c]);
   const inj=fs.readFileSync(join(CAP,m.inject),'utf8');assert.doesNotMatch(inj,/harvest/i);assert.match(inj,/after compaction/);
   const skill=fs.readFileSync(join(CAP,'skills/memory-harvest/SKILL.md'),'utf8');assert.ok(skill.indexOf('### 3.2 The accept list')<skill.indexOf('## Independent input'));assert.match(skill,/Could it NOT have found this by reading the repository/);
 });
@@ -159,7 +166,7 @@ test('help is side-effect free, including malformed settings and every declared 
   const f=fixture(t);for(const cmd of Object.keys(readJSON(join(CAP,'oats.json')).commands)) {const r=f.cli(cmd,['--help'],{OATS_SETTINGS:'!'});assert.equal(r.status,0,r.stderr);assert.match(r.stdout,/oats okf/);}assert.equal(fs.existsSync(f.calls),false);
 });
 test('directory init, cross-node views, role evidence allowlist and inactive scheduler',t=>{
-  const f=fixture(t);const s=f.source();assert.ok(fs.existsSync(join(f.home,'knowledge/bases/project/peer/index.md')));assert.equal(s.owner,'owner-1');assert.equal(s.launchRecipe,undefined);assert.equal(s.settings,undefined);scheduleSource(s);
+  const f=fixture(t);const s=f.source();assertNoLocalCopy(f.home);assert.match(readAccepted(s,'/peer/index.md').text,/# peer/);assert.equal(s.owner,'owner-1');assert.equal(s.launchRecipe,undefined);assert.equal(s.settings,undefined);scheduleSource(s);
   const calls=fs.readFileSync(f.calls,'utf8').trim().split('\n').map(JSON.parse);assert.equal(calls[0].a[0],'schedule');assert.equal(calls[0].identity,null);
   const spec=readJSON(join(dirname(s.file),'schedule.json'));assert.equal(spec.cwd,f.context);assert.ok(spec.argv.includes('--soul'));assert.equal(spec.argv.includes(f.home),false);
   assert.equal(f.cli('inspect').out.result.scheduler.active,false);
@@ -186,12 +193,19 @@ test('notes content rewrite is captured, replay is idempotent, completion never 
   const f=fixture(t);note(f);const {s,run}=prepared(f);note(f,'decision.md','Revised observation while the worker is running.');capture(s);const before=loadStatus(s);assert.equal(before.captured.inputs.length,2);capture(s);assert.equal(loadStatus(s).captured.inputs.length,2);
   const result=complete(s,run.id,judgment(f,s,run));assert.equal(result.processed,true);assert.equal(result.receipts.project.status,'accepted');assert.match(fs.readFileSync(join(f.home,'notes/decision.md'),'utf8'),/Revised/);assert.equal(loadStatus(s).processed.length,1);
 });
+for(const [features,flag] of [[['schedule','harness'],'--harness'],[['schedule'],'--runtime'],[null,'--runtime']]) test(`harvest worker spawn passes ${flag} when oats version features are ${JSON.stringify(features)}`,t=>{
+  const f=fixture(t);if(features) save(join(f.dir,'version.json'),{schemaVersion:1,name:'@awebai/oats',version:'0.27.1',features});
+  note(f);prepared(f);
+  const calls=fs.readFileSync(f.calls,'utf8').trim().split('\n').map(JSON.parse),spawn=calls.find(c=>c.a[0]==='spawn').a;
+  assert.equal(spawn[spawn.indexOf(flag)+1],'pi');assert.equal(spawn.includes(flag==='--harness'?'--runtime':'--harness'),false);
+  assert.ok(calls.some(c=>c.a[0]==='version' && c.a[1]==='--json'),'the kernel was asked, not guessed');
+});
 test('no-change/all-drop succeeds without invented Git or PR receipt',t=>{
   const f=fixture(t);note(f);const {s,run}=prepared(f);const r=complete(s,run.id,judgment(f,s,run,{drop:true}));assert.equal(r.status,'processed');assert.equal(r.receipts.project.status,'no-change');assert.equal(r.receipts.project.pr,undefined);
 });
 test('directory delivery uses no git/gh tools and confirms reader-visible bytes',t=>{
   const f=fixture(t);fs.unlinkSync(join(f.dir,'bin','gh'));note(f);const {s,run}=prepared(f);const r=complete(s,run.id,judgment(f,s,run));assert.equal(r.receipts.project.status,'accepted');assert.ok(fs.existsSync(join(f.base.path,'expert/decision.md')));
-  const target=join(f.dir,'fresh-reader');views(s.bindings,s.decl,target);assert.match(fs.readFileSync(join(target,'bases/project/expert/decision.md'),'utf8'),/prevents hidden delivery/);
+  assert.match(readAccepted(s,'/expert/decision.md').text,/prevents hidden delivery/,'a consult read sees the accepted bytes in place');
 });
 test('directory baseline conflict retains pending input and permits explicit rejudgment',t=>{
   const f=fixture(t);note(f);const {s,run}=prepared(f);const j=judgment(f,s,run);fs.appendFileSync(join(f.base.path,'peer/log.md'),'other writer\n');assert.throws(()=>complete(s,run.id,j),/base changed/);assert.equal(loadStatus(s).processed.length,0);
@@ -201,7 +215,7 @@ test('directory crash midway publication blocks readers, retry recovers and conf
   const f=fixture(t);note(f);const {s,run}=prepared(f);const j=judgment(f,s,run);
   assert.throws(()=>complete(s,run.id,j,{afterWrite:n=>{if(n===1)throw new Error('simulated crash');}}),/simulated crash/);
   assert.equal(fs.existsSync(journalPath(f.base)),true);assert.equal(loadStatus(s).processed.length,0);
-  assert.throws(()=>views(s.bindings,s.decl,join(f.dir,'blocked-reader')),/publication pending/);
+  assert.throws(()=>readAccepted(s),/publication pending/);
   const r=retry(s);assert.equal(r.processed,true);assert.equal(fs.existsSync(journalPath(f.base)),false);assert.equal(loadStatus(s).processed.length,1);
 });
 test('source and base contention do not expire or steal locks',t=>{
@@ -365,7 +379,7 @@ test('captured registration freezes qualified identity, binding and v2 schedule 
   save(snapshot,receipt.binding);const capturedEnv={OATS_BINDING_FILE:snapshot,OATS_SETTINGS:JSON.stringify({'bindings-file':join(f.dir,'poison.json'),'state-dir':join(f.dir,'poison-state')})},alias=f.base.id;
   const inspected=f.cli('inspect',[],capturedEnv);assert.equal(inspected.status,0);assert.deepEqual(inspected.out.result.authority,{schemaVersion:1,registration:'captured',capture:'recorded',migrationRequired:false,sourceIdentity:receipt.sourceIdentity,executionBinding:receipt.executionBinding,responsibleHuman:{status:'disabled'}});
   for(const [key,value] of [['source',s.file],['owns',s.decl.owns],['reads',s.decl.reads],['bases',s.bindings.bases],['acceptedView',s.acceptedView],['status',loadStatus(s)]]) assert.deepEqual(inspected.out.result[key],value,`existing inspect field ${key} is unchanged`);
-  assert.equal(f.cli('read',['--base',alias],capturedEnv).status,0);assert.equal(f.cli('refresh',[],capturedEnv).status,0);
+  assert.equal(f.cli('read',['--base',alias],capturedEnv).status,0);assert.equal(f.cli('index',[],capturedEnv).status,0);assert.equal(f.cli('cat',['--base',alias,'/expert/index.md'],capturedEnv).status,0);assert.equal(f.cli('refresh',[],capturedEnv).out.error.code,'E_REMOVED');
   const schedulesBefore=fs.readFileSync(join(f.dir,'schedules.json'));const unsupported=f.cli('setup',['--source',s.file],capturedEnv);assert.equal(unsupported.status,1);assert.equal(unsupported.out.error.code,'E_MIGRATION');assert.deepEqual(fs.readFileSync(join(f.dir,'schedules.json')),schedulesBefore);
   save(join(f.home,'instance.json'),{instance:'source-one',agent:'source',kind:'capability',launched:true});assert.equal(f.cli('spawn',[],capturedEnv).out.meta.memory,'okf-v2','captured marker outranks poisoned live service kind');
   note(f);const retired=f.cli('retire',[],capturedEnv);assert.equal(retired.status,0,retired.stdout);assert.equal(retired.out.meta.retired,true,'captured retire uses the exact registered source');
@@ -384,7 +398,6 @@ test('public captured harvest refuses before registration replay or scheduling e
   save(join(dirname(s.file),'runs',id,'run.json'),{version:1,id,source:s.id,inputs:status.captured.inputs,status:'delivered',receipts:{'base-1':{status:'delivered',proposal:'retained-fixture'}}});
   status.activeRun=id;saveStatus(s,status);
   // These pending repairs used to run before the knowingly unsupported worker.
-  fs.renameSync(join(f.home,'knowledge'),join(f.home,`.okf-view-${s.id}`));
   for(const path of ['STATE.md','log.md','notes']) fs.rmSync(join(f.home,path),{recursive:true,force:true});
   fs.rmSync(join(dirname(s.file),'schedule.json'));save(join(f.dir,'schedules.json'),{});
   const preload=noEffectsPreload(f.dir),before=inventory(f.dir);
@@ -762,29 +775,23 @@ function aliasedFixture(t,alias) {
   save(join(f.soul,'okf.json'),{version:1,owner:'owner-1',owns:[`${alias}/expert`],reads:[]});
   return f;
 }
-function assertView(target,alias) {
-  const receipt=readJSON(join(target,'view.json')).bases[alias];
-  assert.equal(receipt.path,`bases/${alias}`);
-  assert.equal(fs.lstatSync(join(target,'view.json')).isFile(),true);
-  assert.equal(fs.lstatSync(join(target,receipt.path)).isDirectory(),true);
-  assert.equal(digest(tree(join(target,receipt.path))),receipt.digest);
-  return receipt;
+/** okf 3.0.0: an instance home holds no base copy at all. */
+function assertNoLocalCopy(home) {
+  assert.equal(fs.existsSync(join(home,'knowledge')),false,'no ./knowledge/ snapshot');
+  assert.deepEqual(fs.readdirSync(home).filter(p=>p.startsWith('.okf-view-') || p.startsWith('knowledge-view-')),[],'no view directories');
 }
-for(const alias of ['input.json','view.json','staging.json','judgment.json','bases']) test(`R1 alias ${alias} uses isolated base namespace through delivery and fresh read`,t=>{
+for(const alias of ['input.json','view.json','staging.json','judgment.json','bases']) test(`R1 alias ${alias} uses isolated base namespace through delivery and consult reads`,t=>{
   const f=aliasedFixture(t,alias);
   note(f);const {s,run}=prepared(f);assert.equal(run.stages[alias].root,join(run.worker.home,'work','bases',alias));
-  const original=tree(join(f.home,'knowledge'));assertView(join(f.home,'knowledge'),alias);
-  const spawn=f.cli('spawn');assert.equal(spawn.status,0,spawn.stdout);assert.match(spawn.out.brief,/knowledge\/bases\/<alias>/);
+  assertNoLocalCopy(f.home);assert.ok(s.acceptedView[alias].digest);assert.deepEqual(Object.keys(s.acceptedNodes[alias]).sort(),['expert','peer']);
+  const spawn=f.cli('spawn');assert.equal(spawn.status,0,spawn.stdout);assert.match(spawn.out.brief,/oats okf index/);assert.match(spawn.out.brief,new RegExp(`owns: ${alias.replace('.','\\.')}/expert`));
   assert.equal(readJSON(join(run.worker.home,'work','input.json')).source.id,s.id);assert.ok(readJSON(join(run.worker.home,'work','staging.json'))[alias]);
   const r=complete(s,run.id,judgment(f,s,run,{base:alias}));assert.equal(r.receipts[alias].status,'accepted');assert.equal(loadStatus(s).processed.length,1);
-  const reader=join(f.dir,'reader');views(s.bindings,s.decl,reader);assertView(reader,alias);
-  assert.match(fs.readFileSync(join(reader,'bases',alias,'expert/decision.md'),'utf8'),/Explicit custody/);
-  const refresh=f.cli('refresh');assert.equal(refresh.status,0,refresh.stdout);
-  assert.deepEqual(refresh.out.result.receipts[alias],assertView(refresh.out.result.path,alias));
+  assert.match(readAccepted(s,'/expert/decision.md',alias).text,/Explicit custody/);
+  const refresh=f.cli('refresh');assert.equal(refresh.status,1);assert.equal(refresh.out.error.code,'E_REMOVED');
   const read=f.cli('read',['--base',alias,'--path','expert/decision.md']);assert.equal(read.status,0,read.stdout);
-  assert.equal(read.out.result.receipt.path,`bases/${alias}`);assert.match(read.out.result.text,/Explicit custody/);
-  assert.ok(read.out.result.path.endsWith(`/bases/${alias}/expert/decision.md`));
-  assert.deepEqual(tree(join(f.home,'knowledge')),original,'refresh/read never modify the original view');
+  assert.equal(read.out.result.receipt.base,alias);assert.equal(read.out.result.path,'expert/decision.md');assert.match(read.out.result.text,/Explicit custody/);
+  assertNoLocalCopy(f.home);
   assert.equal(f.cli('read',['--base',alias,'--path','../../view.json']).out.error.code,'E_PATH');
 });
 // Fail real filesystem renames in-process, then restore the built-in export.
@@ -796,61 +803,56 @@ function renameFailure(predicate,fn) {
   try {return fn();} finally {fs.default.renameSync=original;syncBuiltinESMExports();}
 }
 for(const alias of ['input.json','view.json','staging.json']) {
-  test(`view alias ${alias}: partial registration and refresh fail cleanly, then retry`,t=>{
+  test(`base alias ${alias}: an invalid second base fails registration cleanly, then retry`,t=>{
     const f=aliasedFixture(t,alias),raw=readJSON(f.bindingFile);
     raw.bases.secondary={id:'base-2',kind:'directory',path:'second-base'};save(f.bindingFile,raw);
     const bindings=loadBindings();initBase(bindings,'secondary',join(f.dir,'nodes.json'),undefined,{confirm:true});
     const index=join(bindings.bases.secondary.path,'index.md'),bytes=fs.readFileSync(index);
-    fs.rmSync(index); // First alias was copied before second-base validation fails.
+    fs.rmSync(index); // The first base resolves before second-base validation fails.
     const failed=f.cli('spawn');assert.equal(failed.status,1);assert.match(failed.out.warning,/index.md.*required/);
-    assert.equal(fs.existsSync(join(f.home,'knowledge')),false);assert.equal(fs.existsSync(join(f.home,'.okf-source.json')),false);
+    assertNoLocalCopy(f.home);assert.equal(fs.existsSync(join(f.home,'.okf-source.json')),false);
     assert.deepEqual(fs.readdirSync(join(bindings.stateDir,'sources')),[]);
-    assert.ok(!fs.readdirSync(f.home).some(p=>p.startsWith('.okf-view-')));
-    put(index,bytes);const s=f.source();assertView(join(f.home,'knowledge'),alias);
-    const original=tree(join(f.home,'knowledge')),before=fs.readdirSync(f.home).sort(),target=join(f.home,'retry-view');
+    put(index,bytes);const s=f.source();assertNoLocalCopy(f.home);
+    const before=fs.readdirSync(f.home).sort();
     fs.rmSync(index);
-    assert.throws(()=>views(s.bindings,s.decl,target),/index.md.*required/);assert.equal(fs.existsSync(target),false);
-    const refresh=f.cli('refresh');assert.equal(refresh.status,1);assert.match(refresh.out.error.message,/index.md.*required/);
-    assert.deepEqual(fs.readdirSync(f.home).sort(),before);assert.deepEqual(tree(join(f.home,'knowledge')),original);
-    put(index,bytes);views(s.bindings,s.decl,target);assertView(target,alias);
-    const fresh=f.cli('refresh');assert.equal(fresh.status,0,fresh.stdout);assertView(fresh.out.result.path,alias);
+    const invalid=f.cli('bases').out.result.bases.find(b=>b.alias==='secondary');
+    assert.equal(invalid.validated.ok,false);assert.match(invalid.validated.error.message,/index.md.*required/);
+    assert.equal(f.cli('refresh').out.error.code,'E_REMOVED');assert.deepEqual(fs.readdirSync(f.home).sort(),before);
+    put(index,bytes);assert.equal(f.cli('bases').out.result.bases.find(b=>b.alias==='secondary').validated.ok,true);
     assert.equal(f.source().id,s.id);assert.equal(fs.readdirSync(join(bindings.stateDir,'sources')).length,1);
   });
-  test(`view alias ${alias}: failure before source pointer does not strand registration`,t=>{
+  test(`base alias ${alias}: failure before source pointer does not strand registration`,t=>{
     const f=aliasedFixture(t,alias);
     renameFailure((from,to)=>to.endsWith('/source.json'),()=>assert.throws(()=>f.source(),/injected view I\/O failure/));
-    assert.equal(fs.existsSync(join(f.home,'knowledge')),false);assert.equal(fs.existsSync(join(f.home,'.okf-source.json')),false);
-    assert.ok(!fs.readdirSync(f.home).some(p=>p.startsWith('.okf-view-')));
+    assertNoLocalCopy(f.home);assert.equal(fs.existsSync(join(f.home,'.okf-source.json')),false);
     assert.deepEqual(fs.readdirSync(join(f.bindings.stateDir,'sources')),[]);
-    const s=f.source();assertView(join(f.home,'knowledge'),alias);assert.equal(f.source().id,s.id);
+    const s=f.source();assertNoLocalCopy(f.home);assert.equal(f.source().id,s.id);
   });
-  test(`view alias ${alias}: failure after source pointer resumes the same snapshot and evidence`,t=>{
+  test(`base alias ${alias}: failure after source pointer resumes the same accepted resolution and evidence`,t=>{
     const f=aliasedFixture(t,alias);
-    renameFailure((from,to)=>to===join(f.home,'knowledge'),()=>assert.throws(()=>f.source(),/injected view I\/O failure/));
-    const pointer=readJSON(join(f.home,'.okf-source.json')),s=loadSource(pointer.source),pending=join(f.home,`.okf-view-${s.id}`);
-    const original=tree(pending);assertView(pending,alias);assert.equal(fs.existsSync(f.calls),false);
+    renameFailure((from,to)=>to===join(f.home,'STATE.md'),()=>assert.throws(()=>f.source(),/injected view I\/O failure/));
+    const pointer=readJSON(join(f.home,'.okf-source.json')),s=loadSource(pointer.source);assert.equal(fs.existsSync(f.calls),false);
     note(f);capture(s);const before=loadStatus(s);
-    // Retry must publish the prepared accepted snapshot, not silently restage.
+    // Retry resumes the registered source; it never re-resolves or resets it.
     fs.appendFileSync(join(f.base.path,'expert/log.md'),'\nLater accepted event.\n');
     const result=f.cli('spawn');assert.equal(result.status,0,result.stdout);assert.equal(result.out.meta.source,s.file);
-    assert.equal(fs.existsSync(pending),false);assert.deepEqual(tree(join(f.home,'knowledge')),original);
+    assert.deepEqual(loadSource(pointer.source).acceptedView,s.acceptedView);assertNoLocalCopy(f.home);
     assert.deepEqual(loadStatus(s).captured,before.captured);assert.equal(loadStatus(s).schedule.status,'ready');
     assert.equal(f.source().id,s.id);assert.equal(fs.readdirSync(join(s.bindings.stateDir,'sources')).length,1);
   });
 }
-test('views preserve existing destinations and roll back failed node resolution',t=>{
-  const f=fixture(t),s=f.source(),target=join(f.dir,'reader');
-  views(s.bindings,s.decl,target);const original=tree(target);
-  assert.throws(()=>views(s.bindings,s.decl,target),/view exists/);assert.deepEqual(tree(target),original);
-  const retryTarget=join(f.dir,'unresolved-view');
-  assert.throws(()=>views(s.bindings,{...s.decl,reads:['project/missing']},retryTarget),/unresolved node/);
-  assert.equal(fs.existsSync(retryTarget),false);views(s.bindings,s.decl,retryTarget);assertView(retryTarget,'project');
+test('accepted resolution refuses unresolved nodes and materializes nothing',t=>{
+  const f=fixture(t),s=f.source(),before=fs.readdirSync(f.dir).sort();
+  assert.throws(()=>acceptedResolution(s.bindings,{...s.decl,reads:['project/missing']}),/unresolved node/);
+  const again=acceptedResolution(s.bindings,s.decl);assert.equal(again.project.digest,s.acceptedView.project.digest);assert.deepEqual(again.project.nodes,s.acceptedView.project.nodes);
+  assert.deepEqual(fs.readdirSync(f.dir).sort(),before);assertNoLocalCopy(f.home);
 });
-test('registration never deletes an unknown existing view or a symlink destination',t=>{
+test('registration leaves an existing ./knowledge/ (okf 2.x) untouched and never follows a symlinked one',t=>{
   const f=fixture(t),target=join(f.home,'knowledge');put(join(target,'keep.md'),'unregistered bytes');
-  assert.throws(()=>f.source(),/unregistered knowledge view/);assert.equal(fs.readFileSync(join(target,'keep.md'),'utf8'),'unregistered bytes');
+  const s=f.source();assert.equal(fs.readFileSync(join(target,'keep.md'),'utf8'),'unregistered bytes');
+  assert.equal(inspectSource(s).legacyLocalView.status,'legacy-local-view');
   fs.rmSync(target,{recursive:true});fs.symlinkSync(f.base.path,target);
-  assert.throws(()=>f.source(),/symlink/);assert.ok(fs.existsSync(join(f.base.path,'index.md')));
+  assert.equal(inspectSource(s).legacyLocalView.symlink,true,'reported, not followed');assert.equal(f.source().id,s.id);assert.ok(fs.existsSync(join(f.base.path,'index.md')),'base untouched');
 });
 function migrationFixture(f) {
   const legacy=join(f.soul,'knowledge');put(join(legacy,'index.md'),'---\nokf_version: "0.1"\n---\n\n# Legacy\n* [Decision](decision.md) - Preserved.\n');put(join(legacy,'log.md'),'# History\n');put(join(legacy,'decision.md'),'---\ntype: Decision\ntitle: Decision\ndescription: Preserved.\n---\n\nPreserved legacy rationale.\n');
@@ -989,7 +991,7 @@ for(const phase of ['before-write','partial-write','before-rename']) test(`custo
   assert.ok(fs.readdirSync(baseLock(f.base)).some(p=>p.startsWith('decision.md.tmp-')));
   assert.ok(!Object.keys(tree(f.base.path)).some(p=>p.includes('.tmp-')),'accepted namespace has no atomic-write scratch');
   for(const lock of [baseLock(f.base),join(dirname(s.file),'worker.lock')]) {const r=f.cli('unlock',['--lock',lock,'--token',readJSON(join(lock,'owner.json')).token]);assert.equal(r.status,0,r.stdout);}
-  assert.throws(()=>views(s.bindings,s.decl,join(f.dir,'blocked-reader')),/publication pending/);
+  assert.throws(()=>readAccepted(s),/publication pending/);
   if(phase==='partial-write') {
     const unrelated=join(f.base.path,'expert/unrelated.tmp-foreign');put(unrelated,'unrelated bytes');
     assert.throws(()=>retry(s),/unexpected bytes during publication recovery/);assert.equal(fs.readFileSync(unrelated,'utf8'),'unrelated bytes');
@@ -997,7 +999,7 @@ for(const phase of ['before-write','partial-write','before-rename']) test(`custo
   }
   assert.equal(retry(s).processed,true);assert.equal(complete(s,run.id).processed,true);assert.equal(loadStatus(s).processed.length,1);
   const p=readJSON(readRun(s,run.id).receipts.project.proposal);assert.deepEqual(tree(f.base.path),p.after);
-  assert.equal(fs.existsSync(journalPath(f.base)),false);views(s.bindings,s.decl,join(f.dir,'fresh-reader'));
+  assert.equal(fs.existsSync(journalPath(f.base)),false);readAccepted(s);
 });
 function secondDirectory(f,{owned=false}={}) {
   const raw=readJSON(f.bindingFile);raw.bases.secondary={id:'base-2',kind:'directory',path:'second-base'};save(f.bindingFile,raw);
@@ -1139,7 +1141,7 @@ for(const firstAction of ['retry','rejudge']) test(`custody R2 SIGKILL before jo
   const f=fixture(t);note(f);const {s,run}=prepared(f),j=judgment(f,s,run),before=tree(f.base.path);
   journalCrash(f,s,run,j,{...f.base,alias:'project'});assert.deepEqual(tree(f.base.path),before);assert.deepEqual(loadStatus(s).processed,[]);
   withLock(baseLock(f.base),()=>fs.appendFileSync(join(f.base.path,'peer/log.md'),'cooperative update after interrupted intent\n'));
-  const newer=tree(f.base.path);views(s.bindings,s.decl,join(f.dir,'unblocked-reader'));
+  const newer=tree(f.base.path);readAccepted(s);
   if(firstAction==='retry') {assert.throws(()=>retry(s),/directory base changed/);assert.equal(readRun(s,run.id).receipts.project.status,'validated');}
   assert.equal(retry(s,{rejudge:true}).status,'abandoned');assert.deepEqual(tree(f.base.path),newer);assert.deepEqual(loadStatus(s).processed,[]);
   const next=readRun(s,runSource(s,{manual:true,noLaunch:true}).run);assert.notEqual(next.id,run.id);assert.deepEqual(next.inputs,run.inputs);
@@ -1155,7 +1157,7 @@ test('custody R2 absent-journal intent retries the same proposal when baseline i
 test('custody R2 installed journal before publishing receipt blocks rejudgment and recovers',t=>{
   const f=fixture(t);note(f);const {s,run}=prepared(f),j=judgment(f,s,run),before=tree(f.base.path);journalCrash(f,s,run,j,{...f.base,alias:'project'},'after-install');
   assert.deepEqual(tree(f.base.path),before);assert.throws(()=>retry(s,{rejudge:true}),/publication pending/);
-  assert.throws(()=>views(s.bindings,s.decl,join(f.dir,'blocked-reader')),/publication pending/);
+  assert.throws(()=>readAccepted(s),/publication pending/);
   assert.equal(retry(s).processed,true);assert.equal(loadStatus(s).processed.length,1);
 });
 for(const firstAction of ['retry','rejudge']) test(`custody R2 partial accepted delivery survives pre-journal death and outstanding ${firstAction}`,t=>{
@@ -1421,21 +1423,24 @@ test('inspect drops every live document if the matching home is replaced during 
   try {const result=workingDocuments(s);assert.equal(result.liveMemory.reason,'home-changed');assert.deepEqual(result.documents,[]);}
   finally {native.default.readdirSync=original;syncBuiltinESMExports();}
 });
-for(const mode of ['live','retired','missing','reused']) test(`descriptor-selected read/refresh put views only in durable state: ${mode}`,t=>{
+for(const mode of ['live','retired','missing','reused']) test(`descriptor-selected consult reads write nothing anywhere: ${mode}`,t=>{
   const f=fixture(t),s=f.source();
   if(mode==='retired') capture(s,{final:true});
   if(mode==='missing' || mode==='reused') fs.rmSync(f.home,{recursive:true});
   if(mode==='reused') {put(join(f.home,'STATE.md'),'replacement home');save(join(f.home,'.okf-source.json'),{version:1,id:'replacement',source:'untrusted'});}
   const before=fs.readdirSync(f.context).sort(),homeFiles=fs.existsSync(f.home)?fs.readdirSync(f.home).sort():null;
-  const refresh=externalView(f,'refresh',['--source',s.file]);assert.equal(dirname(refresh.path),join(dirname(s.file),'views'));assertView(refresh.path,'project');
+  const sourceFiles=fs.readdirSync(dirname(s.file)).sort();
   const read=externalView(f,'read',['--source',s.file,'--base','project','--path','expert/index.md']);
-  assert.ok(read.path.startsWith(join(dirname(s.file),'views')+'/'));assert.equal(read.text,fs.readFileSync(join(f.base.path,'expert/index.md'),'utf8'));
+  assert.equal(read.path,'expert/index.md');assert.equal(read.text,fs.readFileSync(join(f.base.path,'expert/index.md'),'utf8'));
+  assert.equal(externalView(f,'cat',['--source',s.file,'--base','project','/expert/index.md']).text,read.text);
+  const refresh=spawnSync(process.execPath,[CLI,'refresh','--source',s.file,'--json'],{cwd:f.context,env:{...process.env,OATS_HOME:f.context,OATS_INSTANCE_HOME:f.context},encoding:'utf8'});
+  assert.equal(JSON.parse(refresh.stdout).error.code,'E_REMOVED');
   assert.deepEqual(fs.readdirSync(f.context).sort(),before);assert.deepEqual(fs.existsSync(f.home)?fs.readdirSync(f.home).sort():null,homeFiles);
-  assert.equal(fs.readdirSync(join(dirname(s.file),'views')).length,2);
+  assert.deepEqual(fs.readdirSync(dirname(s.file)).sort(),sourceFiles,'no views/ cache under the durable source either');
 });
 test('descriptor-selected reads still reject traversal and non-Markdown paths',t=>{
   const f=fixture(t),s=f.source();capture(s,{final:true});
-  for(const path of ['../../../../status.json','../view.json','okf-base.json']) {const r=f.cli('read',['--source',s.file,'--base','project','--path',path]);assert.equal(r.status,1);assert.equal(r.out.error.code,'E_PATH');}
+  for(const [path,code] of [['../../../../status.json','E_PATH'],['../view.json','E_PATH'],['okf-base.json','E_NOT_MARKDOWN']]) {const r=f.cli('read',['--source',s.file,'--base','project','--path',path]);assert.equal(r.status,1);assert.equal(r.out.error.code,code,path);}
   assert.equal(fs.readdirSync(f.home).some(p=>p.startsWith('knowledge-view-')),false);
 });
 
