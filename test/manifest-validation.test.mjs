@@ -56,6 +56,13 @@ test("validator accepts the actual exported release with no unenumerated payload
   assert.match(result.stdout, /1 capability manifest/);
 });
 
+test('2.1.6 manifest declares the 0.26 floor and no soul-scaffold hook',t=>{
+  const f=fixture(t);
+  assert.equal(f.manifest.compatibility.oats, '>=0.26.0');
+  assert.equal(f.packageManifest.compatibility.oats, '>=0.26.0');
+  assert.equal(Object.hasOwn(f.manifest.hooks,'soul-scaffold'), false);
+});
+
 test('binding reason declarations accept omission and the bounded literal vocabulary',t=>{
   const f=fixture(t);
   assert.equal(f.run().status,0);
@@ -83,7 +90,7 @@ test("canonical referenced helper/input definitions remain closed", (t) => {
     m => { m.hooks.retire.inputs = {unknown:{version:1}}; },
     m => { m.hooks.retire.inputs = {constructor:{version:1}}; },
     m => { m.hooks.retire.required = true; },
-    m => { m.hooks['soul-scaffold'] = {command:'bin/oats-okf.mjs soul-scaffold',inputs:null}; },
+    m => { m.hooks.retire = {command:'bin/oats-okf.mjs retire',inputs:null}; },
   ]) {
     const f=fixture(t);mutate(f.manifest);rejected(f,/must match exactly one schema alternative/);
   }

@@ -8,18 +8,17 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { syncBuiltinESMExports } from 'node:module';
 import { inventory, noEffectsPreload } from './helpers/no-effects.mjs';
-import { invocationFor, persistentSubject, helperSubject } from './helpers/invocation-fixture.mjs';
 const ROOT=fileURLToPath(new URL('../',import.meta.url));
 const CAP=join(ROOT,'oats-package',JSON.parse(fs.readFileSync(join(ROOT,'oats-package/oats-package.json'),'utf8')).capabilities[0]);
 const CLI=join(CAP,'bin/oats-okf.mjs');
 const mod=p=>import(new URL(`../oats-package/capabilities/oats-okf/lib/${p}.mjs`,import.meta.url));
 const {loadBindings,metadata,validateBindings,validateDeclaration}=await mod('config');
 const {tree,save,readJSON,atomic,digest,withLock,baseLock:unused,quote,command,hash}=await mod('io');
-const {register,registerCaptured,capture,input,loadStatus,loadSource,saveStatus,views,scheduleSource,settleRetiredSchedule,pinOwner}=await mod('sources');
+const {register,capture,input,loadStatus,loadSource,saveStatus,views,scheduleSource,settleRetiredSchedule,pinOwner}=await mod('sources');
 const {runSource,readRun,complete,retry,completionArgv,completionCommand}=await mod('worker');
 const {initBase,migrate,deliverMigration,cutoverMigration}=await mod('migration');
-const {stageBase,baseLock,journalPath,directoryPublish}=await mod('stores');
-const {inspect:inspectSource,capturedAuthority}=await mod('inspection');
+const {stageBase,baseLock,journalPath,directoryPublish,redactGitDiagnostic}=await mod('stores');
+const {inspect:inspectSource}=await mod('inspection');
 function put(p,text) {fs.mkdirSync(dirname(p),{recursive:true});fs.writeFileSync(p,text);}
 const hostPath=process.env.PATH;
 function fixture(t,{kind='directory',root='knowledge',nodes={expert:{path:'expert',owner:'owner-1'},peer:{path:'peer',owner:'owner-2'}}}={}) {
@@ -37,16 +36,9 @@ import * as fs from 'node:fs';import {join} from 'node:path';
 const a=process.argv.slice(2),root=process.env.FIXTURE_ROOT;
 fs.appendFileSync(process.env.FIXTURE_CALLS,JSON.stringify({a,cwd:process.cwd(),identity:process.env.OATS_HOME || null})+'\\n');
 const val=k=>a[a.indexOf(k)+1];const out=result=>console.log(JSON.stringify({schemaVersion:1,ok:true,result}));
-if(a[0]==='capture') {const p=join(root,'capture.json');console.log(fs.existsSync(p)?fs.readFileSync(p,'utf8'):JSON.stringify({status:'complete',complete:true,sessions:[],ignored:0}));}
+if(a[0]==='version') {console.log(JSON.stringify({version:process.env.FIXTURE_OATS_VERSION||'0.26.0',features:(process.env.FIXTURE_OATS_FEATURES||'').split(',').filter(Boolean)}));}
+else if(a[0]==='capture') {const p=join(root,'capture.json');console.log(fs.existsSync(p)?fs.readFileSync(p,'utf8'):JSON.stringify({status:'complete',complete:true,sessions:[],ignored:0}));}
 else if(a[0]==='recall') {const all=JSON.parse(fs.readFileSync(join(root,'turns.json')));const start=a.includes('--after')?all.findIndex(t=>t.id===val('--after'))+1:0;const end=all.findIndex(t=>t.id===val('--until'))+1;const turns=all.slice(start,Math.min(end,start+Number(val('--limit'))));const result=a.includes('--ids-only')?turns.map(({text,...t})=>({...t,bytes:Buffer.byteLength(JSON.stringify({...t,text},null,2))+8})):turns;const fault=join(root,'recall-fail');if(!a.includes('--ids-only') && fs.existsSync(fault) && turns.some(t=>t.id===fs.readFileSync(fault,'utf8'))) process.exit(47);console.log(JSON.stringify({turns:result,remaining:end-start-turns.length}));}
-else if(a[0]==='--deployment') {
-  const target=JSON.parse(fs.readFileSync(join(root,'captured-dispatch.json'),'utf8'));
-  const inherited=['OATS_DEPLOYMENT','OATS_RESOLUTION','OATS_BINDING_FILE','OATS_SOURCE_RECEIPT_FILE','OATS_INVOCATION_CONTEXT_FILE'];
-  if(a[1]!==target.deployment || a[2]!=='--resolution' || a[3]!==target.resolution || a[4]!=='okf' || a[5]!=='complete' || a.includes('--soul') || inherited.some(key=>process.env[key]!==undefined)) process.exit(93);
-  const {spawnSync}=await import('node:child_process');
-  const r=spawnSync(process.execPath,[target.cli,...a.slice(5)],{env:{...process.env,OATS_BINDING_FILE:target.bindingFile,...(target.invocationFile?{OATS_INVOCATION_CONTEXT_FILE:target.invocationFile}:{})},encoding:'utf8'});
-  process.stdout.write(r.stdout);process.stderr.write(r.stderr);process.exit(r.status ?? 94);
-}
 else if(a[0]==='spawn') {const instance='memory-harvest-'+val('--purpose'),home=join(root,'workers',instance);fs.mkdirSync(join(home,'work'),{recursive:true});fs.writeFileSync(join(home,'instance.json'),JSON.stringify({instance,agent:'memory-harvest',work:'directory',repo:val('--repo'),kind:'capability',launched:false}));fs.copyFileSync(val('--task-file'),join(home,'TASK.md'));out({instance,home,work:'directory',launched:false});}
 else if(a[0]==='session') {console.error('NO MODEL SESSIONS IN FIXTURES');process.exit(91);}
 else if(a[0]==='schedule') {
@@ -94,32 +86,6 @@ else process.exit(44);
   const cli=(cmd,args=[],env={})=>{const r=spawnSync(process.execPath,[CLI,cmd,...args,'--json'],{cwd:home,env:{...process.env,...env},encoding:'utf8',timeout:30000,maxBuffer:16*1024*1024});let out;try{out=JSON.parse(r.stdout);}catch{}return {...r,out};};
   return {dir,home,soul,bindings,bindingFile,repo,source,cli,calls,context,base:bindings.bases.project};
 }
-function capturedBinding(f) {
-  const base={...f.base,path:f.base.path},alias=base.id,decl={version:1,owner:'owner-1',owns:[`${alias}/expert`],reads:[`${alias}/peer`]};
-  return {schemaVersion:1,capability:'oats.okf',payloadContract:'oats.okf.locations',payloadVersion:1,payload:{owner:'owner-1',stores:{[alias]:base},owns:[{store:alias,node:'expert',steward:'owner-1'}],reads:[{store:alias,node:'peer'}],runtime:{descriptorFile:f.bindingFile,bindings:{version:1,stateDir:f.bindings.stateDir,bases:{[alias]:base}},declaration:decl},execution:{runtime:'pi',model:null}},credentialRefs:{},provenance:[]};
-}
-function capturedReceipt(f,{kind='persistent',binding=capturedBinding(f)}={}) {
-  return {schemaVersion:1,kind,home:f.home,work:join(f.home,'work'),context:f.context,agent:'source',instance:'source-one',
-    sourceIdentity:kind==='helper'?null:{kind:'git-soul',repository:{kind:'canonical-remote',remote:'git:https://example.test/source.git'},exportPath:'agents/source'},
-    role:'# Captured source\n',executionBinding:{schemaVersion:1,deployment:f.context,resolution:{schemaVersion:1,id:`sha256-${'a'.repeat(64)}`}},responsibleHuman:null,binding};
-}
-// Explicit provider-contract input fixture, not a kernel admission producer or
-// a backfill of old instance metadata. Real producer fixtures remain separate.
-function capturedExecutionEnv(f,receipt,event,{scope=false}={}) {
-  const subject=receipt.kind==='helper'?helperSubject(receipt.agent):persistentSubject(receipt.agent);
-  if(receipt.kind==='persistent') {
-    const soul=subject.soul,identity=structuredClone(receipt.sourceIdentity);
-    soul.identity=identity;soul.sourceArtifact.identity=identity;soul.definition=identity.exportPath==='.'?'soul.yaml':`${identity.exportPath}/soul.yaml`;
-    soul.revision.source=identity.kind==='local-soul'?identity.source:'path:/fixture/source-export';
-    if(identity.kind==='git-soul')soul.revision.repository=identity.repository;
-  }
-  const action=['spawn','retire','soul-scaffold'].includes(event)?{kind:'hook',capability:'oats.okf',name:event}:{kind:'command',namespace:'okf',name:event};
-  const value=invocationFor({binding:receipt.binding,context:{kind:'standalone',key:'provider-fixture'},action,subject});
-  value.instance={...value.instance,home:receipt.home,work:receipt.work,name:receipt.instance,agent:receipt.agent};
-  value.executionBinding=receipt.executionBinding;value.intent={schemaVersion:1,executionId:randomUUID(),incarnationId:value.instance.incarnationId,attempt:1};
-  if(scope){value.instance=null;value.intent=null;}
-  const file=join(f.dir,`execution-${randomUUID()}.json`);save(file,value);return {OATS_INVOCATION_CONTEXT_FILE:file};
-}
 function git(repo,args) {return execFileSync('git',['-C',repo,...args],{encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();}
 function note(f,name='decision.md',text='The human chose explicit custody because hidden fallbacks conceal delivery failures.') {put(join(f.home,'notes',name),`---\ntype: Decision\ntitle: Explicit custody\ndescription: Why custody is explicit.\n---\n\n${text}\n`);}
 function prepared(f,s=f.source()) {capture(s);const r=runSource(s,{manual:true,noLaunch:true});return {s,run:readRun(s,r.run)};}
@@ -139,8 +105,9 @@ test('exported payload version, floor, required hooks and complete command inven
   assert.ok(fs.statSync(join(ROOT,'oats-package/LICENSE')).isFile());
   assert.equal(fs.readlinkSync(join(CAP,'agents/memory-harvest/CLAUDE.md')),'AGENTS.md','source compatibility alias preserves one canonical instruction file');
   const m=readJSON(join(CAP,'oats.json')),distribution=readJSON(join(ROOT,'oats-package/oats-package.json'));
-  for(const manifest of [readJSON(join(ROOT,'package.json')),distribution,m])assert.equal(manifest.version,'2.1.5');
-  for(const manifest of [distribution,m])assert.equal(manifest.compatibility.oats,'>=0.24.4');
+  for(const manifest of [readJSON(join(ROOT,'package.json')),distribution,m])assert.equal(manifest.version,'2.1.6');
+  for(const manifest of [distribution,m])assert.equal(manifest.compatibility.oats,'>=0.26.0');
+  assert.equal(Object.hasOwn(m.hooks,'soul-scaffold'),false,'soul-scaffold hook is no longer declared after oats create removal');
   assert.equal(m.hooks.spawn.required,true);
   for(const c of ['harvest','inspect','setup','run-source','complete','retry','migrate','read','refresh','init']) assert.ok(m.commands[c]);
   const inj=fs.readFileSync(join(CAP,m.inject),'utf8');assert.doesNotMatch(inj,/harvest/i);assert.match(inj,/after compaction/);
@@ -153,7 +120,7 @@ test('c77 OKF declares only own helper omission and unchanged lifecycle input op
   assert.deepEqual(m.hooks.spawn,{command:'bin/oats-okf.mjs spawn',required:true,inputs:{sourceReceipt:{version:1}}});
   assert.deepEqual(m.hooks.retire,{command:'bin/oats-okf.mjs retire',inputs:{sourceReceipt:{version:1}}});
   assert.equal(Object.hasOwn(m.hooks.retire,'required'),false,'legacy optional retire semantics are unchanged');
-  assert.equal(m.hooks['soul-scaffold'],'bin/oats-okf.mjs soul-scaffold','no source receipt opt-in for stateless soul guidance');
+  assert.equal(Object.hasOwn(m.hooks,'soul-scaffold'),false,'removed oats create hook stays absent');
 });
 test('help is side-effect free, including malformed settings and every declared command',t=>{
   const f=fixture(t);for(const cmd of Object.keys(readJSON(join(CAP,'oats.json')).commands)) {const r=f.cli(cmd,['--help'],{OATS_SETTINGS:'!'});assert.equal(r.status,0,r.stderr);assert.match(r.stdout,/oats okf/);}assert.equal(fs.existsSync(f.calls),false);
@@ -175,6 +142,20 @@ test('notes AND complete bounded record backlog are durable before final home de
   const evidence=readJSON(join(run.worker.home,'work/input.json'));assert.equal(evidence.inputs.filter(i=>i.kind==='record').flatMap(i=>i.turns).length,145);assert.equal(evidence.inputs.filter(i=>i.kind==='note').length,1);
   const calls=fs.readFileSync(f.calls,'utf8').trim().split('\n').map(JSON.parse);const spawn=calls.find(c=>c.a[0]==='spawn');assert.equal(spawn.a.includes('--parent'),false);assert.equal(spawn.a.includes('--work-dir'),false);assert.equal(spawn.a.includes('--branch'),false);
 });
+
+test('2.1.6 memory worker uses harness flag only when the kernel advertises harness',t=>{
+  for(const [features,flag,absent] of [['','--runtime','--harness'],['harness','--harness','--runtime']]){
+    const f=fixture(t);process.env.FIXTURE_OATS_FEATURES=features;note(f);const {s}=prepared(f);
+    const calls=fs.readFileSync(f.calls,'utf8').trim().split('\n').map(JSON.parse);
+    const spawn=calls.find(c=>c.a[0]==='spawn' && c.a.includes('--purpose'));
+    assert.ok(spawn,`spawn call recorded for features=${features}`);
+    assert.equal(spawn.a[spawn.a.indexOf(flag)+1],s.execution.runtime);
+    assert.equal(spawn.a.includes(absent),false,`${absent} must not be sent when features=${features}`);
+    const versions=calls.filter(c=>c.a[0]==='version');
+    assert.equal(versions.length,1,'kernel version is read once for the worker run');
+  }
+});
+
 test('capture incomplete, held, skipped, failed and uncertified results retain home and evidence',t=>{
   const f=fixture(t);const s=f.source();note(f);
   for(const status of ['incomplete','held','skipped','failed',undefined]) {
@@ -241,10 +222,19 @@ test('2.1.5 unusable git bases fail with typed alias-specific deployment binding
   assert.match(r.out.warning,/E_BASE_UNAVAILABLE/);assert.match(r.out.warning,/unreachable/);assert.match(r.out.warning,/missing\.git/);assert.match(r.out.warning,/reason: not-found/);
   assert.match(r.out.warning,/required by the deployment's bindings/);assert.doesNotMatch(r.out.warning,/not by this soul/);assert.match(r.out.warning,/fix the binding for base alias "unreachable" in the bindings file, or remove the base from the bindings/);
 });
-test('2.1.5 unclassified git failures keep reason unknown and include the original message',t=>{
-  const f=fixture(t,{kind:'git'});gitWrapper(f,`if(a.includes('clone')) {console.error('strange transport fixture');process.exit(87);}`);
+test('2.1.6 unclassified git failures keep reason unknown and include redacted original message',t=>{
+  const f=fixture(t,{kind:'git'});gitWrapper(f,`if(a.includes('clone')) {console.error('strange transport fixture for https://user:token@example.invalid/org/private.git');process.exit(87);}`);
+  f.base.repository='https://user:token@example.invalid/org/private.git';
   let error;assert.throws(()=>{try{stageBase(f.base,join(f.dir,'unknown-git-failure'),{alias:'project'});}catch(e){error=e;throw e;}});
   assert.equal(error.code,'E_BASE_UNAVAILABLE');assert.equal(error.reason,'unknown');assert.match(error.message,/reason: unknown/);assert.match(error.message,/strange transport fixture/);
+  assert.match(error.message,/https:\/\/example\.invalid\/org\/private\.git/);assert.doesNotMatch(error.message,/user:token|token@example|user@/);
+  assert.equal(error.repository,'https://example.invalid/org/private.git');
+});
+
+test('2.1.6 redaction strips HTTPS userinfo and leaves SSH forms unchanged',()=>{
+  assert.equal(redactGitDiagnostic('https://user:token@example.invalid/org/private.git'),'https://example.invalid/org/private.git');
+  assert.equal(redactGitDiagnostic('fatal: https://user:token@example.invalid/org/private.git denied'),'fatal: https://example.invalid/org/private.git denied');
+  for(const value of ['ssh://git@example.invalid/org/private.git','ssh://deploy_user@example.invalid/org/private.git','git@example.invalid:org/private.git']) assert.equal(redactGitDiagnostic(value),value);
 });
 test('2.1.5 shallow git bases are refused with E_BASE_SHALLOW before durable source state',t=>{
   const f=fixture(t,{kind:'git'}),shallow=join(f.dir,'shallow.git');
@@ -270,149 +260,10 @@ test('no-launch sources and service workers never trigger scheduled model launch
   const service=f.cli('spawn',[],{OATS_KIND:'capability',OATS_SETTINGS:'{}',OATS_HOME:serviceHome,OATS_INSTANCE_HOME:serviceHome});assert.equal(service.out.meta.memory,'none');assert.equal(fs.readFileSync(f.calls,'utf8'),before);
   capture(s,{final:true});assert.equal(loadStatus(s).auto,false);assert.equal(runSource(s).status,'disabled');
 });
-test('inspect authority distinguishes legacy, invalid, disabled and specified without exposing opaque binding',()=>{
-  assert.deepEqual(capturedAuthority({}),{schemaVersion:1,registration:'legacy',capture:'unknown',migrationRequired:true,responsibleHuman:{status:'unknown'}});
-  assert.deepEqual(capturedAuthority({registration:{schemaVersion:1,kind:'captured'},providerBinding:{},sourceIdentity:{kind:'git-soul'},responsibleHuman:null}),{schemaVersion:1,registration:'invalid',capture:'invalid',migrationRequired:true,responsibleHuman:{status:'unknown'}});
-  const base={registration:{schemaVersion:1,kind:'captured'},providerBinding:{opaque:'never-returned'},sourceIdentity:{kind:'git-soul',repository:{kind:'canonical-remote',remote:'git:https://example.invalid/source.git'},exportPath:'agents/expert'},executionBinding:{schemaVersion:1,deployment:'/srv/oats/example',resolution:{schemaVersion:1,id:`sha256-${'a'.repeat(64)}`}}};
-  const disabled=capturedAuthority({...base,responsibleHuman:null}),specified=capturedAuthority({...base,responsibleHuman:{provider:'example.messaging',id:'human-1'}});
-  assert.equal(disabled.responsibleHuman.status,'disabled');assert.equal(specified.responsibleHuman.status,'specified');
-  for(const result of [disabled,specified]) {assert.equal(Object.hasOwn(result,'providerBinding'),false);assert.doesNotMatch(JSON.stringify(result),/opaque|human-1|OATS_BINDING_FILE/);assert.ok(Buffer.byteLength(JSON.stringify(result))<65536);}
-  assert.equal(capturedAuthority({...base,sourceIdentity:{kind:'git-soul',padding:'x'.repeat(65536)},responsibleHuman:null}).registration,'invalid','authority summary remains bounded');
-  for(const remote of ['git:https://user:SYNTHETIC_SECRET@example.invalid/soul.git','git:https://example.invalid/soul.git?token=SYNTHETIC_SECRET','git:ssh://git@example.invalid/soul.git#SYNTHETIC_SECRET','git:https://','git:https://example.invalid/../soul.git']) {
-    const bad={...base,sourceIdentity:{...base.sourceIdentity,repository:{kind:'canonical-remote',remote}},responsibleHuman:null},result=capturedAuthority(bad);
-    assert.equal(result.registration,'invalid');assert.doesNotMatch(JSON.stringify(result),/SYNTHETIC_SECRET|sourceIdentity/);
-  }
-});
-test('legacy inspect reports unknown registration authority without changing existing fields',t=>{
+test('legacy inspect reports source authority without changing existing fields',t=>{
   const f=fixture(t),s=f.source(),result=f.cli('inspect');assert.equal(result.status,0,result.stdout);
-  assert.deepEqual(result.out.result.authority,{schemaVersion:1,registration:'legacy',capture:'unknown',migrationRequired:true,responsibleHuman:{status:'unknown'}});
+  assert.deepEqual(result.out.result.authority,{schemaVersion:1,registration:'legacy',capture:'recorded',migrationRequired:false});
   assert.equal(result.out.result.source,s.file);assert.deepEqual(result.out.result.owns,s.decl.owns);assert.deepEqual(result.out.result.reads,s.decl.reads);assert.deepEqual(result.out.result.bases,s.bindings.bases);assert.deepEqual(result.out.result.status,loadStatus(s));
-});
-test('generic lifecycle ingress refuses missing or contradictory admission before registration',t=>{
-  const f=fixture(t),receipt=capturedReceipt(f),bindingFile=join(f.dir,'binding-input.json'),receiptFile=join(f.dir,'source-input.json');save(bindingFile,receipt.binding);save(receiptFile,receipt);
-  const oldEnv={OATS_BINDING_FILE:bindingFile,OATS_SOURCE_RECEIPT_FILE:receiptFile};
-  const before=inventory(f.dir),missing=f.cli('spawn',[],oldEnv);
-  assert.equal(missing.status,1);assert.match(missing.stdout,/new captured registration requires generic admitted invocation/);assert.deepEqual(inventory(f.dir),before,'old receipt-only transport cannot bootstrap a new source');
-  const generic=capturedExecutionEnv(f,receipt,'spawn'),file=generic.OATS_INVOCATION_CONTEXT_FILE,valid=readJSON(file);
-  for(const value of [
-    {...valid,intent:null},
-    {...valid,action:{...valid.action,name:'retire'}},
-    {...valid,instance:{...valid.instance,home:join(f.dir,'other'),work:join(f.dir,'other/work')}},
-    {...valid,intent:{...valid.intent,attempt:0}},
-  ]) {
-    save(file,value);const bytes=inventory(f.dir),result=f.cli('spawn',[],{...oldEnv,...generic});
-    assert.equal(result.status,1,result.stdout);assert.deepEqual(inventory(f.dir),bytes,'invalid generic authority causes no registration/schedule effects');
-  }
-  save(file,valid);const badReceipt={...receipt,responsibleHuman:{provider:'example.human',id:'other'}};save(receiptFile,badReceipt);
-  const bytes=inventory(f.dir),result=f.cli('spawn',[],{...oldEnv,...generic});assert.equal(result.status,1);assert.deepEqual(inventory(f.dir),bytes);
-  assert.equal(fs.existsSync(join(f.home,'.okf-source.json')),false);assert.equal(fs.existsSync(f.bindings.stateDir),false);
-});
-
-test('c77 NEW captured registration refuses missing SourceReceipt1 before any effects',t=>{
-  for(const kind of ['persistent','helper']) {
-    const f=fixture(t),receipt=capturedReceipt(f,{kind}),snapshot=join(f.dir,'binding-input.json');save(snapshot,receipt.binding);
-    // Even contradictory live service metadata cannot confer helper skip/input
-    // authority. Generic fixtures supply the actual retained subject instead.
-    save(join(f.home,'instance.json'),{kind:'capability',instance:'source-one',agent:'source'});
-    const preload=noEffectsPreload(f.dir);
-    for(const event of ['spawn','retire']) {
-      const env={...process.env,OATS_BINDING_FILE:snapshot,...capturedExecutionEnv(f,receipt,event)};
-      const before=inventory(f.dir),result=spawnSync(process.execPath,['--import',preload,CLI,event,'--json'],{cwd:f.home,env,encoding:'utf8',timeout:30000});
-      assert.equal(result.status,1,result.stdout+result.stderr);
-      assert.match(result.stdout,/new captured registration requires SourceReceipt1 input authority/);
-      assert.equal(result.stderr,'');assert.deepEqual(inventory(f.dir),before,'no source, owner, view, scheduler, lock or native mutation');
-    }
-    assert.equal(fs.existsSync(join(f.home,'.okf-source.json')),false);assert.equal(fs.existsSync(f.bindings.stateDir),false);
-  }
-});
-
-test('c77 absent SourceReceipt1 permits only qualified already-registered replay',t=>{
-  const f=fixture(t),receipt=capturedReceipt(f),source=registerCaptured(f.home,receipt),snapshot=join(f.dir,'binding-input.json');save(snapshot,receipt.binding);
-  const sourceBytes=fs.readFileSync(source.file),owners=fs.readFileSync(join(f.bindings.stateDir,'owners.json'));
-  for(const generic of [false,true]) {
-    const env={OATS_BINDING_FILE:snapshot,...(generic?capturedExecutionEnv(f,receipt,'spawn'):{})};
-    const result=f.cli('spawn',[],env);assert.equal(result.status,0,result.stdout+result.stderr);
-    assert.equal(result.out.meta.source,source.file);assert.deepEqual(fs.readFileSync(source.file),sourceBytes);assert.deepEqual(fs.readFileSync(join(f.bindings.stateDir,'owners.json')),owners);
-  }
-  note(f);const retired=f.cli('retire',[],{OATS_BINDING_FILE:snapshot,...capturedExecutionEnv(f,receipt,'retire')});
-  assert.equal(retired.status,0,retired.stdout);assert.equal(retired.out.meta.retired,true);
-  assert.deepEqual(fs.readFileSync(source.file),sourceBytes,'final capture does not replace source identity');
-  // Retained data is not authority to recreate a missing home registration.
-  fs.rmSync(join(f.home,'.okf-source.json'));
-  const env={OATS_BINDING_FILE:snapshot,...capturedExecutionEnv(f,receipt,'spawn')},before=inventory(f.dir),result=f.cli('spawn',[],env);
-  assert.equal(result.status,1);assert.match(result.stdout,/new captured registration requires SourceReceipt1 input authority/);
-  assert.deepEqual(inventory(f.dir),before,'no reconstruction from an old descriptor or current soul/config');
-});
-
-test('captured registration freezes qualified identity, binding and v2 schedule without live source fallback',t=>{
-  const f=fixture(t),receipt=capturedReceipt(f),snapshot=join(f.dir,'invocation-binding.json'),wrong=structuredClone(receipt.binding),priorBinding=process.env.OATS_BINDING_FILE;
-  t.after(()=>{if(priorBinding===undefined) delete process.env.OATS_BINDING_FILE;else process.env.OATS_BINDING_FILE=priorBinding;});
-  wrong.payload.execution.model='different/model';save(snapshot,wrong);process.env.OATS_BINDING_FILE=snapshot;
-  assert.throws(()=>registerCaptured(f.home,receipt),/differs from invocation snapshot/);assert.equal(fs.existsSync(join(f.home,'.okf-source.json')),false);
-  delete process.env.OATS_BINDING_FILE;save(snapshot,receipt.binding);const receiptFile=join(f.dir,'source-receipt.json');save(receiptFile,receipt);
-  const executionEnv=capturedExecutionEnv(f,receipt,'spawn');
-  const lifecycle=f.cli('spawn',[],{OATS_BINDING_FILE:snapshot,OATS_SOURCE_RECEIPT_FILE:receiptFile,...executionEnv});assert.equal(lifecycle.status,0,lifecycle.stdout);
-  const contextFile=executionEnv.OATS_INVOCATION_CONTEXT_FILE,context=readJSON(contextFile);save(contextFile,{...context,intent:null});
-  const beforeRejectedReplay=inventory(f.dir),unadmitted=f.cli('spawn',[],{OATS_BINDING_FILE:snapshot,OATS_SOURCE_RECEIPT_FILE:receiptFile,...executionEnv});
-  assert.equal(unadmitted.status,1);assert.match(unadmitted.stdout,/requires an admitted instance intent/);assert.deepEqual(inventory(f.dir),beforeRejectedReplay,'present unadmitted context cannot downgrade to registered replay');save(contextFile,context);
-  const s=loadSource(lifecycle.out.meta.source),schedules=readJSON(join(f.dir,'schedules.json')),spec=schedules[`okf-${s.id}`];
-  const normalized={...spec,execution:{responsibleHuman:null,deployment:receipt.executionBinding.deployment,resolution:receipt.executionBinding.resolution}};delete normalized.responsibleHuman;schedules[`okf-${s.id}`]=normalized;save(join(f.dir,'schedules.json'),schedules);
-  const again=registerCaptured(f.home,receipt);assert.equal(again.id,s.id,'scheduler-normalized explicit null remains idempotent');assert.equal(s.registration.kind,'captured');assert.deepEqual(s.providerBinding,receipt.binding);assert.deepEqual(s.executionBinding,receipt.executionBinding);assert.equal(s.responsibleHuman,null);
-  const owner=readJSON(join(f.bindings.stateDir,'owners.json'))['owner-1'];assert.equal(owner.kind,'captured-qualified-soul');assert.deepEqual(owner.identity,receipt.sourceIdentity);
-  assert.equal(spec.definitionVersion,2);assert.equal(spec.recurrencePolicy,'capture');assert.equal(spec.responsibleHuman,null);assert.equal(spec.cwd,f.context);
-  assert.ok(spec.argv.includes('--deployment'));assert.ok(spec.argv.includes('--resolution'));assert.ok(spec.argv.includes('--json'));assert.equal(spec.argv.includes('--soul'),false);
-  assert.equal(spec.argv[spec.argv.indexOf('--resolution')+1],receipt.executionBinding.resolution.id);
-  save(snapshot,receipt.binding);const capturedEnv={OATS_BINDING_FILE:snapshot,OATS_SETTINGS:JSON.stringify({'bindings-file':join(f.dir,'poison.json'),'state-dir':join(f.dir,'poison-state')})},alias=f.base.id;
-  const inspected=f.cli('inspect',[],capturedEnv);assert.equal(inspected.status,0);assert.deepEqual(inspected.out.result.authority,{schemaVersion:1,registration:'captured',capture:'recorded',migrationRequired:false,sourceIdentity:receipt.sourceIdentity,executionBinding:receipt.executionBinding,responsibleHuman:{status:'disabled'}});
-  for(const [key,value] of [['source',s.file],['owns',s.decl.owns],['reads',s.decl.reads],['bases',s.bindings.bases],['acceptedView',s.acceptedView],['status',loadStatus(s)]]) assert.deepEqual(inspected.out.result[key],value,`existing inspect field ${key} is unchanged`);
-  assert.equal(f.cli('read',['--base',alias],capturedEnv).status,0);assert.equal(f.cli('refresh',[],capturedEnv).status,0);
-  const schedulesBefore=fs.readFileSync(join(f.dir,'schedules.json'));const unsupported=f.cli('setup',['--source',s.file],capturedEnv);assert.equal(unsupported.status,1);assert.equal(unsupported.out.error.code,'E_MIGRATION');assert.deepEqual(fs.readFileSync(join(f.dir,'schedules.json')),schedulesBefore);
-  save(join(f.home,'instance.json'),{instance:'source-one',agent:'source',kind:'capability',launched:true});assert.equal(f.cli('spawn',[],capturedEnv).out.meta.memory,'okf-v2','captured marker outranks poisoned live service kind');
-  note(f);const retired=f.cli('retire',[],capturedEnv);assert.equal(retired.status,0,retired.stdout);assert.equal(retired.out.meta.retired,true,'captured retire uses the exact registered source');
-  fs.rmSync(f.home,{recursive:true});fs.rmSync(f.soul,{recursive:true});fs.rmSync(f.bindingFile);process.env.OATS_SETTINGS=JSON.stringify({'bindings-file':join(f.dir,'poison.json'),'state-dir':join(f.dir,'poison-state')});
-  const frozen=loadSource(s.file);assert.equal(frozen.id,s.id);assert.equal(fs.existsSync(join(f.dir,'poison-state')),false);assert.deepEqual(inspectSource(frozen).authority,inspected.out.result.authority,'source deletion and poisoned config do not alter captured authority');
-  const before=tree(f.bindings.stateDir),beforeCalls=fs.readFileSync(f.calls);
-  assert.throws(()=>runSource(frozen,{manual:true,noLaunch:true}),{code:'E_CAPTURED_HELPER'});
-  assert.deepEqual(tree(f.bindings.stateDir),before);assert.deepEqual(fs.readFileSync(f.calls),beforeCalls,'captured source cannot reach legacy worker spawn');
-  schedules[`okf-${s.id}`]={...spec,argv:['oats','poison'],attempt:{executionId:'retained-attempt'}};save(join(f.dir,'schedules.json'),schedules);
-  assert.throws(()=>scheduleSource(s),/definition differs/);assert.deepEqual(readJSON(join(f.dir,'schedules.json'))[`okf-${s.id}`].attempt,{executionId:'retained-attempt'});
-});
-test('public captured harvest refuses before registration replay or scheduling effects',t=>{
-  const f=fixture(t),receipt=capturedReceipt(f),s=registerCaptured(f.home,receipt),snapshot=join(f.dir,'binding-snapshot.json');save(snapshot,receipt.binding);
-  note(f);capture(s);
-  const id=randomUUID(),status=loadStatus(s);
-  save(join(dirname(s.file),'runs',id,'run.json'),{version:1,id,source:s.id,inputs:status.captured.inputs,status:'delivered',receipts:{'base-1':{status:'delivered',proposal:'retained-fixture'}}});
-  status.activeRun=id;saveStatus(s,status);
-  // These pending repairs used to run before the knowingly unsupported worker.
-  fs.renameSync(join(f.home,'knowledge'),join(f.home,`.okf-view-${s.id}`));
-  for(const path of ['STATE.md','log.md','notes']) fs.rmSync(join(f.home,path),{recursive:true,force:true});
-  fs.rmSync(join(dirname(s.file),'schedule.json'));save(join(f.dir,'schedules.json'),{});
-  const preload=noEffectsPreload(f.dir),before=inventory(f.dir);
-  for(const env of [{OATS_BINDING_FILE:snapshot},{}]) for(const args of [[],['--no-launch']]) {
-    const result=spawnSync(process.execPath,['--import',preload,CLI,'harvest','--home',f.home,...args,'--json'],{cwd:f.context,env:{...process.env,...env},encoding:'utf8',timeout:30000});
-    assert.equal(result.status,1,result.stdout+result.stderr);
-    const error=JSON.parse(result.stdout).error;
-    // The production reader refuses a persisted captured source with NO
-    // selected binding even before the qualified-helper guard. A selected
-    // binding still reaches the explicit unsupported-helper diagnostic.
-    assert.equal(error.code,Object.hasOwn(env,'OATS_BINDING_FILE')?'E_CAPTURED_HELPER':'E_INVOCATION');
-    if(!Object.hasOwn(env,'OATS_BINDING_FILE')) assert.equal(error.message,'captured source execution requires its selected binding');
-    assert.equal(result.stderr,'');assert.deepEqual(inventory(f.dir),before,'no repair, lock, schedule, input or admitted receipt change');
-  }
-});
-
-test('public captured harvest with unregistered or missing source refuses without effects',t=>{
-  const f=fixture(t),receipt=capturedReceipt(f),snapshot=join(f.dir,'binding-snapshot.json');save(snapshot,receipt.binding);
-  const preload=noEffectsPreload(f.dir);
-  for(const missing of [false,true]) {
-    if(missing) {registerCaptured(f.home,receipt);fs.rmSync(f.home,{recursive:true});fs.rmSync(f.soul,{recursive:true});fs.rmSync(f.bindingFile);}
-    const before=inventory(f.dir);
-    for(const args of [[],['--no-launch']]) {
-      const result=spawnSync(process.execPath,['--import',preload,CLI,'harvest','--home',f.home,...args,'--json'],{cwd:f.context,env:{...process.env,OATS_BINDING_FILE:snapshot},encoding:'utf8',timeout:30000});
-      assert.equal(result.status,1,result.stdout+result.stderr);assert.equal(JSON.parse(result.stdout).error.code,'E_CAPTURED_HELPER');
-      assert.equal(result.stderr,'');assert.deepEqual(inventory(f.dir),before,'no registration, source recreation or scheduler/worker call');
-    }
-  }
 });
 
 test('public legacy harvest still registers and replays its existing worker',t=>{
@@ -424,78 +275,6 @@ test('public legacy harvest still registers and replays its existing worker',t=>
   assert.equal(calls.some(({a})=>a[0]==='session' || a.includes('install')),false);
 });
 
-test('captured completion command binds saved selectors and public provider completion after source deletion',t=>{
-  const f=fixture(t),receipt=capturedReceipt(f),s=registerCaptured(f.home,receipt);note(f);capture(s,{final:true});
-  const id=randomUUID(),home=join(f.dir,'retained-worker'),alias=f.base.id;fs.mkdirSync(join(home,'work'),{recursive:true});
-  save(join(home,'instance.json'),{instance:'retained-worker',agent:'memory-harvest',work:'directory'});
-  const staged=stageBase(f.base,join(home,'work','base')),run={version:1,id,source:s.id,created:'2026-09-16T00:00:00.000Z',inputs:loadStatus(s).captured.inputs,status:'ready',worker:{instance:'retained-worker',home},stages:{[alias]:{root:staged.root,baseline:staged.files,digest:staged.digest,owned:['expert']}},receipts:{}};
-  save(join(dirname(s.file),'runs',id,'run.json'),run);const status=loadStatus(s);status.activeRun=id;saveStatus(s,status);
-  const judgmentFile=judgment(f,s,run,{drop:true,base:alias}),snapshot=join(f.dir,'completion-binding.json');save(snapshot,receipt.binding);
-  const generic=capturedExecutionEnv(f,receipt,'complete',{scope:true});
-  save(join(f.dir,'captured-dispatch.json'),{deployment:s.executionBinding.deployment,resolution:s.executionBinding.resolution.id,cli:CLI,bindingFile:snapshot,invocationFile:generic.OATS_INVOCATION_CONTEXT_FILE});
-  const argv=completionArgv(s,id,judgmentFile);assert.deepEqual(argv.slice(0,4),['--deployment',f.context,'--resolution',receipt.executionBinding.resolution.id]);assert.equal(argv.includes('--soul'),false);
-  fs.rmSync(f.home,{recursive:true});fs.rmSync(f.soul,{recursive:true});fs.rmSync(f.bindingFile);
-  fs.symlinkSync('/usr/bin/env',join(f.dir,'bin','env'));
-  const env={...process.env,OATS_DEPLOYMENT:'/poison',OATS_RESOLUTION:'poison',OATS_BINDING_FILE:'/poison',OATS_SOURCE_RECEIPT_FILE:'/poison',OATS_INVOCATION_CONTEXT_FILE:'/poison'};
-  const contextFile=generic.OATS_INVOCATION_CONTEXT_FILE,context=readJSON(contextFile);save(contextFile,{...context,executionBinding:{...context.executionBinding,resolution:{schemaVersion:1,id:`sha256-${'d'.repeat(64)}`}}});
-  const beforeMismatch=tree(f.bindings.stateDir),mismatch=spawnSync('/bin/sh',['-c',completionCommand(s,id,judgmentFile)],{env,encoding:'utf8'});
-  assert.equal(mismatch.status,1);assert.equal(JSON.parse(mismatch.stdout).error.code,'E_INVOCATION');assert.deepEqual(tree(f.bindings.stateDir),beforeMismatch,'wrong generic source binding cannot change retained runs/receipts');save(contextFile,context);
-  const result=spawnSync('/bin/sh',['-c',completionCommand(s,id,judgmentFile)],{env,encoding:'utf8'});
-  assert.equal(result.status,0,result.stderr+result.stdout);assert.equal(JSON.parse(result.stdout).result.processed,true);assert.equal(loadStatus(s).processed.length,run.inputs.length);
-  assert.equal(fs.existsSync(join(f.dir,'workers')),false,'no fake legacy spawn occurred; this proves public provider completion, not a qualified kernel helper launch');
-});
-
-test('malformed captured source remote is refused by public inspect without secret echo',t=>{
-  const f=fixture(t),receipt=capturedReceipt(f),s=registerCaptured(f.home,receipt),snapshot=join(f.dir,'binding-snapshot.json');save(snapshot,receipt.binding);
-  const malformed=readJSON(s.file);malformed.sourceIdentity.repository.remote='git:https://user:SYNTHETIC_SECRET@example.invalid/source.git';save(s.file,malformed);
-  const result=f.cli('inspect',[],{OATS_BINDING_FILE:snapshot});assert.equal(result.status,1);assert.equal(result.out.error.code,'E_SOURCE');assert.doesNotMatch(result.stdout+result.stderr,/SYNTHETIC_SECRET/);
-});
-
-test('captured owner registry accepts legal prototype-named owners and replays its own row',t=>{
-  for(const owner of ['hasOwnProperty','isPrototypeOf']) {
-    const f=fixture(t,{nodes:{expert:{path:'expert',owner},peer:{path:'peer',owner:'owner-2'}}}),receipt=capturedReceipt(f);
-    receipt.binding.payload.owner=owner;receipt.binding.payload.owns[0].steward=owner;receipt.binding.payload.runtime.declaration.owner=owner;
-    const first=registerCaptured(f.home,receipt),file=join(f.bindings.stateDir,'owners.json'),owners=readJSON(file);
-    assert.equal(Object.hasOwn(owners,owner),true);assert.deepEqual(owners[owner].identity,receipt.sourceIdentity);
-    assert.equal(registerCaptured(f.home,receipt).id,first.id);
-    const home=join(f.context,'second-home');fs.mkdirSync(join(home,'work'),{recursive:true});
-    const second=registerCaptured(home,{...receipt,home,work:join(home,'work'),instance:'source-two'});
-    assert.notEqual(second.id,first.id);assert.deepEqual(readJSON(file),owners,'another incarnation with same qualified owner does not rewrite ownership');
-  }
-});
-
-test('captured helper skips ownership and legacy owner evidence requires explicit migration',t=>{
-  const helper=fixture(t),helperReceipt=capturedReceipt(helper,{kind:'helper'}),bindingFile=join(helper.dir,'helper-binding.json'),receiptFile=join(helper.dir,'helper-receipt.json');save(bindingFile,helperReceipt.binding);save(receiptFile,helperReceipt);
-  const helperSpawn=helper.cli('spawn',[],{OATS_BINDING_FILE:bindingFile,OATS_SOURCE_RECEIPT_FILE:receiptFile,...capturedExecutionEnv(helper,helperReceipt,'spawn')});assert.equal(helperSpawn.status,0);assert.equal(helperSpawn.out.meta.memory,'none');assert.equal(fs.existsSync(join(helper.bindings.stateDir,'owners.json')),false);
-  for(const changed of [
-    {...helperReceipt,home:join(helper.dir,'other-home')},
-    {...helperReceipt,work:'relative'},
-    {...helperReceipt,context:join(helper.dir,'other-deployment')},
-    {...helperReceipt,sourceIdentity:{kind:'local-soul',source:`path:${helper.soul}`,exportPath:'.'}},
-    {...helperReceipt,role:'x'.repeat(128*1024+1)},
-    {...helperReceipt,responsibleHuman:{provider:'fixture'}},
-  ]) assert.throws(()=>registerCaptured(helper.home,changed));
-  const legacy=fixture(t);fs.mkdirSync(legacy.bindings.stateDir,{recursive:true});save(join(legacy.bindings.stateDir,'owners.json'),{'owner-1':legacy.soul});
-  assert.throws(()=>registerCaptured(legacy.home,capturedReceipt(legacy)),error=>error.code==='E_MIGRATION' && /owner registry evidence/.test(error.message));
-  assert.equal(fs.existsSync(join(legacy.home,'.okf-source.json')),false);assert.equal(fs.existsSync(join(legacy.bindings.stateDir,'sources')),false);
-});
-test('captured published commands fail closed on missing source, invalid snapshot and administration',t=>{
-  const f=fixture(t),receipt=capturedReceipt(f),snapshot=join(f.dir,'binding.json'),poison=join(f.dir,'poison-state'),poisonFile=join(f.dir,'poison.json'),poisonBase=join(f.dir,'redirected-base'),nodes=join(f.dir,'poison-nodes.json');save(snapshot,receipt.binding);
-  save(poisonFile,{version:1,stateDir:poison,bases:{[f.base.id]:{id:f.base.id,kind:'directory',path:poisonBase}}});save(nodes,{expert:{path:'expert',owner:'owner-1'}});fs.rmSync(f.bindingFile);fs.rmSync(f.soul,{recursive:true});
-  const poisonBytes=fs.readFileSync(poisonFile),env={OATS_BINDING_FILE:snapshot,OATS_SETTINGS:JSON.stringify({'bindings-file':poisonFile,'state-dir':poison})};
-  for(const [command,args=[]] of [['inspect'],['read',['--base',f.base.id]],['refresh'],['harvest',['--no-launch']],['retire'],['spawn']]) {
-    const result=f.cli(command,args,env);assert.equal(result.status,1,`${command}: ${result.stdout}`);
-  }
-  for(const [command,args] of [['setup',['--source',join(f.dir,'missing-source.json')]],['init',['--base',f.base.id,'--nodes',nodes,'--confirm']],['migrate',['--legacy',join(f.dir,'legacy'),'--base',f.base.id,'--node','expert','--output',join(f.dir,'stage')]],['unlock',['--lock',join(f.dir,'missing-lock'),'--token','no-token']]]) {
-    const result=f.cli(command,args,env);assert.equal(result.status,1);assert.equal(result.out.error.code,'E_MIGRATION',command);
-  }
-  assert.equal(fs.existsSync(poison),false);assert.equal(fs.existsSync(poisonBase),false);assert.deepEqual(fs.readFileSync(poisonFile),poisonBytes);assert.equal(fs.existsSync(join(f.home,'.okf-source.json')),false);
-  put(snapshot,'{"schemaVersion":1,"schemaVersion":1}');const invalid=f.cli('inspect',[],env);assert.equal(invalid.status,1);assert.equal(invalid.out.error.code,'E_BINDING');assert.equal(fs.existsSync(poison),false);
-  save(snapshot,receipt.binding);const receiptFile=join(f.dir,'source-receipt.json');put(receiptFile,'{"schemaVersion":1,"schemaVersion":1}');
-  const invalidReceipt=f.cli('spawn',[],{...env,OATS_SOURCE_RECEIPT_FILE:receiptFile});assert.equal(invalidReceipt.status,1);assert.match(invalidReceipt.out.warning,/invalid captured source receipt/);
-  save(receiptFile,receipt);const wrongAction=f.cli('inspect',[],{...env,OATS_SOURCE_RECEIPT_FILE:receiptFile});assert.equal(wrongAction.status,1);assert.equal(wrongAction.out.error.code,'E_SOURCE');
-  assert.equal(f.cli('soul-scaffold',[],env).status,0,'stateless scaffold guidance remains side-effect free');assert.equal(fs.existsSync(poison),false);
-});
 test('completion rejects invalid judgment and credential-shaped promotion output',t=>{
   const f=fixture(t);note(f);const {s,run}=prepared(f);const j=judgment(f,s,run,{secret:true});assert.throws(()=>complete(s,run.id,j),/credential-shaped/);const doc=readJSON(j);doc.outcomes=[];save(j,doc);assert.throws(()=>complete(s,run.id,j),/exactly one outcome/);assert.equal(loadStatus(s).processed.length,0);
 });

@@ -1,5 +1,4 @@
 import test from 'node:test';
-import { invocationFor, helperSubject } from './helpers/invocation-fixture.mjs';
 import { inventory, noEffectsPreload } from './helpers/no-effects.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -8,7 +7,7 @@ import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { bindingChoiceKey, storeChoiceKey } from '../oats-package/capabilities/oats-okf/lib/portable-binding.mjs';
-import { CHECK_REASONS, loadInvocationKnowledgeBinding, parseBindingJson, sourceRuntimeFromKnowledgeBinding } from '../oats-package/capabilities/oats-okf/lib/binding-wire.mjs';
+import { CHECK_REASONS, parseBindingJson, sourceRuntimeFromKnowledgeBinding } from '../oats-package/capabilities/oats-okf/lib/binding-wire.mjs';
 import { bindingFingerprint, validateBindings } from '../oats-package/capabilities/oats-okf/lib/config.mjs';
 import { initBase } from '../oats-package/capabilities/oats-okf/lib/migration.mjs';
 import { loadSource, register } from '../oats-package/capabilities/oats-okf/lib/sources.mjs';
@@ -86,7 +85,7 @@ test('normalize preserves separate authority candidates and bind emits the captu
   const canonicalCheck=call('check',canonical(request('check',{}, {binding:complete,context:{kind:'standalone',key:'fixture'},action:{kind:'spawn'}})));
   assert.equal(canonicalCheck.response.ok,true,'real canonical-order wire must not change structural payload equality');
   const scaffold=call('check',request('check',{}, {binding:complete,context:{kind:'standalone',key:'fixture'},action:{kind:'hook',capability:'oats.okf',name:'soul-scaffold'}}));
-  assert.deepEqual(scaffold.response.result,{status:'ready',problems:[]});assert.equal(fs.existsSync(f.stateDir),false,'stateless qualification does not bootstrap missing bases or state');
+  assert.deepEqual(scaffold.response.error,{code:'invalid-binding'});assert.equal(fs.existsSync(f.stateDir),false,'removed soul-scaffold hook does not bootstrap missing bases or state');
 });
 
 test('check validates real directory and private-staged Git acceptance read-only',t=>{
@@ -144,48 +143,12 @@ test('captured harvest command and knowledge operation check refuse before store
     {kind:'command',capability:'oats.okf',name:'harvest'},
     {kind:'operation',slot:'knowledge',name:'harvest'},
   ]) {
-    for(const withInvocation of [false,true]) {
-      const input={binding:capturedBinding,context,action,...(withInvocation?{invocation:invocationFor({binding:capturedBinding,context,action})}:{})};
-      const result=call('check',request('check',{},input),{TMPDIR:f.root,NODE_OPTIONS:`--import=${JSON.stringify(preload)}`});
-      assert.equal(result.status,0,result.stdout+result.stderr);assert.equal(result.response.ok,true);
-      assert.deepEqual(result.response.result,{status:'needs-configuration',problems:[{code:'provider-not-qualified',message:'check action is not an admitted knowledge operation'}]});
-      assert.equal(result.stderr,'');assert.deepEqual(inventory(f.root),before,'no scratch, native Git, registration or scheduler effects');
-    }
+    const input={binding:capturedBinding,context,action};
+    const result=call('check',request('check',{},input),{TMPDIR:f.root,NODE_OPTIONS:`--import=${JSON.stringify(preload)}`});
+    assert.equal(result.status,0,result.stdout+result.stderr);assert.equal(result.response.ok,true);
+    assert.deepEqual(result.response.result,{status:'needs-configuration',problems:[{code:'provider-not-qualified',message:'check action is not an admitted knowledge operation'}]});
+    assert.equal(result.stderr,'');assert.deepEqual(inventory(f.root),before,'no scratch, native Git, registration or scheduler effects');
   }
-});
-
-test('OATS_BINDING_FILE loads one frozen provider envelope and never falls back',t=>{
-  const {f,binding}=prepareBinding(t),snapshot=join(f.root,'invocation-binding.json');fs.writeFileSync(snapshot,canonical(binding),{mode:0o600});
-  assert.deepEqual(loadInvocationKnowledgeBinding({}),{kind:'legacy'});
-  const loaded=loadInvocationKnowledgeBinding({OATS_BINDING_FILE:snapshot});
-  assert.equal(loaded.kind,'captured');assert.equal(loaded.runtime.bindings.stateDir,f.stateDir);assert.deepEqual(loaded.runtime.decl,binding.payload.runtime.declaration);
-
-  for(const [name,value] of [
-    ['relative','relative.json'],['missing',join(f.root,'missing.json')],
-  ]) assert.throws(()=>loadInvocationKnowledgeBinding({OATS_BINDING_FILE:value}),error=>error.code==='E_BINDING',name);
-  const wrong=structuredClone(binding);wrong.capability='other.provider';fs.writeFileSync(snapshot,canonical(wrong));
-  assert.throws(()=>loadInvocationKnowledgeBinding({OATS_BINDING_FILE:snapshot}),{code:'E_BINDING'});
-  fs.writeFileSync(snapshot,'{"schemaVersion":1,"schemaVersion":1}');assert.throws(()=>loadInvocationKnowledgeBinding({OATS_BINDING_FILE:snapshot}),{code:'E_BINDING'});
-  fs.writeFileSync(snapshot,canonical(binding));const link=join(f.root,'binding-link.json');fs.symlinkSync(snapshot,link);
-  assert.throws(()=>loadInvocationKnowledgeBinding({OATS_BINDING_FILE:link}),{code:'E_BINDING'});
-  fs.chmodSync(snapshot,0o644);assert.throws(()=>loadInvocationKnowledgeBinding({OATS_BINDING_FILE:snapshot}),{code:'E_BINDING'});fs.chmodSync(snapshot,0o600);
-
-  const oldBinding=process.env.OATS_BINDING_FILE,oldSettings=process.env.OATS_SETTINGS;
-  t.after(()=>{if(oldBinding===undefined) delete process.env.OATS_BINDING_FILE;else process.env.OATS_BINDING_FILE=oldBinding;if(oldSettings===undefined) delete process.env.OATS_SETTINGS;else process.env.OATS_SETTINGS=oldSettings;});
-  process.env.OATS_BINDING_FILE=snapshot;process.env.OATS_SETTINGS=JSON.stringify({'bindings-file':join(f.root,'poison-live.json'),'state-dir':join(f.root,'poison-state')});
-  const home=join(f.root,'new-home');fs.mkdirSync(home);fs.writeFileSync(join(home,'instance.json'),JSON.stringify({instance:'fixture',agent:'fixture'}));
-  assert.throws(()=>register(home),error=>error.code==='E_MIGRATION' && /fallback is forbidden/.test(error.message));
-  assert.equal(fs.existsSync(f.stateDir),false);assert.equal(fs.existsSync(join(f.root,'poison-state')),false);
-
-  const frozen=sourceRuntimeFromKnowledgeBinding(binding),id='00000000-0000-4000-8000-000000000001',sourceFile=join(f.stateDir,'sources',id,'source.json'),{file:bindingsFile,...bindingsDoc}=frozen.bindings;
-  const checked=validateBindings(bindingsDoc,bindingsFile,{sourceHome:home,sourceWork:join(home,'work')});
-  const descriptor={version:1,id,home,work:join(home,'work'),context:f.root,agent:'fixture',instance:'fixture',owner:frozen.owner,decl:frozen.decl,role:'fixture',bindings:{file:frozen.bindings.file,...checked},bindingFingerprint:bindingFingerprint(checked),execution:frozen.execution,providerBinding:binding,registration:{schemaVersion:1,kind:'captured'},sourceIdentity:{kind:'git-soul',repository:{kind:'canonical-remote',remote:'git:https://example.test/source.git'},exportPath:'agents/expert'},executionBinding:{schemaVersion:1,deployment:f.root,resolution:{schemaVersion:1,id:`sha256-${'c'.repeat(64)}`}},responsibleHuman:null};
-  fs.mkdirSync(dirname(sourceFile),{recursive:true});fs.writeFileSync(sourceFile,JSON.stringify(descriptor));
-  fs.rmSync(snapshot);delete process.env.OATS_BINDING_FILE;
-  assert.equal(loadSource(sourceFile).owner,'expert-owner','frozen descriptor survives transient snapshot deletion');
-  fs.writeFileSync(snapshot,canonical(binding),{mode:0o600});process.env.OATS_BINDING_FILE=snapshot;assert.equal(loadSource(sourceFile).id,id);
-  const changed=structuredClone(binding);changed.payload.execution.model='other/model';fs.writeFileSync(snapshot,canonical(changed),{mode:0o600});
-  assert.throws(()=>loadSource(sourceFile),error=>error.code==='E_SOURCE' && /differs from frozen source/.test(error.message));
 });
 
 test('wire is strict, bounded, duplicate-safe and returns typed nonsecret errors',t=>{
@@ -203,18 +166,10 @@ test('wire is strict, bounded, duplicate-safe and returns typed nonsecret errors
   assert.throws(()=>parseBindingJson(Buffer.from('[[[[0]]]]'),{bytes:100,depth:3,entries:20}),{wireCode:'invalid-binding'});
 });
 
-test('check accepts optional full-subject invocation without changing scope checks or source receipts',t=>{
-  const {binding}=prepareBinding(t),context={kind:'standalone',key:'fixture-context'},action={kind:'hook',capability:'oats.okf',name:'soul-scaffold'};
-  const value=invocationFor({binding,context,action});
-  for(const invocation of [value,{...value,subject:helperSubject(),instance:{...value.instance,agent:'helper'}}]) {
-    const checked=call('check',request('check',{}, {binding,context,action,invocation}),{OATS_INVOCATION_CONTEXT_FILE:'/missing/must-not-read-context',OATS_SOURCE_RECEIPT_FILE:'/missing/must-not-read-source'});
-    assert.equal(checked.status,0);assert.deepEqual(checked.response.result,{status:'ready',problems:[]});
-  }
-  assert.deepEqual(call('check',request('check',{}, {binding,context,action})).response.result,{status:'ready',problems:[]});
-  for(const invocation of [null,{...value,capability:'oats.aweb'},{...value,context:{kind:'standalone',key:'wrong'}},{...value,action:{...action,name:'retire'}},{...value,subject:{kind:'helper',identity:null,alias:'helper'}},{...value,priorReceipt:'x'.repeat(128*1024)}]) {
-    const checked=call('check',request('check',{}, {binding,context,action,invocation}));
-    assert.equal(checked.status,0);assert.deepEqual(checked.response.error,{code:'invalid-binding'});
-  }
+test('check rejects removed soul-scaffold hook before store effects',t=>{
+  const {binding}=prepareBinding(t),context={kind:'standalone',key:'fixture-context'};
+  const removed=call('check',request('check',{}, {binding,context,action:{kind:'hook',capability:'oats.okf',name:'soul-scaffold'}}));
+  assert.equal(removed.status,0);assert.deepEqual(removed.response.error,{code:'invalid-binding'});
 });
 
 test('shared binding maps keep only declared OKF addresses and ignore aweb siblings without effects or leaks',t=>{
@@ -316,7 +271,7 @@ test('check diagnoses bound runtime constraints without using mutable settings o
     assert.equal(result.status,0,result.stderr);assert.deepEqual(result.response.error,{code:'needs-configuration',message});
     assert.equal(result.stderr,'');assert.doesNotMatch(result.stdout,new RegExp(`${secret}|${f.root}`));assert.deepEqual(inventory(f.root),before);
   }
-  const valid=call('check',request('check',{'bindings-file':secret,'state-dir':secret,'harvest-runtime':secret},{binding,context:{},action:{kind:'hook',capability:'oats.okf',name:'soul-scaffold'}}),env);
+  const valid=call('check',request('check',{'bindings-file':secret,'state-dir':secret,'harvest-runtime':secret},{binding,context:{},action:{kind:'hook',capability:'oats.okf',name:'spawn'}}),env);
   assert.deepEqual(valid.response.result,{status:'ready',problems:[]},'bound settings, not mutable request settings, remain authoritative');
   for(const change of [b=>{b.payload.runtime[secret]=secret;},b=>{b.payload.runtime.bindings[secret]=secret;},b=>{b.payload.execution[secret]=secret;},b=>{delete b.payload.execution.model;},b=>{b.payload.runtime=null;}]){
     const b=structuredClone(binding);change(b);const result=call('check',request('check',{}, {binding:b,context:{},action:{kind:'inspect'}}),env);
@@ -328,8 +283,9 @@ test('check diagnoses bound runtime constraints without using mutable settings o
 test('manifest owns all three binding phase commands',()=>{
   const manifest=JSON.parse(fs.readFileSync(join(ROOT,'oats-package/capabilities/oats-okf/oats.json'),'utf8'));
   const distribution=JSON.parse(fs.readFileSync(join(ROOT,'oats-package/oats-package.json'),'utf8'));
-  assert.equal(manifest.compatibility.oats,'>=0.24.4');
+  assert.equal(manifest.compatibility.oats,'>=0.26.0');
   assert.equal(distribution.compatibility.oats,manifest.compatibility.oats);
+  assert.equal(Object.hasOwn(manifest.hooks,'soul-scaffold'),false);
   const {reasons,...phases}=manifest.binding;
   assert.deepEqual(phases,{version:1,normalize:'binding-normalize',bind:'binding-bind',check:'binding-check'});
   assert.equal(reasons.length,16);assert.equal(new Set(reasons).size,16);assert.ok(reasons.every(reason=>typeof reason==='string'&&reason.length>0));

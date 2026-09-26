@@ -1,9 +1,9 @@
 {
   "capability": "oats.okf",
   "command": "okf",
-  "version": "2.1.5",
+  "version": "2.1.6",
   "compatibility": {
-    "oats": ">=0.24.4"
+    "oats": ">=0.26.0"
   },
   "layer": "knowledge",
   "description": "External OKF bases with owned nodes, immutable reader views, durable per-source evidence, independent workers, verified Git PR and recoverable non-Git directory delivery.",
@@ -83,7 +83,6 @@
     "mode": "omit"
   },
   "hooks": {
-    "soul-scaffold": "bin/oats-okf.mjs soul-scaffold",
     "spawn": {
       "command": "bin/oats-okf.mjs spawn",
       "required": true,

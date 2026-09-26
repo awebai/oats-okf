@@ -1,5 +1,4 @@
 import { TextDecoder } from 'node:util';
-import { validateInvocationShape } from './invocation-shape.mjs';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import { fs, safePath } from './io.mjs';
@@ -217,34 +216,6 @@ export function sourceRuntimeFromKnowledgeBinding(binding) {
   return {owner:domain.owner,bindings:{file:runtime.descriptorFile,...runtime.bindings},decl:runtime.declaration,execution:{...execution}};
 }
 
-const invocationError=()=>{throw Object.assign(new Error('invalid captured provider binding snapshot'),{code:'E_BINDING'});};
-export function readPrivateInvocationJson(file) {
-  if(!absolute(file)) invocationError();
-  let fd;
-  try {
-    if(safePath(file)!==file) invocationError();
-    const before=fs.lstatSync(file),uid=typeof process.getuid==='function'?process.getuid():null;
-    if(!before.isFile() || before.nlink!==1 || before.size>BINDING_WIRE_LIMITS.bytes || (before.mode&0o077)!==0 || (uid!==null && before.uid!==uid)) invocationError();
-    fd=fs.openSync(file,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW|fs.constants.O_NONBLOCK);
-    const opened=fs.fstatSync(fd);
-    if(!opened.isFile() || opened.nlink!==1 || opened.dev!==before.dev || opened.ino!==before.ino || opened.size>BINDING_WIRE_LIMITS.bytes || (opened.mode&0o077)!==0 || (uid!==null && opened.uid!==uid)) invocationError();
-    const bytes=Buffer.alloc(Math.min(BINDING_WIRE_LIMITS.bytes+1,opened.size+1));let length=0;
-    while(length<bytes.length) {const count=fs.readSync(fd,bytes,length,bytes.length-length,null);if(!count) break;length+=count;}
-    const after=fs.fstatSync(fd);
-    if(length>BINDING_WIRE_LIMITS.bytes || after.size!==opened.size || after.mtimeMs!==opened.mtimeMs) invocationError();
-    return parseBindingJson(bytes.subarray(0,length));
-  } catch(error) {if(error?.code==='E_BINDING') throw error;invocationError();}
-  finally {if(fd!==undefined) fs.closeSync(fd);}
-}
-
-/** Load only the parent-owned transient ProviderBinding1 snapshot when present.
- * Absence is an explicit legacy mode; every present-file defect fails closed. */
-export function loadInvocationKnowledgeBinding(env=process.env) {
-  if(!Object.hasOwn(env,'OATS_BINDING_FILE')) return {kind:'legacy'};
-  const file=env.OATS_BINDING_FILE,binding=readPrivateInvocationJson(file);
-  let runtime;try{runtime=sourceRuntimeFromKnowledgeBinding(binding);}catch{invocationError();}
-  return {kind:'captured',file,binding,runtime};
-}
 // Closed vocabulary of check-phase reasons: one fixed literal per cause, so the
 // operator learns WHICH qualification failed without any value, path, alias or
 // caught message reaching the wire. Every literal is also in oats.json
@@ -274,15 +245,11 @@ function providerActionName(action) {
   return null;
 }
 function checkPhase(req) {
-  keys(req.input,['binding','context','action','invocation'],['binding','context','action'],'check input');
+  keys(req.input,['binding','context','action'],['binding','context','action'],'check input');
   if(!obj(req.input.context) || !obj(req.input.action)) wireError('invalid-binding');
-  if(Object.hasOwn(req.input,'invocation')) validateInvocationShape(req.input.invocation,{capability:CAPABILITY,context:req.input.context,action:req.input.action});
   const {runtime}=bindingPayload(req.input.binding,{diagnoseSettings:true}),action=req.input.action,name=providerActionName(action);
-  const harvestInvocation=req.input.invocation;
-  const admittedHarvest=name==='harvest' && action.kind==='operation' && action.slot==='knowledge' && action.name==='harvest'
-    && harvestInvocation?.subject.kind==='persistent' && harvestInvocation.instance!==null && !!harvestInvocation.intent;
-  if(name && (unsupportedCapturedCommands.has(name) || name==='run-source' || (name==='harvest' && !admittedHarvest))) return {status:'needs-configuration',problems:[problem('provider-not-qualified','action:not-admitted')]};
-  if(action.kind==='hook' && action.name==='soul-scaffold') return {status:'ready',problems:[]};
+  if(action.kind==='hook' && action.name==='soul-scaffold') wireError('invalid-binding');
+  if(name && (unsupportedCapturedCommands.has(name) || name==='run-source' || name==='harvest')) return {status:'needs-configuration',problems:[problem('provider-not-qualified','action:not-admitted')]};
   let bindings;try{bindings=validateBindings(runtime.bindings,runtime.descriptorFile);}catch{return {status:'needs-configuration',problems:[problem('needs-configuration','bindings:invalid')]};}
   const accepted={},gitBases=Object.entries(bindings.bases).filter(([,base])=>base.kind==='git');
   if(gitBases.length>64) return {status:'unavailable',problems:[problem('provider-not-qualified','bases:too-many')]};

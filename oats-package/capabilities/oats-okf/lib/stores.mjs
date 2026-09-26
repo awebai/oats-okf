@@ -9,7 +9,9 @@ const validator = fileURLToPath(new URL('../skills/okf/scripts/okf-validate.mjs'
 // transport subprocesses. Override even an explicitly supplied command env.
 const gitEnv = (env = cleanEnv()) => ({...env,GIT_NO_REPLACE_OBJECTS:'1'});
 export const git = (cwd,args,opts={}) => exec('git',['--no-replace-objects','-c','core.hooksPath=/dev/null','-c','protocol.ext.allow=never','-C',cwd,...args],{cwd,...opts,env:gitEnv(opts.env)});
-function baseError(code,message,base,alias,step,reason) {throw Object.assign(new Error(message),{code,base:alias,repository:base.repository,step,reason});}
+export function redactGitDiagnostic(value) {return String(value).replace(/https:\/\/[^/@\s]+@/g,'https://');}
+function publicRepository(base) {return redactGitDiagnostic(base.repository);}
+function baseError(code,message,base,alias,step,reason) {throw Object.assign(new Error(message),{code,base:alias,repository:publicRepository(base),step,reason});}
 function baseRemedy(alias) {return `fix the binding for base alias "${alias}" in the bindings file, or remove the base from the bindings`;}
 function classifyGitFailure(error) {
   const text=String(error?.message || '');
@@ -20,13 +22,13 @@ function classifyGitFailure(error) {
   return 'unknown';
 }
 function unavailable(base,alias,step,error) {
-  const reason=classifyGitFailure(error),detail=reason==='unknown'?`; original Git failure: ${String(error?.message || 'unknown failure')}`:'';
-  const message=`Git base "${alias}" repository "${base.repository}" is required by the deployment's bindings, but ${step} failed (reason: ${reason}${detail}); ${baseRemedy(alias)}`;
+  const reason=classifyGitFailure(error),detail=reason==='unknown'?`; original Git failure: ${redactGitDiagnostic(error?.message || 'unknown failure')}`:'';
+  const message=`Git base "${alias}" repository "${publicRepository(base)}" is required by the deployment's bindings, but ${step} failed (reason: ${reason}${detail}); ${baseRemedy(alias)}`;
   baseError('E_BASE_UNAVAILABLE',message,base,alias,step,reason);
 }
 function requireNotShallow(base,alias,cwd) {
   const shallow=git(cwd,['rev-parse','--is-shallow-repository']);
-  if(shallow==='true') baseError('E_BASE_SHALLOW',`Git base "${alias}" repository "${base.repository}" is required by the deployment's bindings, but the repository is shallow; oats.okf requires full accepted history before staging; ${baseRemedy(alias)}`,base,alias,'clone','shallow');
+  if(shallow==='true') baseError('E_BASE_SHALLOW',`Git base "${alias}" repository "${publicRepository(base)}" is required by the deployment's bindings, but the repository is shallow; oats.okf requires full accepted history before staging; ${baseRemedy(alias)}`,base,alias,'clone','shallow');
 }
 function preflightLocalRepository(base,alias) {
   if(!base.repository.startsWith('/')) return;
