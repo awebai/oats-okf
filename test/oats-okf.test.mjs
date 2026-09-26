@@ -51,7 +51,7 @@ else if(a[0]==='--deployment') {
   process.stdout.write(r.stdout);process.stderr.write(r.stderr);process.exit(r.status ?? 94);
 }
 else if(a[0]==='spawn' && a.includes('--preview')) {const p=join(root,'preview.json');out(fs.existsSync(p)?JSON.parse(fs.readFileSync(p,'utf8')):{modules:[{name:'oats.okf-harvest',layer:null},{name:'oats.fixture-chat',layer:'messaging'}]});}
-else if(a[0]==='spawn') {if(a[1]!=='oats.okf/knowledge-harvester') {console.error('fixture spawns only the harvester package soul');process.exit(95);}const instance='oats-okf-knowledge-harvester-'+val('--purpose'),home=join(root,'workers',instance);fs.mkdirSync(join(home,'work'),{recursive:true});fs.writeFileSync(join(home,'instance.json'),JSON.stringify({instance,agent:'oats-okf--knowledge-harvester',work:'directory',kind:'persistent',launched:false}));fs.copyFileSync(val('--task-file'),join(home,'TASK.md'));out({instance,home,work:'directory',launched:false});}
+else if(a[0]==='spawn') {if(a[1]!=='oats.okf/knowledge-harvester') {console.error('fixture spawns only the harvester package soul');process.exit(95);}if(a.includes('--purpose') || !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(val('--name')) || val('--name').length>64) {console.error('fixture: exact --name slug of at most 64 characters');process.exit(96);}const instance=val('--name'),home=join(root,'workers',instance);fs.mkdirSync(join(home,'work'),{recursive:true});fs.writeFileSync(join(home,'instance.json'),JSON.stringify({instance,agent:'oats-okf--knowledge-harvester',work:'directory',kind:'persistent',launched:false}));fs.copyFileSync(val('--task-file'),join(home,'TASK.md'));out({instance,home,work:'directory',launched:false});}
 else if(a[0]==='version' && fs.existsSync(join(root,'version.json'))) console.log(fs.readFileSync(join(root,'version.json'),'utf8'));
 else if(a[0]==='session') {console.error('NO MODEL SESSIONS IN FIXTURES');process.exit(91);}
 else if(a[0]==='schedule') {
@@ -602,7 +602,7 @@ test('baseline exports the readable okf-consultation and okf-instance-knowledge 
   assert.ok(fs.statSync(join(CAP,'lib/okf-validate.mjs')).isFile());
 });
 test('baseline harvest operation dispatches its declared command without a hook event',t=>{
-  const f=fixture(t);f.source();note(f);const r=declaredRun(f,'harvest',['--no-launch'],true);assert.equal(r.schemaVersion,1);assert.equal(r.ok,true);assert.equal(r.result.status,'ready');assert.match(r.result.instance,/^oats-okf-knowledge-harvester-okf-/);
+  const f=fixture(t);f.source();note(f);const r=declaredRun(f,'harvest',['--no-launch'],true);assert.equal(r.schemaVersion,1);assert.equal(r.ok,true);assert.equal(r.result.status,'ready');assert.match(r.result.instance,/^okf-harvester-[0-9a-f-]{36}$/);assert.ok(r.result.instance.length<=64);
 });
 for(const operation of [false,true]) test(`baseline inspect ${operation?'operation':'command'} returns provider receipts through declared dispatch`,t=>{
   const f=fixture(t);const s=f.source();const status=loadStatus(s);status.diagnostic='large α receipt\n'.repeat(10000);saveStatus(s,status);
@@ -1639,7 +1639,7 @@ test('closed proposal recovery: uncertain replacement spawn is linked once and e
   const next=readRun(s,loadStatus(s).activeRun);assert.equal(next.status,'spawn-intent');assert.equal(loadStatus(s).recoveries[run.id],next.id);
   assert.equal(retry(s,{run:run.id,rejudge:true}).run,next.id);
   assert.throws(()=>retry(s,{rejudge:true}),/uncertain worker/);assert.throws(()=>retry(s,{run:next.id,rejudge:true}),/unjudged worker/);
-  const home=join(f.dir,'workers',`oats-okf-knowledge-harvester-okf-${next.id}`);assert.equal(retry(s,{adoptHome:home}).status,'ready');
+  const home=join(f.dir,'workers',`okf-harvester-${next.id}`);assert.equal(retry(s,{adoptHome:home}).status,'ready');
   const calls=fs.readFileSync(f.calls,'utf8').trim().split('\n').map(JSON.parse);assert.equal(calls.filter(c=>c.a[0]==='spawn' && !c.a.includes('--preview')).length,2);
   assert.equal(complete(s,next.id,judgment(f,s,readRun(s,next.id),{drop:true})).processed,true);assert.equal(readJSON(join(f.dir,'pr.json')).length,1);
 });

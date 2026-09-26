@@ -181,7 +181,7 @@ test('setup --harvest edits oats-local.yaml block style, and prints the line for
 const sourceFixture = () => ({ id: '11111111-1111-4111-8111-111111111111', agent: 'domain-expert', instance: 'domain-expert-task', soulId: 'github.com/acme/agents#domain-expert', tasksProvider: 'oats.linear',
   decl: { owns: ['project/expert'], reads: ['project/peer'] },
   bindings: { bases: { project: { id: 'base-1', kind: 'git', root: 'knowledge', pr: { repository: 'acme/knowledge' } }, notes: { id: 'base-2', kind: 'directory', path: '/x' } } } });
-const runFixture = (extra = {}) => ({ id: '22222222-2222-4222-8222-222222222222', inputs: ['a'.repeat(64), 'b'.repeat(64)], judgment: { tasks: { refs: ['ENG-12', 'ENG-12', 'https://github.com/acme/app/issues/4'] } }, worker: { instance: 'oats-okf-knowledge-harvester-okf-2222', home: '/nonexistent' }, ...extra });
+const runFixture = (extra = {}) => ({ id: '22222222-2222-4222-8222-222222222222', inputs: ['a'.repeat(64), 'b'.repeat(64)], judgment: { tasks: { refs: ['ENG-12', 'ENG-12', 'https://github.com/acme/app/issues/4'] } }, worker: { instance: 'okf-harvester-2222', home: '/nonexistent' }, ...extra });
 
 test('the provenance block round-trips from the harvester to the maintainer', () => {
   const pr = harvestPr(sourceFixture(), runFixture());
@@ -192,7 +192,7 @@ test('the provenance block round-trips from the harvester to the maintainer', ()
   assert.deepEqual(parsed.value.source, { soul: 'domain-expert', soulId: 'github.com/acme/agents#domain-expert', instance: 'domain-expert-task', ownedNodes: ['project/expert'], readNodes: ['project/peer'],
     bases: [{ alias: 'project', id: 'base-1', kind: 'git', root: 'knowledge', repository: 'acme/knowledge' }, { alias: 'notes', id: 'base-2', kind: 'directory' }] });
   assert.deepEqual(parsed.value.tasks, { provider: 'oats.linear', refs: ['ENG-12', 'https://github.com/acme/app/issues/4'] });
-  assert.deepEqual(parsed.value.harvester, { instance: 'oats-okf-knowledge-harvester-okf-2222', alias: null });
+  assert.deepEqual(parsed.value.harvester, { instance: 'okf-harvester-2222', alias: null });
   assert.equal(provenance({ ...sourceFixture(), tasksProvider: undefined }, runFixture({ judgment: {} })).tasks.provider, null);
 });
 
@@ -314,7 +314,7 @@ test('okf-maintenance review-context --checkout maps nodes to paths and flags ch
 test('okf-maintenance notify-harvester composes the C4 message to the provenance harvester', () => {
   const body = harvestPr(sourceFixture(), runFixture()).body;
   const m = maintCmd.notifyHarvester({ pr: 'https://github.com/acme/knowledge/pull/7', state: 'merged' }, {}, { view: () => prFixture(body) });
-  assert.deepEqual([m.to, m.team, m.subject], ['oats-okf-knowledge-harvester-okf-2222', 'okf', 'okf: merged https://github.com/acme/knowledge/pull/7']);
+  assert.deepEqual([m.to, m.team, m.subject], ['okf-harvester-2222', 'okf', 'okf: merged https://github.com/acme/knowledge/pull/7']);
   assert.match(m.body, /harvest-status/);
   assert.throws(() => maintCmd.notifyHarvester({ pr: 'https://github.com/acme/knowledge/pull/7', state: 'approve' }, {}, { view: () => prFixture(body) }), { code: 'E_USAGE' });
   assert.throws(() => maintCmd.notifyHarvester({ pr: 'https://github.com/acme/knowledge/pull/7', state: 'closed' }, {}, { view: () => prFixture('none') }), { code: 'E_PROVENANCE' });

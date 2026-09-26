@@ -34,10 +34,11 @@ export function completionArgv(source,id,judgmentFile='<absolute-judgment.json>'
 }
 export function completionCommand(source,id,judgmentFile) {return command(source.context,completionArgv(source,id,judgmentFile));}
 // okf 4.0.0: the harvester is the package soul oats.okf/knowledge-harvester.
-// It homes in agents/oats-okf--knowledge-harvester/ and its instances are
-// named oats-okf-knowledge-harvester-<purpose>.
+// It homes in agents/oats-okf--knowledge-harvester/. Its instances get an
+// exact --name okf-harvester-<run> (50 characters): a derived
+// <agent>-<purpose> name would exceed the kernel's 64-character cap.
 export const HARVESTER_SOUL='oats.okf/knowledge-harvester',HARVESTER_AGENT='oats-okf--knowledge-harvester',HARVESTER_TEAM='okf';
-export const harvesterInstance=id=>`oats-okf-knowledge-harvester-okf-${id}`;
+export const harvesterInstance=id=>`okf-harvester-${id}`;
 /** The harvester's own completion and status commands (oats.okf-harvest). The
  *  completion wrapper runs this source's frozen `oats okf complete` from the
  *  source deployment; the harvester never needs oats.okf itself. */
@@ -139,7 +140,7 @@ function spawnWorker(source,run,{parent=false}={}) {
     }
   }
   if(!['pi','claude','codex'].includes(source.execution.runtime)) fail('E_CONFIG','invalid harvest runtime');
-  const args=['spawn',HARVESTER_SOUL,'--purpose',`okf-${id}`,'--dir',source.context,harnessFlag(source),source.execution.runtime,'--no-launch','--task-file',taskFile,'--json'];
+  const args=['spawn',HARVESTER_SOUL,'--name',harvesterInstance(id),'--dir',source.context,harnessFlag(source),source.execution.runtime,'--no-launch','--task-file',taskFile,'--json'];
   if(source.execution.model) args.push('--model',source.execution.model);
   if(parent) args.push('--parent',source.instance);
   // Join the okf team through the soul's messaging capability, as a trigger
