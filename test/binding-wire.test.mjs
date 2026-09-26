@@ -296,6 +296,10 @@ test('normalize names missing or invalid runtime settings with fixed nonsecret m
   // required-model guard or change selected runtime/profile policy here.
   for(const value of [null,undefined]){const settings={...f.settings};if(value===undefined)delete settings['harvest-model'];else settings['harvest-model']=value;
     const result=call('normalize',request('normalize',settings,{declarations:f.declarations,context:{}}),env);assert.equal(result.response.ok,true);assert.equal(result.response.result.model.runtime.execution.model,null);}
+  // okf 4.0.0: the harvest switch is a declared setting the hooks read; the
+  // wire accepts on/off (and the manifest default) and refuses anything else.
+  for(const harvest of ['on','off']){const result=call('normalize',request('normalize',{...f.settings,harvest},{declarations:f.declarations,context:{}}),env);assert.equal(result.response.ok,true,result.stdout);}
+  for(const harvest of ['yes',true,secret]){const result=call('normalize',request('normalize',{...f.settings,harvest},{declarations:f.declarations,context:{}}),env);assert.deepEqual(result.response.error,{code:'invalid-binding'});assert.doesNotMatch(result.stdout+result.stderr,new RegExp(secret));}
   const unknown=call('normalize',request('normalize',{...f.settings,[secret]:secret},{declarations:f.declarations,context:{}}),env);
   assert.deepEqual(unknown.response.error,{code:'invalid-binding'});assert.doesNotMatch(unknown.stdout+unknown.stderr,new RegExp(secret));assert.deepEqual(inventory(f.root),before);
 });
@@ -328,7 +332,7 @@ test('check diagnoses bound runtime constraints without using mutable settings o
 test('manifest owns all three binding phase commands',()=>{
   const manifest=JSON.parse(fs.readFileSync(join(ROOT,'oats-package/capabilities/oats-okf/oats.json'),'utf8'));
   const distribution=JSON.parse(fs.readFileSync(join(ROOT,'oats-package/oats-package.json'),'utf8'));
-  assert.equal(manifest.compatibility.oats,'>=0.26.0');
+  assert.equal(manifest.compatibility.oats,'>=0.29.0');
   assert.equal(distribution.compatibility.oats,manifest.compatibility.oats);
   const {reasons,...phases}=manifest.binding;
   assert.deepEqual(phases,{version:1,normalize:'binding-normalize',bind:'binding-bind',check:'binding-check'});

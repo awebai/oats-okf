@@ -1,0 +1,26 @@
+{
+  "parameters": {
+    "repo": { "path": "on.repo", "required": true, "description": "the knowledge-base repository, github.com/<owner>/<repo>" },
+    "base": { "path": "on.base", "default": "main", "description": "the knowledge base's accepted branch" },
+    "harness": { "path": "spawn.harness", "default": "claude", "description": "the maintainer's harness: pi, claude or codex" },
+    "model": { "path": "spawn.model", "default": "opus", "description": "the maintainer's model" }
+  },
+  "definition": {
+    "id": "okf-harvest-review",
+    "enabled": true,
+    "kind": "trigger",
+    "on": {
+      "source": "github.pull_request",
+      "events": ["opened", "reopened", "ready_for_review"],
+      "labels": ["okf-harvest"],
+      "poll": "2m"
+    },
+    "spawn": {
+      "soul": "oats.okf/knowledge-maintainer",
+      "purpose": "review-pr-{number}",
+      "task": "Review knowledge-base PR {repo}#{number} ({url}). Load the knowledge-review skill first.",
+      "teams": ["okf"]
+    },
+    "concurrency": { "max": 2, "perKey": 1 }
+  }
+}

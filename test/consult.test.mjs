@@ -50,7 +50,7 @@ else {console.error('unexpected fixture call '+JSON.stringify(a));process.exit(9
   const work = join(dir, 'work-repo'), remote = join(dir, 'remote.git');
   const base = kind === 'git' ? { id: 'base-1', kind, repository: remote, root: 'knowledge', acceptedBranch: 'main', pr: { repository: 'fixture/knowledge' } } : { id: 'base-1', kind, path: 'base' };
   const bindingFile = join(dir, 'bindings.json'); save(bindingFile, { version: 1, stateDir: 'state', bases: { project: base } });
-  process.env.OATS_SETTINGS = JSON.stringify({ 'bindings-file': bindingFile, ...settings });
+  process.env.OATS_SETTINGS = JSON.stringify({ 'bindings-file': bindingFile, harvest: 'on', ...settings });
   const bindings = loadBindings();
   if (kind === 'git') {
     fs.mkdirSync(work); git(work, ['init', '-q', '--initial-branch=main']);
@@ -61,7 +61,7 @@ else {console.error('unexpected fixture call '+JSON.stringify(a));process.exit(9
   } else { initBase(bindings, 'project', nodesFile, undefined, { confirm: true }); seed(bindings.bases.project.path); }
   const context = join(dir, 'context'), home = join(context, 'home'), soul = join(context, 'soul');
   fs.mkdirSync(join(home, 'work'), { recursive: true }); fs.mkdirSync(soul);
-  put(join(soul, 'AGENTS.md'), '# Expert\n'); save(join(soul, 'okf.json'), { version: 1, owner: 'owner-1', owns: ['project/expert'], reads: ['project/peer'] });
+  put(join(soul, 'AGENTS.md'), '# Expert\n'); put(join(soul, 'soul.yaml'), 'name: soul\nwork: directory\n'); save(join(soul, 'okf.json'), { version: 1, owner: 'owner-1', owns: ['project/expert'], reads: ['project/peer'] });
   save(join(home, 'instance.json'), { instance: 'source-one', agent: 'source', repo: context, work: 'directory', launched: true });
   Object.assign(process.env, { OATS_HOME: home, OATS_INSTANCE_HOME: home, OATS_INSTANCE: 'source-one', OATS_AGENT: 'source', OATS_SOUL: soul, OATS_CONTEXT: context });
   const cli = (cmd, args = [], env = {}) => {
@@ -266,16 +266,15 @@ test('search caps hits at 50 and says how many more', t => {
   assert.match(f.cli('search', ['needle']).stdout, /… and 20 more/);
 });
 
-test('read stays an alias of cat; refresh is removed and creates nothing', t => {
+test('read and refresh are removed (E_REMOVED) and create nothing', t => {
   const f = registered(t);
-  const read = f.json('read', ['--base', 'project', '--path', 'expert/index.md']).result, cat = f.json('cat', ['--base', 'project', 'expert/index.md']).result;
-  assert.deepEqual(Object.keys(read), ['path', 'text', 'receipt']); assert.equal(read.path, cat.path); assert.equal(read.text, cat.text); assert.equal(read.receipt.commit, cat.receipt.commit);
-  assert.match(f.json('read', ['--base', 'project']).result.path, /^index\.md$/, 'read defaults to the base index as before');
   const before = fs.readdirSync(f.home).sort();
+  const read = f.cli('read', ['--base', 'project', '--path', 'expert/index.md', '--json']); assert.equal(read.status, 1); assert.equal(read.out.error.code, 'E_REMOVED');
+  assert.match(read.out.error.message, /okf 4\.0\.0 removed read: use `oats okf cat --base ALIAS PATH`/);
   const r = f.cli('refresh', ['--json']); assert.equal(r.status, 1); assert.equal(r.out.error.code, 'E_REMOVED');
   assert.match(r.out.error.message, /no per-instance views.*oats okf index.*oats okf cat/);
   assert.deepEqual(fs.readdirSync(f.home).sort(), before, 'no view directory');
-  assert.equal(f.cli('read', ['--base', 'project', 'expert/index.md', '--json']).out.error.code, 'E_USAGE', 'read keeps its flag-only form');
+  assert.equal(f.json('cat', ['--base', 'project', 'expert/index.md']).result.path, 'expert/index.md', 'cat is the one read');
 });
 
 test('directory base: commands read in place under the base lock, with digest receipts', t => {
@@ -325,16 +324,17 @@ test('withBase reads no base without a bound alias or cache and never creates in
 
 test('package: inject carries the consult rules and points at the okf-consultation skill', () => {
   const m = readJSON(join(CAP, 'oats.json'));
-  for (const c of ['bases', 'index', 'cat', 'ls', 'links', 'search', 'read', 'refresh']) assert.equal(m.commands[c], `bin/oats-okf.mjs ${c}`);
+  for (const c of ['bases', 'index', 'cat', 'ls', 'links', 'search', 'read', 'refresh']) assert.equal(m.commands[c], `bin/oats-okf.mjs ${c}`, 'read and refresh stay declared so they answer E_REMOVED');
   assert.ok(m.settings['consult-max-age'].description); assert.equal(Object.hasOwn(m.settings['consult-max-age'], 'default'), false, 'default lives in code; the binding wire rejects unknown setting keys');
   assert.equal(Object.hasOwn(m.settings, 'materialize'), false);
   const inject = fs.readFileSync(join(CAP, m.inject), 'utf8');
-  assert.match(inject, /no local copy/); assert.match(inject, /Consult both throughout your work: at the\s+start of every task, after compaction, and while you work, to make decisions\s+and to understand things/);
+  assert.match(inject, /no local copy/); assert.match(inject, /consult them at the start of\s+every task, after compaction, and every so often while you work, to decide,\s+to situate the task and to stay coherent/);
   assert.match(inject, /\*\*Soul knowledge\*\*/); assert.match(inject, /\*\*Instance knowledge\*\*: this instance's own STATE\.md, log\.md and notes\//);
-  assert.match(inject, /\*\*At the start of every task:\*\* re-read STATE\.md and the relevant notes\/,\s+then `oats okf index`/);
-  assert.match(inject, /\*\*After compaction, before continuing:\*\* re-read STATE\.md/); assert.match(inject, /\*\*Throughout the work, not only at the start:\*\*/);
-  assert.match(inject, /whenever you need to understand something/); assert.match(inject, /oats okf search/);
+  assert.match(inject, /\*\*At task start and after compaction:\*\* read STATE\.md, recent log\.md\s+entries and the relevant notes\/, then `oats okf index`/);
+  assert.match(inject, /\*\*Before compaction and before a task boundary:\*\* update STATE\.md/);
+  assert.match(inject, /\*\*Every so often while working, and always before a design decision or\s+before re-deriving something:\*\*/); assert.match(inject, /oats okf search/);
   assert.match(inject, /\*\*Consultation\*\*/); assert.match(inject, /Load the \*\*okf-consultation\*\* skill at the start of every task/);
+  assert.match(inject, /\*\*okf-instance-knowledge\*\*/);
   assert.match(inject, /alias\/node\/concept\.md@<short-oid>/); assert.doesNotMatch(inject, /\.\/knowledge\/|view\.json|refresh/);
   const skill = fs.readFileSync(join(CAP, 'skills/okf-consultation/SKILL.md'), 'utf8'), fm = /^---\n([\s\S]*?)\n---\n/.exec(skill)[1];
   assert.equal(/^name: (.+)$/m.exec(fm)[1], 'okf-consultation', 'name matches the skill directory');
@@ -343,19 +343,21 @@ test('package: inject carries the consult rules and points at the okf-consultati
   for (const trigger of [/starting a task/, /compaction/, /prior decision/, /what do we know about X/, /check the knowledge base/]) assert.match(description, trigger);
   for (const section of ['## The model', '## At the start of every task, and after compaction', '## Consult again while working', '## Navigating', '## Searching', '## Citing', '## Freshness', '## Gotchas']) assert.match(skill, new RegExp(`^${section}$`, 'm'), section);
   assert.match(skill, /references\/consult\.md/); assert.ok(skill.split('\n').length <= 200, 'skill-craft size');
-  const okf = fs.readFileSync(join(CAP, 'skills/okf/SKILL.md'), 'utf8');
-  assert.match(okf, /okf-consultation/, 'the format skill points consulting at okf-consultation'); assert.doesNotMatch(okf, /^## Navigating$/m, 'no duplicated procedure');
-  assert.equal(fs.existsSync(join(CAP, 'skills/okf/references')), false);
+  assert.doesNotMatch(skill, /read --base A --path P` is the okf 2\.x spelling of `cat`\s+and still works/);
+  assert.equal(fs.existsSync(join(CAP, 'skills/okf')), false, 'the format craft moved to okf-authoring (harvest/maintenance only)');
   const reference = fs.readFileSync(join(CAP, 'skills/okf-consultation/references/consult.md'), 'utf8');
   for (const section of ['## Navigation, worked example', '## Search', '## Citing', '## Freshness', '## Errors']) assert.ok(reference.includes(section), section);
 });
 
-test('harvest worker: no okf inject is composed for it, and it judges its staged roots, not consult', () => {
-  const soul = fs.readFileSync(join(CAP, 'agents/memory-harvest/soul.yaml'), 'utf8');
-  assert.match(soul, /^kind: capability$/m, 'a capability agent: the kernel composes no knowledge-layer inject for it');
-  const agents = fs.readFileSync(join(CAP, 'agents/memory-harvest/AGENTS.md'), 'utf8');
+test('knowledge harvester: a package soul with no knowledge slot, judging its staged roots, not consult', () => {
+  const PKG = join(ROOT, 'oats-package');
+  const soul = fs.readFileSync(join(PKG, 'souls/knowledge-harvester/soul.yaml'), 'utf8');
+  assert.match(soul, /^knowledge: none$/m, 'the knowledge slot is empty, so no okf inject is composed for it');
+  assert.doesNotMatch(soul, /^kind: capability$/m, 'no longer a capability agent');
+  const agents = fs.readFileSync(join(PKG, 'souls/knowledge-harvester/AGENTS.md'), 'utf8');
   assert.doesNotMatch(agents, /injection below/, 'no stale reference to an inject it never receives');
-  assert.match(agents, /No okf injection is composed for you/);
-  assert.match(agents, /from your STAGED roots in \.\/work/); assert.match(agents, /Do NOT\s+use `oats okf index`, `cat` or `search` for those nodes/);
-  assert.match(agents, /serve the\s+accepted state, not your staging/);
+  assert.match(agents, /staged roots/); assert.match(agents, /knowledge: none/);
+  const procedure = fs.readFileSync(join(PKG, 'capabilities/oats-okf-harvest/skills/knowledge-harvest/SKILL.md'), 'utf8');
+  assert.match(procedure, /Judge from your staged roots, never through `oats okf index\|cat\|search`/);
+  assert.match(procedure, /serve the accepted state, not your staging/);
 });

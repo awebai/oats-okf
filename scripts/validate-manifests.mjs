@@ -148,9 +148,7 @@ for (const [name, spec] of Object.entries(configs)) {
 }
 
 const declaredCapabilities = Array.isArray(packageManifest?.capabilities) ? packageManifest.capabilities : [];
-if (declaredCapabilities.length !== 1) {
-  report("oats-package.json.capabilities", `official single-capability package must enumerate exactly one capability directory (found ${declaredCapabilities.length})`);
-}
+if (!declaredCapabilities.length) report("oats-package.json.capabilities", "must enumerate at least one capability directory");
 
 const capabilities = [];
 for (const [index, capabilityDir] of declaredCapabilities.entries()) {
@@ -198,22 +196,68 @@ for (const [index, capabilityDir] of declaredCapabilities.entries()) {
   for (const forbidden of ["global", "agent-types", "souls"]) if (forbidden in manifest) report(`${capabilityDir}/oats.json.${forbidden}`, "deployment targeting belongs to config, not a capability manifest");
 }
 
-if (capabilities.length === 1 && packageManifest) {
-  const capability = capabilities[0];
-  if (packageManifest.package === "oats.dev") {
-    if (packageManifest.version !== "1.0.0") report("oats-package.json.version", "oats.dev distribution must start at 1.0.0");
-    if (capability.capability !== "oats.review" || capability.version !== "1.2.0") {
-      report("oats-package.json.capabilities[0]", "oats.dev must export capability oats.review@1.2.0");
-    }
-  } else {
-    if (packageManifest.package !== capability.capability) report("oats-package.json.package", "single-capability official package ID must equal its capability ID");
-    if (packageManifest.version !== capability.version) report("oats-package.json.version", "must match the exported capability version");
+// okf 4.0.0 ships three capabilities, all versioned and floored with the
+// package, each namespaced under it (oats.okf, oats.okf-<role>), with distinct
+// command namespaces.
+if (packageManifest && capabilities.length) {
+  const ids = new Set(), commands = new Set();
+  for (const [index, capability] of capabilities.entries()) {
+    const at = `oats-package.json.capabilities[${index}]`;
+    if (capability.version !== packageManifest.version) report(at, `capability ${capability.capability} version ${capability.version} must match the package version ${packageManifest.version}`);
+    if (capability.compatibility?.oats !== packageManifest.compatibility?.oats) report(at, `capability ${capability.capability} compatibility floor must match the package's`);
+    if (capability.capability !== packageManifest.package && !String(capability.capability).startsWith(`${packageManifest.package}-`)) report(at, `capability ${capability.capability} must be ${packageManifest.package} or ${packageManifest.package}-<role>`);
+    if (ids.has(capability.capability)) report(at, `duplicate capability id ${capability.capability}`);
+    ids.add(capability.capability);
+    if (capability.command) { if (commands.has(capability.command)) report(at, `duplicate command namespace ${capability.command}`); commands.add(capability.command); }
+    if ("agents" in capability) report(at, "capability agents are replaced by package souls in 4.0.0");
   }
-  if (packageManifest.compatibility?.oats !== capability.compatibility?.oats) report("oats-package.json.compatibility.oats", "must match the exported capability compatibility floor");
+  if (!ids.has(packageManifest.package)) report("oats-package.json.capabilities", `the package must export its own capability ${packageManifest.package}`);
+}
+
+// Package souls (OATS 0.28.0): ordinary soul directories, name = directory.
+const soulNames = new Set();
+for (const [index, soulDir] of array(packageManifest?.souls).entries()) {
+  const at = `oats-package.json.souls[${index}]`;
+  const dir = safeResource(root, soulDir, at, "soul directory", { type: "directory", recursive: true });
+  if (!dir) continue;
+  const yaml = safeResource(dir, "soul.yaml", `${soulDir}/soul.yaml`, "soul declaration", { type: "file" });
+  safeResource(dir, "AGENTS.md", `${soulDir}/AGENTS.md`, "soul instructions", { type: "file" });
+  if (!yaml) continue;
+  const text = readFileSync(yaml, "utf8");
+  const name = /^name:\s*([a-z0-9-]+)\s*$/m.exec(text)?.[1];
+  const base = soulDir.split("/").at(-1);
+  if (name !== base) report(`${soulDir}/soul.yaml`, `name must equal the directory name ${base}`);
+  if (!/^schemaVersion:\s*2\s*$/m.test(text)) report(`${soulDir}/soul.yaml`, "must be schemaVersion: 2");
+  if (!/^work:\s*(worktree|checkout|directory|workspace)\s*$/m.test(text)) report(`${soulDir}/soul.yaml`, "must declare work");
+  for (const m of text.matchAll(/^\s+([a-z0-9][a-z0-9._-]*):\s*\{\s*from:\s*here\s*\}/gm)) {
+    if (!capabilities.some((c) => c.capability === m[1])) report(`${soulDir}/soul.yaml`, `capability ${m[1]} (from: here) is not provided by this package`);
+  }
+  soulNames.add(base);
+}
+
+// Trigger templates (OATS 0.28.0): { parameters, definition }, templated only
+// from the kernel's whitelisted structured fields.
+const TEMPLATE_FIELDS = ["repo", "number", "url", "event", "headSha", "trigger"];
+for (const [index, trigger] of array(packageManifest?.triggers).entries()) {
+  const at = `oats-package.json.triggers[${index}]`;
+  const file = safeResource(root, trigger?.file, `${at}.file`, "trigger template", { type: "file" });
+  if (!file) continue;
+  const template = readJson(file);
+  if (!template || typeof template !== "object" || !template.definition || typeof template.definition !== "object") { report(`${trigger.file}`, "must be { parameters, definition }"); continue; }
+  for (const [name, param] of entries(template.parameters)) {
+    if (typeof param?.path !== "string" || !param.path || param.path.split(".").some((part) => !part || ["__proto__", "constructor", "prototype"].includes(part))) report(`${trigger.file}.parameters.${name}`, "needs a dotted path");
+  }
+  const spawn = template.definition.spawn || {};
+  for (const field of ["purpose", "task"]) {
+    const bad = [...String(spawn[field] ?? "").matchAll(/\{([^{}]*)\}/g)].map((m) => m[1]).filter((f) => !TEMPLATE_FIELDS.includes(f));
+    if (bad.length) report(`${trigger.file}.definition.spawn.${field}`, `may name only {${TEMPLATE_FIELDS.join("} {")}}; found {${bad.join("} {")}}`);
+  }
+  const [pkg, soul] = String(spawn.soul || "").split("/");
+  if (pkg === packageManifest.package && !soulNames.has(soul)) report(`${trigger.file}.definition.spawn.soul`, `names ${spawn.soul}, which this package does not ship`);
 }
 
 if (errors.length) {
   process.stderr.write(`Manifest validation failed:\n- ${errors.join("\n- ")}\n`);
   process.exit(1);
 }
-process.stdout.write(`Validated ${relative(process.cwd(), packagePath) || "oats-package.json"} and ${capabilities.length} capability manifest(s).\n`);
+process.stdout.write(`Validated ${relative(process.cwd(), packagePath) || "oats-package.json"}, ${capabilities.length} capability manifest(s), ${soulNames.size} package soul(s) and ${array(packageManifest?.triggers).length} trigger template(s).\n`);
