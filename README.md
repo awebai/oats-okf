@@ -21,15 +21,22 @@ The official OKF knowledge capability: **3.0.0**, requiring **OATS >=0.26.0**.
   teaches the consult CLI: the model, the task-start checklist,
   consult-while-working triggers, navigation, search, citing, freshness and
   gotchas. The `okf` skill stays the format/authoring craft and points to it.
-  The injection tells every instance to load `okf-consultation`, run
-  `oats okf index` at the start of every task and after compaction, and
-  consult regularly while working.
+  The injection names two kinds of knowledge and tells every instance to
+  consult both at the start of every task, after compaction and while it
+  works, to make decisions and to understand things:
+  - **soul knowledge**, the accepted bases, read by consultation: load
+    `okf-consultation`, then use `oats okf index`, `cat` and `search`;
+  - **instance knowledge**: its own STATE.md, log.md and notes/.
 - Spawn registers the accepted resolution (per base: commit or digest, and its
   nodes, validated once per commit and cached) without materializing files;
   the spawn brief points at `oats okf index`. `read --base A --path P` stays as
   an alias of `cat` (same `path`/`text`/`receipt` fields).
 - The memory-harvest worker is spawned with `--harness` when `oats version`
-  reports the `harness` feature, else `--runtime`.
+  reports the `harness` feature, else `--runtime`. The kernel composes no okf
+  injection for a capability agent, so the consultation protocol does not
+  apply to the worker. Its `AGENTS.md` says it judges owned nodes from its
+  staged roots in `./work`, never through `oats okf index|cat|search`: those
+  serve the accepted state, not its staging.
 
 **Removed.** The `./knowledge/` snapshot and every per-call
 `knowledge-view-<uuid>` directory. The memory-harvest worker soul's
