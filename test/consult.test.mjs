@@ -329,8 +329,12 @@ test('package: inject carries the consult rules and points at the okf-consultati
   assert.ok(m.settings['consult-max-age'].description); assert.equal(Object.hasOwn(m.settings['consult-max-age'], 'default'), false, 'default lives in code; the binding wire rejects unknown setting keys');
   assert.equal(Object.hasOwn(m.settings, 'materialize'), false);
   const inject = fs.readFileSync(join(CAP, m.inject), 'utf8');
-  assert.match(inject, /no local copy/); assert.match(inject, /At the start of every task, and after compaction:\*\* `oats okf index`/);
-  assert.match(inject, /Regularly while working, not only at the start/); assert.match(inject, /oats okf search/); assert.match(inject, /\*\*Consultation\*\*/); assert.match(inject, /Load the\s+\*\*okf-consultation\*\* skill at the start of every task/);
+  assert.match(inject, /no local copy/); assert.match(inject, /Consult both throughout your work: at the\s+start of every task, after compaction, and while you work, to make decisions\s+and to understand things/);
+  assert.match(inject, /\*\*Soul knowledge\*\*/); assert.match(inject, /\*\*Instance knowledge\*\*: this instance's own STATE\.md, log\.md and notes\//);
+  assert.match(inject, /\*\*At the start of every task:\*\* re-read STATE\.md and the relevant notes\/,\s+then `oats okf index`/);
+  assert.match(inject, /\*\*After compaction, before continuing:\*\* re-read STATE\.md/); assert.match(inject, /\*\*Throughout the work, not only at the start:\*\*/);
+  assert.match(inject, /whenever you need to understand something/); assert.match(inject, /oats okf search/);
+  assert.match(inject, /\*\*Consultation\*\*/); assert.match(inject, /Load the \*\*okf-consultation\*\* skill at the start of every task/);
   assert.match(inject, /alias\/node\/concept\.md@<short-oid>/); assert.doesNotMatch(inject, /\.\/knowledge\/|view\.json|refresh/);
   const skill = fs.readFileSync(join(CAP, 'skills/okf-consultation/SKILL.md'), 'utf8'), fm = /^---\n([\s\S]*?)\n---\n/.exec(skill)[1];
   assert.equal(/^name: (.+)$/m.exec(fm)[1], 'okf-consultation', 'name matches the skill directory');
@@ -344,4 +348,14 @@ test('package: inject carries the consult rules and points at the okf-consultati
   assert.equal(fs.existsSync(join(CAP, 'skills/okf/references')), false);
   const reference = fs.readFileSync(join(CAP, 'skills/okf-consultation/references/consult.md'), 'utf8');
   for (const section of ['## Navigation, worked example', '## Search', '## Citing', '## Freshness', '## Errors']) assert.ok(reference.includes(section), section);
+});
+
+test('harvest worker: no okf inject is composed for it, and it judges its staged roots, not consult', () => {
+  const soul = fs.readFileSync(join(CAP, 'agents/memory-harvest/soul.yaml'), 'utf8');
+  assert.match(soul, /^kind: capability$/m, 'a capability agent: the kernel composes no knowledge-layer inject for it');
+  const agents = fs.readFileSync(join(CAP, 'agents/memory-harvest/AGENTS.md'), 'utf8');
+  assert.doesNotMatch(agents, /injection below/, 'no stale reference to an inject it never receives');
+  assert.match(agents, /No okf injection is composed for you/);
+  assert.match(agents, /from your STAGED roots in \.\/work/); assert.match(agents, /Do NOT\s+use `oats okf index`, `cat` or `search` for those nodes/);
+  assert.match(agents, /serve the\s+accepted state, not your staging/);
 });
