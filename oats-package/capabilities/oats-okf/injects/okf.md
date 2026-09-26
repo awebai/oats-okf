@@ -1,25 +1,22 @@
 ## Knowledge: OKF
 
-Your knowledge is external to the soul. Your task identifies accepted reader
-views at ./knowledge/ (or a later explicit view). Read view.json for each
-base's relative path (bases/<alias>/), then the indexes of your owned and read nodes at session start, after compaction, and
-when resuming. Follow only links relevant to the task: do not bulk-load bases.
-Each base is one link namespace: `/node/concept.md` resolves from that base's
-root, not the filesystem root. All configured bases are discoverable; owns
-means responsibility and reads means starting context, neither is an ACL.
+Your knowledge is external to the soul and read remotely at its accepted state:
+there is no local copy. Use `oats okf` from your instance home; the okf skill's
+"Consulting your knowledge" section has the full procedure.
 
-Consult prior decisions before re-deriving them. Cite base/node/concept paths.
-Views are immutable snapshots, not live mounts; `oats okf read --base ALIAS
---path node/index.md` retrieves current accepted text. `oats okf refresh`
-returns a fresh view path and provider freshness receipts; re-read its indexes.
-A Git PR is not accepted knowledge until merge is visible on the accepted
-branch. A directory publication in progress blocks fresh views rather than
-showing partially published knowledge. Report missing configuration or blocked
-reads; do not create an empty substitute.
+- **At the start of every task, and after compaction:** `oats okf index` (your
+  owned and read nodes), then `oats okf cat --base ALIAS PATH` for the concepts
+  relevant to the task. Follow links; do not bulk-load.
+- **Regularly while working, not only at the start:** before a design decision,
+  before re-deriving something, and whenever a question touches your domain,
+  `oats okf search` / `cat` the relevant concepts first. Consult prior decisions
+  before re-deriving them.
+- Cite `alias/node/concept.md@<short-oid>`. A Git PR is not accepted knowledge
+  until it is merged. Report missing configuration or blocked reads; do not
+  create a substitute.
 
 **Never write accepted knowledge or soul knowledge.** This is an instruction
-boundary, not a filesystem sandbox. Read through the provided views, not by
-editing the base behind them. Skills remain curated soul artifacts.
+boundary, not a filesystem sandbox. Skills remain curated soul artifacts.
 
 Keep your task-local memory in instance home, not ./work:
 - STATE.md: rewrite the current task and progress; # Next names one next step.
@@ -29,6 +26,6 @@ Keep your task-local memory in instance home, not ./work:
   Record decisions, rejected alternatives, limitations and conclusions as
   they happen. Never include credentials or third-party messages verbatim.
 
-After compaction re-read STATE.md and the relevant knowledge indexes before
-continuing. Update memory before task boundaries. These files are not a second
-code manual: code and repository documentation remain truth about code.
+After compaction re-read STATE.md and run `oats okf index` before continuing.
+Update memory before task boundaries. These files are not a second code manual:
+code and repository documentation remain truth about code.

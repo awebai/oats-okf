@@ -1,13 +1,16 @@
 ---
 name: okf
 description: >-
-  Open Knowledge Format (OKF) craft: how to author, maintain, consume, and
-  validate OKF knowledge bundles (directories of markdown concepts with YAML
-  frontmatter, per Google Cloud's OKF v0.1 spec). Use when writing or editing
-  concepts in a knowledge/ bundle or notes/, adding or renaming concept files,
-  updating index.md or log.md, answering questions from a bundle, triaging a
-  knowledge inbox, or when asked to validate a bundle. This skill is HOW to do
-  OKF well; instance session protocol lives in the okf AGENTS.md injection,
+  Open Knowledge Format (OKF) knowledge: consulting your soul's knowledge
+  bases remotely with `oats okf` (index, cat, ls, links, search at the
+  accepted commit; there is no local copy), and authoring, maintaining and
+  validating OKF bundles (directories of markdown concepts with YAML
+  frontmatter, per Google Cloud's OKF v0.1 spec). Use when starting a task or
+  resuming after compaction, when looking up a prior decision, lesson or
+  concept, when asked "what do we know about X" or to "check the knowledge
+  base", before re-deriving a design decision, when writing or editing
+  concepts in a bundle or notes/, updating index.md or log.md, or validating
+  a bundle. Instance session protocol lives in the okf AGENTS.md injection,
   and promotion judgment in the memory-harvest skill.
 ---
 
@@ -19,6 +22,54 @@ database, no SDK — plain git-versionable text. Spec: OKF v0.1 (Google Cloud).
 An external base is one bundle and link namespace. Owned nodes are
 nonoverlapping subdirectories, not separate root-link namespaces. Instance
 `notes/` files are task-local concepts; no knowledge lives in the soul.
+
+## Consulting your knowledge
+
+Your knowledge lives in external **bases** (each bound under an **alias**, one
+OKF bundle and link namespace). A base holds **nodes** (subdirectories with an
+`index.md`); your soul **owns** some (responsibility) and **reads** others
+(starting context) — neither is an access list. `oats okf` reads a base only at
+its **accepted commit** (the accepted branch of a Git base; the in-place files
+of a directory base). There is **no local copy**: no `./knowledge/`, no view
+directory. A host-wide cache fetches a Git base's blobs on first read.
+
+**At the start of every task, and after compaction:**
+1. `oats okf index` — your owned then read nodes' indexes.
+2. `oats okf cat --base ALIAS /node/concept.md` — only the concepts this task
+   needs; follow their links with `links` / `cat --from`.
+3. Note in STATE.md which concepts shaped the plan.
+
+**Consult again while working** — before a design decision, before
+re-deriving anything, when a question touches your domain, and before telling
+someone "we decided…": `oats okf search TEXT`, then `cat` the hits.
+
+| Command | Answers |
+| --- | --- |
+| `bases` | aliases, accepted commit, freshness, validity, your owns/reads |
+| `index [--base A] [NODE]` | a node's `index.md` (no args: all your nodes) |
+| `cat --base A PATH [--from P]` | one Markdown file, in full |
+| `ls --base A [DIR]` | entries with frontmatter type/title/description |
+| `links --base A PATH` | outgoing links resolved to base paths, `exists` |
+| `search [--base A \| --all] [--node N] TEXT` | fixed-string hits, case-insensitive |
+
+Every answer ends with a receipt line `— alias@<short-oid> (fetched <age>)`;
+add `--json` for `{result:{…, receipt}}`. Cite
+`alias/node/concept.md@<short-oid>`. Read
+[references/consult.md](references/consult.md) when navigating links, when a
+search is noisy or empty, when a receipt says `STALE`, or when a command errors.
+
+**Gotchas**
+- Paths and links resolve from the **base root**, not the filesystem:
+  `/node/x.md` is root-absolute; a relative link needs `--from` (the file it
+  appeared in). Nothing can leave the root; filesystem paths are refused.
+- Never bulk-`cat` a whole node or loop `cat` over `ls`: index first, then
+  follow the few relevant links.
+- Don't edit knowledge. The write path is notes/ → harvest → PR/publication;
+  a Git PR is not accepted knowledge until merged.
+- `oats okf refresh` is gone (`E_REMOVED`): every read already sees the
+  accepted state. Use `--fresh` to refetch now.
+- A `./knowledge/` left in an old home by okf 2.x is stale and ignored; don't
+  read it (safe to delete by hand).
 
 ## The format in one screen
 
@@ -144,8 +195,8 @@ Those private mode-0600 files exist only for one synchronous captured invocation
 
 ## External bases and native tools
 
-Ordinary working agents consult `oats okf read --base ALIAS --path node/index.md`
-and `oats okf refresh`. When inspecting a source, treat the additive `authority`
+Ordinary working agents consult with `oats okf index` / `cat` / `search`
+(see "Consulting your knowledge"). When inspecting a source, treat the additive `authority`
 object literally: `captured` includes recorded qualified identity/execution;
 `legacy` or `invalid` means migration/evidence is still required. A
 responsible-human status of `disabled` comes only from explicit null; `unknown`

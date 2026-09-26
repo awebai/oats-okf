@@ -11,7 +11,7 @@ const cli=process.env.OATS_OKF_CONSUMER_CLI;
 const root=fileURLToPath(new URL('../',import.meta.url));
 function write(p,text) {fs.mkdirSync(dirname(p),{recursive:true});fs.writeFileSync(p,text);}
 function json(p,v) {write(p,JSON.stringify(v,null,2)+'\n');}
-test('public CLI consumer: live inspection, durable external views, targeted hooks and post-source completion',{skip:!cli},t=>{
+test('public CLI consumer: live inspection, remote consult reads, targeted hooks and post-source completion',{skip:!cli},t=>{
   assert.ok(cli.startsWith('/'),'OATS_OKF_CONSUMER_CLI must be absolute');
   const base=fs.realpathSync(fs.mkdtempSync(join(tmpdir(),'okf-consumer-')));
   t.after(()=>fs.rmSync(base,{recursive:true,force:true}));
@@ -66,12 +66,12 @@ test('public CLI consumer: live inspection, durable external views, targeted hoo
   const retired=run(['retire',source.instance,'--json']);assert.equal(retired.removedDir,true);assert.equal(fs.existsSync(source.home),false);
   const durable=inspectSource();assert.equal(durable.liveMemory.reason,'retired');assert.equal(durable.status.retired,true);assert.equal(durable.documents.length,1);
   const contextFiles=fs.readdirSync(context).sort();
-  const refresh=run(['okf','refresh','--source',marker.source,'--soul','source','--json']);
-  assert.equal(dirname(refresh.path),join(dirname(marker.source),'views'));
-  assert.equal(JSON.parse(fs.readFileSync(join(refresh.path,'view.json'),'utf8')).bases.project.digest,refresh.receipts.project.digest);
+  const sourceFiles=fs.readdirSync(dirname(marker.source)).sort();
+  const refresh=spawnSync(process.execPath,[cli,'okf','refresh','--source',marker.source,'--soul','source','--json'],{cwd:context,env,encoding:'utf8',timeout:90000});
+  assert.equal(JSON.parse(refresh.stdout).error.code,'E_REMOVED');
   const read=run(['okf','read','--source',marker.source,'--base','project','--path','expert/index.md','--soul','source','--json']);
-  assert.ok(read.path.startsWith(join(dirname(marker.source),'views')+'/'));assert.equal(read.text,fs.readFileSync(join(base,'accepted/expert/index.md'),'utf8'));
-  assert.deepEqual(fs.readdirSync(context).sort(),contextFiles);assert.equal(fs.existsSync(source.home),false);
+  assert.equal(read.path,'expert/index.md');assert.equal(read.receipt.kind,'directory');assert.equal(read.text,fs.readFileSync(join(base,'accepted/expert/index.md'),'utf8'));
+  assert.deepEqual(fs.readdirSync(context).sort(),contextFiles);assert.equal(fs.existsSync(source.home),false);assert.deepEqual(fs.readdirSync(dirname(marker.source)).sort(),sourceFiles);
   const requested=run(['okf','run-source','--source',marker.source,'--manual','--no-launch','--soul','source','--json']);
   assert.equal(requested.status,'ready');const work=join(requested.home,'work');
   assert.equal(fs.existsSync(join(requested.home,'.okf-source.json')),false);
@@ -84,7 +84,8 @@ test('public CLI consumer: live inspection, durable external views, targeted hoo
   assert.equal(completed.receipts.project.status,'accepted');assert.equal(completed.processed,true);
   assert.equal(run(['retire',requested.instance,'--json']).removedDir,true);
   const fresh=run(['spawn','source','--purpose','fresh','--repo',context,'--work','directory','--runtime','pi','--no-launch','--json']);
-  assert.match(fs.readFileSync(join(fresh.home,'knowledge/bases/project/expert/decision.md'),'utf8'),/avoid silent fallback/);
+  assert.equal(fs.existsSync(join(fresh.home,'knowledge')),false,'okf 3.0.0 keeps no local copy');
+  assert.match(run(['okf','cat','--home',fresh.home,'--base','project','/expert/decision.md','--soul','source','--json']).text,/avoid silent fallback/);
   assert.equal(run(['retire',fresh.instance,'--json']).removedDir,true);
   const schedules=run(['schedule','list','--dir',context,'--json']);assert.notEqual(schedules.scheduler.active,true);
 });
