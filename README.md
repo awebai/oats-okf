@@ -91,7 +91,8 @@ Requires OATS **>=0.29.0** (package souls, triggers and workspace automations).
 
 **Upgrading.**
 - Pin `oats.okf` 4.0.0 on OATS >=0.29.0.
-- Declare the `okf` team with its messaging mapping.
+- Declare the `okf` team with its messaging mapping: with aweb (the default;
+  oats.aweb >=1.15.0 honours `join=okf`), `messaging.byTeam.okf: { team: aweb:<org>.okf }`.
 - Harvest is off until a host sets `harvest: on`, including for sources
   registered by 3.x.
 - Install the review trigger on the one merge-capable host (see

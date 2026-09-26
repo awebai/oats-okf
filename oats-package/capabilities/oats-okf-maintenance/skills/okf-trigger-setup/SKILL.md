@@ -46,16 +46,22 @@ Say which one applies when you report the setup.
 ## 3. The okf team
 
 The package souls carry `team: okf`. The workspace must declare it, with its
-messaging mapping:
+messaging mapping. Messaging is aweb (`oats.aweb`, the workspace default);
+it needs oats.aweb 1.15.0 or later, which honours the `join=okf` the
+harvester spawn and the trigger's `teams: [okf]` pass:
 
 ```yaml
 # oats-workspace.yaml
 teams:
   okf: { description: Knowledge operations }
+defaults:
+  messaging: { oats.aweb: { from: package } }
 messaging:
   byTeam:
-    okf: { team: <your provider's team for knowledge operations> }
+    okf: { team: aweb:<your-org>.okf }
 ```
+
+Another messaging provider works the same way if it honours `join`.
 
 Without it, the souls list with `E_TEAM_UNKNOWN`, and the harvester and the
 maintainer cannot message each other.

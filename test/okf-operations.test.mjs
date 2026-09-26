@@ -335,5 +335,5 @@ test('the working-soul inject teaches the work mode and names both okf skills; r
   const setup = fs.readFileSync(join(MAINT, 'skills/okf-trigger-setup/SKILL.md'), 'utf8');
   assert.ok(setup.indexOf('## 4. Declare it in the workspace (the default)') < setup.indexOf('## 5. Or add it locally'), 'the workspace file first (plan §2.3a)');
   for (const needle of [/oats-triggers\/okf-harvest-review\.yaml/, /^kind: oats-trigger$/m, /^schemaVersion: 1$/m, /\*\.oats-trigger\.yaml/, /^from: oats\.okf:harvest-review$/m, /^set: \{ repo: github\.com\//m, /^runsOn: /m, /^owner: github\.com\//m, /assigned-elsewhere/, /owner-mismatch/, /automations\.disabled/,
-    /oats trigger add --from oats\.okf:harvest-review --set repo=/, /oats trigger test/, /self-approval/i, /--jq \.permissions/]) assert.match(setup, needle);
+    /oats trigger add --from oats\.okf:harvest-review --set repo=/, /oats trigger test/, /oats\.aweb 1\.15\.0 or later/, /okf: \{ team: aweb:<your-org>\.okf \}/, /self-approval/i, /--jq \.permissions/]) assert.match(setup, needle);
 });
