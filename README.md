@@ -17,11 +17,13 @@ The official OKF knowledge capability: **3.0.0**, requiring **OATS >=0.26.0**.
   last fetched accepted commit with `stale: true` and the reason. Every answer
   carries a receipt `{base, kind, commit|digest, fetchedAt, stale}`. Paths
   resolve like OKF links and never leave the base root.
-- The `okf` skill gains **"Consulting your knowledge"** (plus
-  `skills/okf/references/consult.md`): task-start checklist, consult-while-
-  working triggers, navigation, search, citing, freshness and gotchas. The
-  injection now tells every instance to run `oats okf index` at the start of
-  every task and after compaction, and to consult regularly while working.
+- A new full skill, **`okf-consultation`** (plus `references/consult.md`),
+  teaches the consult CLI: the model, the task-start checklist,
+  consult-while-working triggers, navigation, search, citing, freshness and
+  gotchas. The `okf` skill stays the format/authoring craft and points to it.
+  The injection tells every instance to load `okf-consultation`, run
+  `oats okf index` at the start of every task and after compaction, and
+  consult regularly while working.
 - Spawn registers the accepted resolution (per base: commit or digest, and its
   nodes, validated once per commit and cached) without materializing files;
   the spawn brief points at `oats okf index`. `read --base A --path P` stays as
@@ -30,7 +32,10 @@ The official OKF knowledge capability: **3.0.0**, requiring **OATS >=0.26.0**.
   reports the `harness` feature, else `--runtime`.
 
 **Removed.** The `./knowledge/` snapshot and every per-call
-`knowledge-view-<uuid>` directory. `oats okf refresh` returns `E_REMOVED` (okf
+`knowledge-view-<uuid>` directory. The memory-harvest worker soul's
+`CLAUDE.md -> AGENTS.md` symlink (npm drops symlinks; the capability tree now
+ships none and a test enforces it — the kernel composes each instance's
+`CLAUDE.md` itself). `oats okf refresh` returns `E_REMOVED` (okf
 3.0.0 has no per-instance views; `index`/`cat` always read the accepted state).
 Harvest staging, which is a worker scratch rather than an instance copy, is
 unchanged.

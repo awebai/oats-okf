@@ -328,7 +328,7 @@ test('check diagnoses bound runtime constraints without using mutable settings o
 test('manifest owns all three binding phase commands',()=>{
   const manifest=JSON.parse(fs.readFileSync(join(ROOT,'oats-package/capabilities/oats-okf/oats.json'),'utf8'));
   const distribution=JSON.parse(fs.readFileSync(join(ROOT,'oats-package/oats-package.json'),'utf8'));
-  assert.equal(manifest.compatibility.oats,'>=0.24.4');
+  assert.equal(manifest.compatibility.oats,'>=0.26.0');
   assert.equal(distribution.compatibility.oats,manifest.compatibility.oats);
   const {reasons,...phases}=manifest.binding;
   assert.deepEqual(phases,{version:1,normalize:'binding-normalize',bind:'binding-bind',check:'binding-check'});

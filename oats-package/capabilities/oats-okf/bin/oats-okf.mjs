@@ -130,7 +130,7 @@ else {
       else {
         const schedule=loadStatus(s).schedule.result;
         const nodes=(list)=>list.join(', ') || 'none';
-        result={meta:{memory:'okf-v2',source:s.file,schedule},brief:`Your knowledge is read remotely at its accepted state; there is no local copy. Start every task with \`oats okf index\` (owns: ${nodes(s.decl.owns)}; reads: ${nodes(s.decl.reads.filter(r=>!s.decl.owns.includes(r)))}), then \`oats okf cat --base ALIAS PATH\` for the concepts the task needs; \`oats okf search\` before re-deriving a decision. The okf skill's "Consulting your knowledge" has the procedure. Keep STATE.md/log.md/notes/ current; never edit knowledge.`};
+        result={meta:{memory:'okf-v2',source:s.file,schedule},brief:`Your knowledge is read remotely at its accepted state; there is no local copy. Start every task with \`oats okf index\` (owns: ${nodes(s.decl.owns)}; reads: ${nodes(s.decl.reads.filter(r=>!s.decl.owns.includes(r)))}), then \`oats okf cat --base ALIAS PATH\` for the concepts the task needs; \`oats okf search\` before re-deriving a decision. Load the okf-consultation skill for the procedure. Keep STATE.md/log.md/notes/ current; never edit knowledge.`};
       }
     } else if(event==='retire') {
       if(captured) {

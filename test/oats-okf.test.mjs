@@ -141,7 +141,10 @@ function judgment(f,s,run,{drop=false,base='project',node='expert',secret=false}
 test('exported payload version, floor, required hooks and complete command inventory',()=>{
   for(const obsolete of ['oats.json','bin','agents','skills','injects']) assert.equal(fs.existsSync(join(ROOT,'oats-package',obsolete)),false,`obsolete unenumerated root payload: ${obsolete}`);
   assert.ok(fs.statSync(join(ROOT,'oats-package/LICENSE')).isFile());
-  assert.equal(fs.readlinkSync(join(CAP,'agents/memory-harvest/CLAUDE.md')),'AGENTS.md','source compatibility alias preserves one canonical instruction file');
+  // npm drops symlinks from published tarballs: the capability tree ships none.
+  const links=[];(function walk(dir){for(const d of fs.readdirSync(dir,{withFileTypes:true})){const p=join(dir,d.name);if(d.isSymbolicLink())links.push(p.slice(CAP.length+1));else if(d.isDirectory())walk(p);}})(CAP);
+  assert.deepEqual(links,[],'no symlinks anywhere under the capability root');
+  assert.ok(fs.statSync(join(CAP,'agents/memory-harvest/AGENTS.md')).isFile(),'the worker soul keeps its one canonical instruction file');
   const m=readJSON(join(CAP,'oats.json')),distribution=readJSON(join(ROOT,'oats-package/oats-package.json'));
   for(const manifest of [readJSON(join(ROOT,'package.json')),distribution,m])assert.equal(manifest.version,'3.0.0');
   for(const manifest of [distribution,m])assert.equal(manifest.compatibility.oats,'>=0.26.0');

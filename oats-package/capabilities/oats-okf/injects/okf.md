@@ -1,8 +1,11 @@
 ## Knowledge: OKF
 
 Your knowledge is external to the soul and read remotely at its accepted state:
-there is no local copy. Use `oats okf` from your instance home; the okf skill's
-"Consulting your knowledge" section has the full procedure.
+there is no local copy. **Consultation** — reading that knowledge with the
+`oats okf` CLI from your instance home — is part of every task. Load the
+**okf-consultation** skill at the start of every task (and whenever you look
+something up): it teaches the commands, navigation, search, citing and
+freshness.
 
 - **At the start of every task, and after compaction:** `oats okf index` (your
   owned and read nodes), then `oats okf cat --base ALIAS PATH` for the concepts

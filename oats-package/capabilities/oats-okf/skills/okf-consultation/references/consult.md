@@ -1,6 +1,6 @@
-# Consulting knowledge with `oats okf` — detail
+# okf-consultation — reference detail
 
-Read this when navigating links, when a search is noisy or empty, when a
+The okf-consultation skill's detail. Read this when navigating links, when a search is noisy or empty, when a
 receipt says `STALE`, or when a command errors. Run every command from your
 instance home (`oats okf …` resolves your registered source there).
 

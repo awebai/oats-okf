@@ -323,23 +323,25 @@ test('withBase reads no base without a bound alias or cache and never creates in
   assert.throws(() => withBase(s.bindings, 'constructor', {}, () => {}), /unknown base/);
 });
 
-test('package: inject carries the consult rules; the okf skill documents consulting and no second skill ships', () => {
+test('package: inject carries the consult rules and points at the okf-consultation skill', () => {
   const m = readJSON(join(CAP, 'oats.json'));
   for (const c of ['bases', 'index', 'cat', 'ls', 'links', 'search', 'read', 'refresh']) assert.equal(m.commands[c], `bin/oats-okf.mjs ${c}`);
   assert.ok(m.settings['consult-max-age'].description); assert.equal(Object.hasOwn(m.settings['consult-max-age'], 'default'), false, 'default lives in code; the binding wire rejects unknown setting keys');
   assert.equal(Object.hasOwn(m.settings, 'materialize'), false);
   const inject = fs.readFileSync(join(CAP, m.inject), 'utf8');
   assert.match(inject, /no local copy/); assert.match(inject, /At the start of every task, and after compaction:\*\* `oats okf index`/);
-  assert.match(inject, /Regularly while working, not only at the start/); assert.match(inject, /oats okf search/); assert.match(inject, /okf skill/);
+  assert.match(inject, /Regularly while working, not only at the start/); assert.match(inject, /oats okf search/); assert.match(inject, /\*\*Consultation\*\*/); assert.match(inject, /Load the\s+\*\*okf-consultation\*\* skill at the start of every task/);
   assert.match(inject, /alias\/node\/concept\.md@<short-oid>/); assert.doesNotMatch(inject, /\.\/knowledge\/|view\.json|refresh/);
-  assert.equal(fs.existsSync(join(CAP, 'skills/okf-consult')), false);
-  const skill = fs.readFileSync(join(CAP, 'skills/okf/SKILL.md'), 'utf8'), fm = /^---\n([\s\S]*?)\n---\n/.exec(skill)[1];
-  assert.equal(/^name: (.+)$/m.exec(fm)[1], 'okf', 'name matches the skill directory');
+  const skill = fs.readFileSync(join(CAP, 'skills/okf-consultation/SKILL.md'), 'utf8'), fm = /^---\n([\s\S]*?)\n---\n/.exec(skill)[1];
+  assert.equal(/^name: (.+)$/m.exec(fm)[1], 'okf-consultation', 'name matches the skill directory');
   assert.match(fm, /^description: >-\n/m); const description = fm.slice(fm.indexOf('>-') + 2).replace(/\s+/g, ' ').trim();
   assert.ok(description.length <= 1024, `description ${description.length} chars`);
   for (const trigger of [/starting a task/, /compaction/, /prior decision/, /what do we know about X/, /check the knowledge base/]) assert.match(description, trigger);
-  assert.match(skill, /^## Consulting your knowledge$/m); assert.match(skill, /\*\*Gotchas\*\*/); assert.match(skill, /references\/consult\.md/);
-  assert.ok(skill.split('\n').length <= 500);
-  const reference = fs.readFileSync(join(CAP, 'skills/okf/references/consult.md'), 'utf8');
+  for (const section of ['## The model', '## At the start of every task, and after compaction', '## Consult again while working', '## Navigating', '## Searching', '## Citing', '## Freshness', '## Gotchas']) assert.match(skill, new RegExp(`^${section}$`, 'm'), section);
+  assert.match(skill, /references\/consult\.md/); assert.ok(skill.split('\n').length <= 200, 'skill-craft size');
+  const okf = fs.readFileSync(join(CAP, 'skills/okf/SKILL.md'), 'utf8');
+  assert.match(okf, /okf-consultation/, 'the format skill points consulting at okf-consultation'); assert.doesNotMatch(okf, /^## Navigating$/m, 'no duplicated procedure');
+  assert.equal(fs.existsSync(join(CAP, 'skills/okf/references')), false);
+  const reference = fs.readFileSync(join(CAP, 'skills/okf-consultation/references/consult.md'), 'utf8');
   for (const section of ['## Navigation, worked example', '## Search', '## Citing', '## Freshness', '## Errors']) assert.ok(reference.includes(section), section);
 });
