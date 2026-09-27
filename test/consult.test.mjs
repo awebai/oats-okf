@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import { tmpdir, hostname } from 'node:os';
-import { join, dirname } from 'node:path';
+import { join, dirname, resolve } from 'node:path';
 import { execFileSync, spawnSync, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
@@ -360,4 +360,66 @@ test('knowledge harvester: a package soul with no knowledge slot, judging its st
   const procedure = fs.readFileSync(join(PKG, 'capabilities/oats-okf-harvest/skills/knowledge-harvest/SKILL.md'), 'utf8');
   assert.match(procedure, /Judge from your staged roots, never through `oats okf index\|cat\|search`/);
   assert.match(procedure, /serve the accepted state, not your staging/);
+});
+
+// okf 4.0.1 #1 (security): a crafted accepted tree must never write outside the
+// validation scratch. Git accepts literal `..` entries (hash-object --literally)
+// and they survive the bare partial clone.
+// The knowledge-level `..` plus `depth` nested ones: from <stateDir>/cache/.validate-X,
+// three levels up is the fixture directory, so an unfixed verdict() lands in f.dir.
+function craftedTraversal(f, name = 'evil-okf-401.md', depth = 2) {
+  const obj = (type, input) => execFileSync('git', ['-C', f.work, 'hash-object', '-t', type, '--literally', '-w', '--stdin'], { input }).toString().trim();
+  const entry = (mode, n, oid) => Buffer.concat([Buffer.from(`${mode} ${n}\0`), Buffer.from(oid, 'hex')]);
+  let tree = obj('tree', entry('100644', name, obj('blob', 'attacker content\n')));
+  for (let i = 0; i < depth; i++) tree = obj('tree', entry('40000', '..', tree));
+  const rows = t => git(f.work, ['ls-tree', t]).split('\n').map(l => { const tab = l.indexOf('\t'), [mode, , oid] = l.slice(0, tab).split(' '); return { mode, name: l.slice(tab + 1), oid }; });
+  const knowledge = [{ mode: '40000', name: '..', oid: tree }, ...rows('HEAD:knowledge')].map(r => entry(r.mode === '040000' ? '40000' : r.mode, r.name, r.oid));
+  const kTree = obj('tree', Buffer.concat(knowledge));
+  const root = obj('tree', Buffer.concat(rows('HEAD').map(r => entry(r.mode === '040000' ? '40000' : r.mode, r.name, r.name === 'knowledge' ? kTree : r.oid))));
+  const c = git(f.work, ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit-tree', root, '-p', 'HEAD', '-m', 'crafted']);
+  git(f.work, ['push', '-q', 'origin', `${c}:refs/heads/main`]);
+  return c;
+}
+const outsideScratch = f => [join(f.dir, 'evil-okf-401.md'), join(dirname(f.dir), 'evil-okf-401.md'), join(f.bindings.stateDir, 'evil-okf-401.md'), join(f.bindings.stateDir, 'cache', 'evil-okf-401.md')];
+test('4.0.1 security: a crafted `..` tree entry refuses registration and writes nothing outside the scratch', t => {
+  const f = fixture(t);
+  const commitId = craftedTraversal(f);
+  assert.match(git(f.work, ['ls-tree', '-r', `${commitId}:knowledge`]), /\t\.\.\/\.\.\/\.\.\/evil-okf-401\.md$/m, 'the crafted tree really carries a traversal entry');
+  assert.throws(() => register(f.home), e => e.code === 'E_PATH', 'spawn registration refuses the base');
+  for (const p of outsideScratch(f)) assert.equal(fs.existsSync(p), false, `nothing written at ${p}`);
+  assert.deepEqual(fs.readdirSync(join(f.bindings.stateDir, 'cache')).filter(n => n.startsWith('.validate-')), [], 'the scratch is removed');
+});
+test('4.0.1 security: a registered instance that fetches a crafted accepted commit gets E_PATH from bases, nothing written', t => {
+  const f = registered(t);
+  craftedTraversal(f);
+  f.cli('cat', ['--base', 'project', '/expert/index.md', '--fresh', '--json']);
+  const b = f.json('bases').result.bases[0];
+  assert.equal(b.validated.ok, false); assert.equal(b.validated.error.code, 'E_PATH');
+  for (const p of outsideScratch(f)) assert.equal(fs.existsSync(p), false, `nothing written at ${p}`);
+  assert.deepEqual(fs.readdirSync(join(f.bindings.stateDir, 'cache')).filter(n => n.startsWith('.validate-')), [], 'the scratch is removed');
+});
+
+// okf 4.0.1 #2 (oats-okf #16): a credential in a repository URL never reaches an agent.
+test('4.0.1 credentials: a token URL is refused at binding and never appears in bases output or error text', async t => {
+  const f = fixture(t);
+  const TOKEN = 'ghp_okf401SECRETtoken0123456789';
+  const { validateBindings } = await mod('config');
+  const { unavailable } = await mod('stores');
+  const { displayRepo, redactUrls } = await mod('io');
+  const tokenBase = { ...f.bindings.bases.project, repository: `https://okf-bot:${TOKEN}@github.com/acme/knowledge.git` };
+  const raw = { version: 1, stateDir: 'state', bases: { project: { id: 'base-1', kind: 'git', repository: tokenBase.repository, root: 'knowledge', acceptedBranch: 'main', pr: { repository: 'acme/knowledge' } } } };
+  assert.throws(() => validateBindings(raw, join(f.dir, 'bindings.json')), e => e.code === 'E_CONFIG' && /credential helper/.test(e.message) && !e.message.includes(TOKEN));
+  for (const userOnly of [`https://${TOKEN}@github.com/acme/knowledge.git`, `ssh://git:${TOKEN}@github.com/acme/knowledge.git`]) assert.throws(() => validateBindings({ ...raw, bases: { project: { ...raw.bases.project, repository: userOnly } } }, join(f.dir, 'bindings.json')), e => e.code === 'E_CONFIG' && !e.message.includes(TOKEN));
+  assert.doesNotThrow(() => validateBindings({ ...raw, bases: { project: { ...raw.bases.project, repository: 'ssh://git@github.com/acme/knowledge.git' } } }, join(f.dir, 'bindings.json')), 'a bare SSH user is not a credential');
+  // Defence in depth: a base that bypassed validation (older state) is still redacted in every error.
+  assert.throws(() => unavailable(tokenBase, 'project', 'fetch', new Error(`fatal: unable to access '${tokenBase.repository}/': boom`)), e => e.code === 'E_BASE_UNAVAILABLE' && !e.message.includes(TOKEN) && !String(e.repository).includes(TOKEN) && /https:\/\/github\.com\/acme\/knowledge\.git/.test(e.message));
+  assert.equal(displayRepo(tokenBase.repository), 'https://github.com/acme/knowledge.git');
+  assert.equal(redactUrls(`a https://u:${TOKEN}@h/x b`), 'a https://h/x b');
+  // The CLI: a token-bound deployment answers a typed error with no token in stdout or stderr.
+  const bad = join(f.dir, 'token-bindings.json'); save(bad, raw);
+  const r = f.cli('spawn', [], { OATS_SETTINGS: JSON.stringify({ 'bindings-file': bad, harvest: 'on' }) });
+  assert.equal(r.status, 1); assert.match(r.out.warning, /E_CONFIG: .*credential/);
+  assert.equal(`${r.stdout}${r.stderr}`.includes(TOKEN), false);
+  // A normal binding: bases prints the plain repository.
+  const ok = registered(t); const b = ok.json('bases').result.bases[0]; assert.equal(b.repository, ok.base.repository);
 });
