@@ -2,6 +2,19 @@
 
 The official OKF knowledge capability: **3.0.0**, requiring **OATS >=0.26.0**.
 
+## 4.0.1 — security fix
+
+**Upgrade from 3.0.0 or 4.0.0.** A crafted Git base tree could make base
+validation write files outside its scratch directory; 4.0.1 refuses such a
+base with `E_PATH`. 4.0.1 also:
+- refuses credentials embedded in repository URLs and redacts URLs in all output;
+- makes `review-context` trust only the accepted `okf-base.json`;
+- ties the maintainer's merge to the reviewed head;
+- makes `okf-needs-human` a hard stop;
+- makes `run-source` and `retire` re-read the soul's harvest opt-out.
+
+See [CHANGELOG.md](CHANGELOG.md).
+
 ## 4.0.0 — knowledge operations: harvest, maintenance, triggers
 
 Requires OATS **>=0.29.0** (package souls, triggers and workspace automations).

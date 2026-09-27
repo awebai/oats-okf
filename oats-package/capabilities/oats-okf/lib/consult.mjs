@@ -5,7 +5,7 @@
 import { randomUUID } from 'node:crypto';
 import { hostname } from 'node:os';
 import { spawnSync } from 'node:child_process';
-import { fs, join, dirname, resolve, safePath, readJSON, save, digest, tree, withLock, fail, syncDir, identifier, relPath, within } from './io.mjs';
+import { fs, join, dirname, resolve, safePath, readJSON, save, digest, tree, withLock, fail, syncDir, identifier, relPath, within, displayRepo } from './io.mjs';
 import { noGit, gitTimeoutMs, consultMaxAgeMs, splitRef, resolveNodes } from './config.mjs';
 import { git, gitEnv, validateBase, baseLock, journalPath, preflightLocalRepository, requireNotShallow, verifyRemote, unavailable } from './stores.mjs';
 
@@ -368,7 +368,7 @@ export function bases(source, flags) {
   const rows = [], receipts = [];
   for (const [alias, base] of Object.entries(source.bindings.bases)) withBase(source.bindings, alias, { fresh: !!flags.fresh }, ctx => {
     const v = verdict(ctx), mine = relation => source.decl[relation].filter(ref => splitRef(ref)[0] === alias).map(ref => splitRef(ref)[1]);
-    rows.push({ alias, id: base.id, kind: base.kind, ...(base.kind === 'git' ? { repository: base.repository, acceptedBranch: base.acceptedBranch, root: base.root, commit: ctx.commit } : { path: base.path, digest: ctx.receipt.digest }),
+    rows.push({ alias, id: base.id, kind: base.kind, ...(base.kind === 'git' ? { repository: displayRepo(base.repository), acceptedBranch: base.acceptedBranch, root: base.root, commit: ctx.commit } : { path: base.path, digest: ctx.receipt.digest }),
       fetchedAt: ctx.receipt.fetchedAt, stale: ctx.receipt.stale, ...(ctx.receipt.reason ? { reason: ctx.receipt.reason } : {}),
       validated: v.ok ? { ok: true } : { ok: false, error: v.error }, nodes: v.ok ? Object.keys(v.nodes) : null, owns: mine('owns'), reads: mine('reads'), receipt: ctx.receipt });
     receipts.push(ctx.receipt);

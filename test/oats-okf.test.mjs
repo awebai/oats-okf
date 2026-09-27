@@ -152,7 +152,7 @@ test('exported payload version, floor, required hooks and complete command inven
   assert.equal(fs.existsSync(join(CAP,'agents')),false,'the harvester is the package soul oats.okf/knowledge-harvester, not a capability agent');
   assert.ok(fs.statSync(join(ROOT,'oats-package/souls/knowledge-harvester/AGENTS.md')).isFile(),'the harvester soul keeps its one canonical instruction file');
   const m=readJSON(join(CAP,'oats.json')),distribution=readJSON(join(ROOT,'oats-package/oats-package.json'));
-  for(const manifest of [readJSON(join(ROOT,'package.json')),distribution,m])assert.equal(manifest.version,'4.0.0');
+  for(const manifest of [readJSON(join(ROOT,'package.json')),distribution,m])assert.equal(manifest.version,'4.0.1');
   for(const manifest of [distribution,m])assert.equal(manifest.compatibility.oats,'>=0.29.0');
   assert.equal(m.hooks.spawn.required,true);
   for(const c of ['harvest','inspect','setup','run-source','complete','retry','migrate','read','refresh','init','bases','index','cat','ls','links','search','harvest-status']) assert.ok(m.commands[c]);
@@ -1800,4 +1800,23 @@ test('4.0.0 Git delivery opens a labelled okf-harvest PR carrying the provenance
 test('4.0.0 a failing label create never blocks the PR',t=>{
   const f=fixture(t,{kind:'git'});note(f);put(join(f.dir,'gh-label-fail'),'');const {s,run}=prepared(f);
   assert.equal(complete(s,run.id,judgment(f,s,run)).receipts.project.status,'delivered');assert.deepEqual(readJSON(join(f.dir,'pr-1-created.json')).labels,['okf-harvest']);
+});
+// okf 4.0.1 #6: run-source and retire re-read the switch, soul included, after spawn.
+const soulOff = f => put(join(f.soul, 'soul.yaml'), 'name: source\nwork: directory\nknowledge: { harvest: off }\n');
+test('4.0.1 switch: a soul opting out after spawn stops run-source capture', t => {
+  const f = fixture(t); const s = f.source(); note(f); soulOff(f); const before = hasCalls(f).length;
+  const r = f.cli('run-source', ['--source', s.file, '--manual', '--no-launch']); assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.equal(r.out.result.status, 'harvest-off'); assert.match(r.out.result.reason, /soul opts out/);
+  assert.equal(hasCalls(f).length, before, 'no capture, recall or spawn'); assert.equal(loadStatus(s).captured.inputs.length, 0);
+});
+for (const [label, arrange, env, why] of [['the deployment switched off', () => {}, offSettings, /deployment does not switch harvest on/], ['the soul opted out', soulOff, () => ({}), /soul opts out/]]) test(`4.0.1 switch: retire takes no final capture once ${label}`, t => {
+  const f = fixture(t); const s = f.source(); note(f); arrange(f); const before = hasCalls(f).filter(c => c.a[0] !== 'schedule').length;
+  const r = f.cli('retire', [], env(f)); assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.equal(r.out.meta.retired, true); assert.equal(r.out.meta.reason, 'harvest-off'); assert.match(r.out.meta.switch, why);
+  assert.equal(hasCalls(f).filter(c => c.a[0] !== 'schedule').length, before, 'no capture or recall');
+  const st = loadStatus(s); assert.equal(st.retired, true); assert.equal(st.captured.inputs.length, 0); assert.match(st.harvestOff.reason, why);
+  assert.ok(hasCalls(f).some(c => c.a[0] === 'schedule' && c.a[1] === 'disable'), 'the schedule is settled as for any retire');
+});
+test('4.0.1 registration records the soul directory for later switch re-reads', t => {
+  const f = fixture(t); const s = f.source(); assert.equal(s.soulDir, fs.realpathSync(f.soul));
 });

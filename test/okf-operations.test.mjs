@@ -26,21 +26,21 @@ const files = dir => fs.readdirSync(dir, { recursive: true, withFileTypes: true 
 
 // ------------------------------------------------------------------ package shape
 
-test('the package ships three capabilities, two package souls and one trigger template at 4.0.0 / >=0.29.0', () => {
+test('the package ships three capabilities, two package souls and one trigger template at 4.0.1 / >=0.29.0', () => {
   const pkg = readJSON(join(PKG, 'oats-package.json'));
-  assert.equal(pkg.version, '4.0.0'); assert.deepEqual(pkg.compatibility, { oats: '>=0.29.0' });
+  assert.equal(pkg.version, '4.0.1'); assert.deepEqual(pkg.compatibility, { oats: '>=0.29.0' });
   assert.deepEqual(pkg.capabilities, ['capabilities/oats-okf', 'capabilities/oats-okf-harvest', 'capabilities/oats-okf-maintenance']);
   assert.deepEqual(pkg.souls, ['souls/knowledge-harvester', 'souls/knowledge-maintainer']);
   assert.deepEqual(pkg.triggers, [{ id: 'harvest-review', file: 'triggers/harvest-review.json' }]);
   const manifests = pkg.capabilities.map(c => readJSON(join(PKG, c, 'oats.json')));
   assert.deepEqual(manifests.map(m => [m.capability, m.command, m.version, m.compatibility.oats, m.layer ?? null]), [
-    ['oats.okf', 'okf', '4.0.0', '>=0.29.0', 'knowledge'], ['oats.okf-harvest', 'okf-harvest', '4.0.0', '>=0.29.0', null], ['oats.okf-maintenance', 'okf-maintenance', '4.0.0', '>=0.29.0', null]]);
+    ['oats.okf', 'okf', '4.0.1', '>=0.29.0', 'knowledge'], ['oats.okf-harvest', 'okf-harvest', '4.0.1', '>=0.29.0', null], ['oats.okf-maintenance', 'okf-maintenance', '4.0.1', '>=0.29.0', null]]);
   assert.equal('agents' in manifests[0], false, 'capability agents are replaced by the package souls');
   assert.deepEqual(Object.keys(manifests[1].commands), ['complete', 'harvest-status']);
   assert.deepEqual(Object.keys(manifests[2].commands), ['review-context', 'notify-harvester']);
   assert.deepEqual(manifests[0].settings.harvest, { ...manifests[0].settings.harvest, default: 'off', values: ['on', 'off'] });
   assert.ok(manifests[0].commands['harvest-status']);
-  assert.equal(readJSON(join(ROOT, 'package.json')).version, '4.0.0');
+  assert.equal(readJSON(join(ROOT, 'package.json')).version, '4.0.1');
 });
 
 test('oats.okf ships exactly okf-consultation and okf-instance-knowledge; no harvest doctrine', () => {
@@ -178,7 +178,7 @@ test('setup --harvest edits oats-local.yaml block style, and prints the line for
 
 // ------------------------------------------------------------------ provenance (C3)
 
-const sourceFixture = () => ({ id: '11111111-1111-4111-8111-111111111111', agent: 'domain-expert', instance: 'domain-expert-task', soulId: 'github.com/acme/agents#domain-expert', tasksProvider: 'oats.linear',
+const sourceFixture = () => ({ id: '11111111-1111-4111-8111-111111111111', agent: 'domain-expert', owner: 'o1', instance: 'domain-expert-task', soulId: 'github.com/acme/agents#domain-expert', tasksProvider: 'oats.linear',
   decl: { owns: ['project/expert'], reads: ['project/peer'] },
   bindings: { bases: { project: { id: 'base-1', kind: 'git', root: 'knowledge', pr: { repository: 'acme/knowledge' } }, notes: { id: 'base-2', kind: 'directory', path: '/x' } } } });
 const runFixture = (extra = {}) => ({ id: '22222222-2222-4222-8222-222222222222', inputs: ['a'.repeat(64), 'b'.repeat(64)], judgment: { tasks: { refs: ['ENG-12', 'ENG-12', 'https://github.com/acme/app/issues/4'] } }, worker: { instance: 'okf-harvester-2222', home: '/nonexistent' }, ...extra });
@@ -189,7 +189,7 @@ test('the provenance block round-trips from the harvester to the maintainer', ()
   const parsed = parseProvenance(pr.body);
   assert.equal(parsed.valid, true, parsed.problems.join('; '));
   assert.deepEqual(parsed.value, provenance(sourceFixture(), runFixture()));
-  assert.deepEqual(parsed.value.source, { soul: 'domain-expert', soulId: 'github.com/acme/agents#domain-expert', instance: 'domain-expert-task', ownedNodes: ['project/expert'], readNodes: ['project/peer'],
+  assert.deepEqual(parsed.value.source, { soul: 'domain-expert', soulId: 'github.com/acme/agents#domain-expert', owner: 'o1', instance: 'domain-expert-task', ownedNodes: ['project/expert'], readNodes: ['project/peer'],
     bases: [{ alias: 'project', id: 'base-1', kind: 'git', root: 'knowledge', repository: 'acme/knowledge' }, { alias: 'notes', id: 'base-2', kind: 'directory' }] });
   assert.deepEqual(parsed.value.tasks, { provider: 'oats.linear', refs: ['ENG-12', 'https://github.com/acme/app/issues/4'] });
   assert.deepEqual(parsed.value.harvester, { instance: 'okf-harvester-2222', alias: null });
@@ -303,7 +303,8 @@ test('okf-maintenance review-context --checkout maps nodes to paths and flags ch
   const d = scratch(t), kb = join(d, 'kb');
   put(join(kb, 'knowledge/okf-base.json'), JSON.stringify({ version: 1, id: 'base-1', nodes: { expert: { path: 'expert', owner: 'o1' }, peer: { path: 'peer', owner: 'o2' } } }));
   put(join(kb, 'knowledge/expert/decisions/a.md'), 'x'); put(join(kb, 'knowledge/expert/decisions/b.md'), 'y'); fs.mkdirSync(join(kb, '.git'));
-  const git = (cwd, args) => args[0] === 'diff' ? 'knowledge/expert/decisions/a.md\nknowledge/peer/c.md\nknowledge/index.md\ncode.txt' : '';
+  const accepted = JSON.stringify({ version: 1, id: 'base-1', nodes: { expert: { path: 'expert', owner: 'o1' }, peer: { path: 'peer', owner: 'o2' } } });
+  const git = (cwd, args) => args[0] === 'diff' ? 'knowledge/expert/decisions/a.md\nknowledge/peer/c.md\nknowledge/index.md\ncode.txt' : args[0] === 'show' && args[1] === 'origin/main:knowledge/okf-base.json' ? accepted : (() => { throw new Error(`unexpected git ${args.join(' ')}`); })();
   const r = maintCmd.reviewContext({ pr: 'https://github.com/acme/knowledge/pull/7', checkout: kb }, {}, { view: () => prFixture(harvestPr(sourceFixture(), runFixture()).body), git });
   const b = r.checkout.bases.find(x => x.alias === 'project');
   assert.deepEqual(b.owned.map(n => n.path), ['knowledge/expert']);
@@ -331,9 +332,75 @@ test('the working-soul inject teaches the work mode and names both okf skills; r
   assert.match(fs.readFileSync(join(HARVEST, 'injects/harvester.md'), 'utf8'), /judge, not a worker[\s\S]*staged roots[\s\S]*Stay alive until your PR is merged or closed/);
   assert.match(fs.readFileSync(join(MAINT, 'injects/maintainer.md'), 'utf8'), /one\*\* harvest PR per instance[\s\S]*Never merge what fails the doctrine[\s\S]*okf-needs-human/);
   const review = fs.readFileSync(join(MAINT, 'skills/knowledge-review/SKILL.md'), 'utf8');
-  assert.match(review, /okf-needs-human/); assert.match(review, /untrusted/); assert.match(review, /gh pr merge <number> --repo <repo> --squash/);
+  assert.match(review, /okf-needs-human/); assert.match(review, /untrusted/); assert.match(review, /gh pr merge <number> --repo <repo> --squash --match-head-commit <headSha>/);
+  assert.doesNotMatch(review, /--squash`/, 'no merge instruction without the reviewed head');
+  assert.match(review, /`okf-needs-human` is a hard stop[\s\S]*never remove the label[\s\S]*Only a human removing it clears it/);
   const setup = fs.readFileSync(join(MAINT, 'skills/okf-trigger-setup/SKILL.md'), 'utf8');
   assert.ok(setup.indexOf('## 4. Declare it in the workspace (the default)') < setup.indexOf('## 5. Or add it locally'), 'the workspace file first (plan §2.3a)');
   for (const needle of [/oats-triggers\/okf-harvest-review\.yaml/, /^kind: oats-trigger$/m, /^schemaVersion: 1$/m, /\*\.oats-trigger\.yaml/, /^from: oats\.okf:harvest-review$/m, /^set: \{ repo: github\.com\//m, /^runsOn: /m, /^owner: github\.com\//m, /assigned-elsewhere/, /owner-mismatch/, /automations\.disabled/,
     /oats trigger add --from oats\.okf:harvest-review --set repo=/, /oats trigger test/, /oats\.aweb 1\.15\.0 or later/, /okf: \{ team: aweb:<your-org>\.okf \}/, /self-approval/i, /--jq \.permissions/]) assert.match(setup, needle);
+});
+
+// okf 4.0.1 #3: ownership comes from the ACCEPTED okf-base.json, never the PR body or head.
+const checkoutKb = (t, headMeta) => {
+  const d = scratch(t), kb = join(d, 'kb'); fs.mkdirSync(join(kb, '.git'), { recursive: true });
+  put(join(kb, 'knowledge/okf-base.json'), JSON.stringify(headMeta)); put(join(kb, 'knowledge/peer/c.md'), 'z');
+  return kb;
+};
+const ACCEPTED = { version: 1, id: 'base-1', nodes: { expert: { path: 'expert', owner: 'o1' }, peer: { path: 'peer', owner: 'o2' } } };
+const acceptedGit = (diff) => (cwd, args) => args[0] === 'diff' ? diff : args[0] === 'show' && args[1] === 'origin/main:knowledge/okf-base.json' ? JSON.stringify(ACCEPTED) : (() => { throw new Error(`unexpected git ${args.join(' ')}`); })();
+test('4.0.1 review-context: a PR body that lies about its owned nodes is flagged', t => {
+  const kb = checkoutKb(t, ACCEPTED);
+  const lying = harvestPr({ ...sourceFixture(), decl: { owns: ['project/expert', 'project/peer'], reads: [] } }, runFixture()).body;
+  const r = maintCmd.reviewContext({ pr: 'https://github.com/acme/knowledge/pull/7', checkout: kb }, {}, { view: () => prFixture(lying), git: acceptedGit('knowledge/peer/c.md') });
+  const b = r.checkout.bases.find(x => x.alias === 'project');
+  assert.equal(b.owner, 'o1'); assert.deepEqual(b.owned.map(n => n.ref), ['project/expert'], 'owned = accepted nodes of the source owner, not the claim');
+  assert.deepEqual(b.claimedNotOwned, ['project/peer']); assert.deepEqual(b.outsideOwned, ['knowledge/peer/c.md']);
+  const unknownOwner = maintCmd.reviewContext({ pr: 'https://github.com/acme/knowledge/pull/7', checkout: kb }, {}, { view: () => prFixture(harvestPr({ ...sourceFixture(), owner: undefined }, runFixture()).body), git: acceptedGit('knowledge/expert/x.md') });
+  assert.deepEqual(unknownOwner.checkout.bases[0].owned, [], 'with no source.owner the soul name is compared: domain-expert owns nothing here');
+  assert.deepEqual(unknownOwner.checkout.bases[0].outsideOwned, ['knowledge/expert/x.md']);
+});
+test('4.0.1 review-context: a PR that edits okf-base.json owners is flagged, and the head copy is never trusted', t => {
+  const kb = checkoutKb(t, { ...ACCEPTED, nodes: { ...ACCEPTED.nodes, peer: { path: 'peer', owner: 'o1' } } });
+  const r = maintCmd.reviewContext({ pr: 'https://github.com/acme/knowledge/pull/7', checkout: kb }, {}, { view: () => prFixture(harvestPr(sourceFixture(), runFixture()).body), git: acceptedGit('knowledge/okf-base.json\nknowledge/peer/c.md') });
+  const b = r.checkout.bases.find(x => x.alias === 'project');
+  assert.equal(b.baseMetaChanged, true);
+  assert.deepEqual(b.owned.map(n => n.ref), ['project/expert'], 'the PR head reassigning peer to o1 changes nothing');
+  assert.deepEqual(b.outsideOwned, ['knowledge/okf-base.json', 'knowledge/peer/c.md']);
+  assert.match(maintCmd.reviewText ? maintCmd.reviewText(r) : JSON.stringify(r), /okf-base\.json/);
+});
+test('4.0.1 provenance: a base root with .. or an absolute path is refused', () => {
+  const good = provenance(sourceFixture(), runFixture());
+  for (const root of ['../etc', 'knowledge/../..', '/abs', 'a\\b', 'a//b']) {
+    const bad = structuredClone(good); bad.source.bases[0].root = root;
+    const r = parseProvenance('```okf-harvest\n' + JSON.stringify(bad) + '\n```');
+    assert.equal(r.valid, false, root); assert.match(r.problems.join(), /root must be a relative directory/);
+  }
+  const noOwner = structuredClone(good); delete noOwner.source.owner;
+  assert.equal(parseProvenance('```okf-harvest\n' + JSON.stringify(noOwner) + '\n```').valid, true, 'a 4.0.0 PR without source.owner still parses');
+});
+// okf 4.0.1 #5: okf-needs-human is a hard stop whatever the event.
+test('4.0.1 review-context: an event on an okf-needs-human PR is blocked and settled', t => {
+  const d = scratch(t), event = join(d, 'trigger-event.json'), body = harvestPr(sourceFixture(), runFixture()).body;
+  for (const ev of ['reopened', 'ready_for_review', 'opened']) {
+    put(event, JSON.stringify({ trigger: 'okf-harvest-review', source: 'github.pull_request', repo: 'github.com/acme/knowledge', number: 7, url: 'https://github.com/acme/knowledge/pull/7', event: ev, headSha: 'f'.repeat(40), labels: ['okf-harvest'] }));
+    const r = maintCmd.reviewContext({ event }, {}, { view: () => ({ ...prFixture(body), labels: [{ name: 'okf-harvest' }, { name: 'okf-needs-human' }] }) });
+    assert.equal(r.blocked, 'needs-human', ev); assert.equal(r.settled, true, ev);
+  }
+  const open = maintCmd.reviewContext({ event }, {}, { view: () => prFixture(body) });
+  assert.equal(open.blocked, null); assert.equal(open.settled, false);
+});
+
+// okf 4.0.1: OATS_SETTINGS_ORIGINS is an extra signal; soul.yaml stays the authority.
+test('4.0.1 harvest switch with OATS_SETTINGS_ORIGINS: a soul-originated value never switches harvest on', t => {
+  const d = scratch(t), soul = join(d, 'soul');
+  const at = (yaml) => { put(join(soul, 'soul.yaml'), yaml); return soul; };
+  const sw = (settings, yaml, origins) => harvestSwitch({ settings, soulDir: at(yaml), origins });
+  assert.equal(sw({ harvest: 'on' }, 'name: s\n', { '/harvest': { kind: 'host', at: 'oats-local.yaml' } }).effective, 'on');
+  assert.equal(sw({ harvest: 'on' }, 'name: s\n', { '/harvest': { kind: 'soul', at: 'soul.yaml#/knowledge' } }).effective, 'off', 'a soul-originated on is ignored');
+  assert.equal(sw({ harvest: 'off' }, 'name: s\n', { '/harvest': { kind: 'soul', at: 'soul.yaml#/knowledge' } }).effective, 'off');
+  const hidden = sw({ harvest: 'on' }, 'name: s\nknowledge: { harvest: off }\n', { '/harvest': { kind: 'host', at: 'oats-local.yaml' } });
+  assert.equal(hidden.effective, 'off', 'a host on hides the soul off in origins; soul.yaml still opts out');
+  assert.equal(sw({ harvest: 'on' }, 'name: s\n', {}).effective, 'on', 'no origins (pre-0.29 home): the soul.yaml rule alone');
+  assert.equal(hidden.rows[0].origin, 'host');
 });

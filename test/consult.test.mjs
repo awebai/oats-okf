@@ -399,3 +399,27 @@ test('4.0.1 security: a registered instance that fetches a crafted accepted comm
   assert.deepEqual(fs.readdirSync(join(f.bindings.stateDir, 'cache')).filter(n => n.startsWith('.validate-')), [], 'the scratch is removed');
 });
 
+// okf 4.0.1 #2 (oats-okf #16): a credential in a repository URL never reaches an agent.
+test('4.0.1 credentials: a token URL is refused at binding and never appears in bases output or error text', async t => {
+  const f = fixture(t);
+  const TOKEN = 'ghp_okf401SECRETtoken0123456789';
+  const { validateBindings } = await mod('config');
+  const { unavailable } = await mod('stores');
+  const { displayRepo, redactUrls } = await mod('io');
+  const tokenBase = { ...f.bindings.bases.project, repository: `https://okf-bot:${TOKEN}@github.com/acme/knowledge.git` };
+  const raw = { version: 1, stateDir: 'state', bases: { project: { id: 'base-1', kind: 'git', repository: tokenBase.repository, root: 'knowledge', acceptedBranch: 'main', pr: { repository: 'acme/knowledge' } } } };
+  assert.throws(() => validateBindings(raw, join(f.dir, 'bindings.json')), e => e.code === 'E_CONFIG' && /credential helper/.test(e.message) && !e.message.includes(TOKEN));
+  for (const userOnly of [`https://${TOKEN}@github.com/acme/knowledge.git`, `ssh://git:${TOKEN}@github.com/acme/knowledge.git`]) assert.throws(() => validateBindings({ ...raw, bases: { project: { ...raw.bases.project, repository: userOnly } } }, join(f.dir, 'bindings.json')), e => e.code === 'E_CONFIG' && !e.message.includes(TOKEN));
+  assert.doesNotThrow(() => validateBindings({ ...raw, bases: { project: { ...raw.bases.project, repository: 'ssh://git@github.com/acme/knowledge.git' } } }, join(f.dir, 'bindings.json')), 'a bare SSH user is not a credential');
+  // Defence in depth: a base that bypassed validation (older state) is still redacted in every error.
+  assert.throws(() => unavailable(tokenBase, 'project', 'fetch', new Error(`fatal: unable to access '${tokenBase.repository}/': boom`)), e => e.code === 'E_BASE_UNAVAILABLE' && !e.message.includes(TOKEN) && !String(e.repository).includes(TOKEN) && /https:\/\/github\.com\/acme\/knowledge\.git/.test(e.message));
+  assert.equal(displayRepo(tokenBase.repository), 'https://github.com/acme/knowledge.git');
+  assert.equal(redactUrls(`a https://u:${TOKEN}@h/x b`), 'a https://h/x b');
+  // The CLI: a token-bound deployment answers a typed error with no token in stdout or stderr.
+  const bad = join(f.dir, 'token-bindings.json'); save(bad, raw);
+  const r = f.cli('spawn', [], { OATS_SETTINGS: JSON.stringify({ 'bindings-file': bad, harvest: 'on' }) });
+  assert.equal(r.status, 1); assert.match(r.out.warning, /E_CONFIG: .*credential/);
+  assert.equal(`${r.stdout}${r.stderr}`.includes(TOKEN), false);
+  // A normal binding: bases prints the plain repository.
+  const ok = registered(t); const b = ok.json('bases').result.bases[0]; assert.equal(b.repository, ok.base.repository);
+});
