@@ -281,7 +281,7 @@ test('directory base: commands read in place under the base lock, with digest re
   const f = registered(t, { kind: 'directory' });
   assert.ok(f.s.acceptedView.project.digest); assert.equal(f.s.acceptedView.project.kind, 'directory');
   assert.equal(fs.existsSync(join(f.home, 'knowledge')), false);
-  const out = f.json('bases'); console.error('BASES', JSON.stringify(out).slice(0, 500)); const b = out.result.bases[0]; assert.equal(b.kind, 'directory'); assert.deepEqual(b.validated, { ok: true });
+  const b = f.json('bases').result.bases[0]; assert.equal(b.kind, 'directory'); assert.deepEqual(b.validated, { ok: true });
   const policy = f.json('cat', ['--base', 'project', '/expert/decisions/retry-policy.md']).result;
   assert.match(policy.text, /Exponential backoff/); assert.equal(policy.receipt.kind, 'directory'); assert.equal(policy.receipt.digest, f.s.acceptedView.project.digest); assert.equal(policy.receipt.stale, false);
   assert.match(f.cli('cat', ['--base', 'project', '/expert/lessons/storm.md']).stdout.trimEnd().split('\n').at(-1), /^— project@dir:[0-9a-f]{12} \(fetched just now\)$/);
