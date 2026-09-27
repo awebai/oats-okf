@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { fs, join, dirname, safePath, readJSON, save, atomic, tree, materialize, digest, hash, withLock, exec, cleanEnv, fail, relPath, overlaps, resolve } from './io.mjs';
+import { fs, join, dirname, safePath, readJSON, save, atomic, tree, materialize, digest, hash, withLock, exec, cleanEnv, fail, relPath, overlaps, resolve, within } from './io.mjs';
 import { metadata, noGit, gitTimeoutMs } from './config.mjs';
 const validator = fileURLToPath(new URL('./okf-validate.mjs', import.meta.url));
 // Never let local replace refs reinterpret frozen OIDs, including inside Git's
@@ -77,7 +77,9 @@ function materializeGitObjects(base,dest,head) {
   // that an entry outside the root is expected to be absent (see outsideBase).
   for(const [p,entry] of entries) {
     if(outsideBase(base,p)) continue;
-    const target=safePath(join(dest,p));fs.mkdirSync(dirname(target),{recursive:true});
+    // relPath above already refused traversal; containment is asserted again
+    // on the resolved target before any write (okf 4.0.1 #1).
+    const target=resolve(dest,p);if(target===resolve(dest) || !within(dest,target)) fail('E_PATH','Git tree entry escapes the stage');safePath(target);fs.mkdirSync(dirname(target),{recursive:true});
     writeBlob(dest,entry.oid,target,entry.mode==='100755'?0o755:0o644);
   }
 }
