@@ -1,5 +1,33 @@
 # Changelog
 
+## 4.0.3 — 2026-09-28
+
+### Fixed
+
+- **Knowledge consultation works with harvest off (the default).** Since
+  4.0.0, a home spawned with harvest off had no source, so every `oats okf`
+  consult command (`bases`, `index`, `cat`, `ls`, `links`, `search`) and
+  `inspect` failed with `ENOENT`.
+  - A harvest-off home still registers nothing: no source, no custody, no
+    schedule, and no final capture at retire.
+  - It now consults through its soul's declaration and the deployment's
+    bindings as they are now. The spawn records the declaration in
+    `.okf-instance.json`. A home spawned by 4.0.0–4.0.2 reads it from the
+    soul the kernel names (`OATS_SOUL`), so it works without a respawn.
+  - `inspect` on such a home reports that harvest is off, the declaration,
+    the bases it reads and its working memory.
+  - Harvest-on homes are unchanged.
+
+### Documentation
+
+- README: the configuration section describes the current setup
+  (`oats-local.yaml` settings), and states that a bound base's `id` must
+  equal the `id` in that base's `okf-base.json` (otherwise every read fails
+  with `E_BASE` "base identity/nodes mismatch").
+
+**Upgrading from 4.0.x:** `oats sync` (or `oats update oats.okf`). No
+respawn is needed.
+
 ## 4.0.2 — 2026-09-28
 
 ### Changed

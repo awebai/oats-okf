@@ -121,6 +121,47 @@ test('Git base: spawn keeps no local copy; the brief names the CLI; inspect has 
   assert.deepEqual(fs.readdirSync(join(f.bindings.stateDir, 'cache')).sort(), ['base-1.git']);
 });
 
+// okf 4.0.3: consultation must not depend on the harvest switch. Harvest off
+// (the default) registers no source, yet every consult command answers.
+const OFF = { OATS_EVENT: 'spawn' };
+const calls = f => fs.existsSync(join(f.dir, 'calls.jsonl')) ? fs.readFileSync(join(f.dir, 'calls.jsonl'), 'utf8').trim().split('\n').map(JSON.parse) : [];
+function consultsFromItsSoul(f) {
+  const head = git(f.work, ['rev-parse', 'HEAD']);
+  const bases = f.json('bases').result.bases;
+  assert.equal(bases.length, 1); assert.equal(bases[0].commit, head); assert.deepEqual(bases[0].owns, ['expert']); assert.deepEqual(bases[0].reads, ['peer']);
+  assert.deepEqual(f.json('index').result.indexes.map(x => [x.node, x.relation]), [['expert', 'owns'], ['peer', 'reads']]);
+  const text = f.cli('index'); assert.equal(text.status, 0, text.stderr); assert.match(text.stdout, /^## project\/expert \(owns\)/m);
+  assert.match(f.json('cat', ['--base', 'project', '/expert/decisions/retry-policy.md']).result.text, /Exponential backoff/);
+  assert.deepEqual(f.json('ls', ['--base', 'project', 'expert/lessons']).result.entries.map(e => e.name), ['storm.md']);
+  assert.ok(f.json('links', ['--base', 'project', '/expert/decisions/retry-policy.md']).result.links.length > 0);
+  assert.ok(f.json('search', ['BACKOFF']).result.hits.length > 0);
+  const inspected = f.json('inspect').result;
+  assert.equal(inspected.source, null); assert.equal(inspected.harvest.status, 'off'); assert.match(inspected.summary, /harvest off/);
+  assert.deepEqual(inspected.owns, ['project/expert']); assert.deepEqual(inspected.documents.map(d => d.label), ['Working state (STATE.md)', 'Log (log.md)']);
+}
+test('4.0.3 harvest off: a spawned home consults (bases, index, cat, ls, links, search, inspect) with no source registered', t => {
+  const f = fixture(t, { settings: { harvest: 'off' } });
+  const r = f.cli('spawn', [], OFF); assert.equal(r.status, 0, r.stdout + r.stderr); assert.equal(r.out.meta.harvest, 'off');
+  assert.equal(fs.existsSync(join(f.home, '.okf-source.json')), false, 'still no source: harvest off registers nothing');
+  assert.deepEqual(readJSON(join(f.home, '.okf-instance.json')).decl, { version: 1, owner: 'owner-1', owns: ['project/expert'], reads: ['project/peer'] });
+  consultsFromItsSoul(f);
+  assert.deepEqual(calls(f), [], 'no schedule, capture or recall call');
+  assert.equal(fs.existsSync(join(f.bindings.stateDir, 'sources')), false, 'no source descriptor, custody or status');
+  const retire = f.cli('retire', [], { OATS_EVENT: 'retire' }); assert.equal(retire.status, 0, retire.stdout + retire.stderr); assert.deepEqual(retire.out.meta, { retired: true, reason: 'harvest-off' });
+  assert.deepEqual(calls(f), [], 'retire takes no final capture');
+});
+test('4.0.3 harvest off: a home spawned before 4.0.3 (record without a declaration) consults through the kernel\'s OATS_SOUL', t => {
+  const f = fixture(t, { settings: { harvest: 'off' } });
+  assert.equal(f.cli('spawn', [], OFF).status, 0);
+  const file = join(f.home, '.okf-instance.json'), { decl, ...record } = readJSON(file); save(file, record);
+  consultsFromItsSoul(f);
+  const bare = f.cli('bases', ['--json'], { OATS_SOUL: '' }); assert.equal(bare.status, 1); assert.equal(bare.out.error.code, 'E_OATS_SOUL_MISSING');
+});
+test('4.0.3 a home okf never spawned still has no source to consult', t => {
+  const f = fixture(t, { settings: { harvest: 'off' } });
+  const r = f.cli('bases', ['--json']); assert.equal(r.status, 1); assert.equal(r.out.error.code, 'ENOENT', 'unchanged: only a harvest-off record admits consultation without a source');
+});
+
 test('Git base: every command answers from the accepted commit with a receipt', t => {
   const f = registered(t), head = git(f.work, ['rev-parse', 'HEAD']);
   const bases = f.json('bases').result.bases;
