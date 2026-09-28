@@ -1,5 +1,11 @@
 # Changelog
 
+## 4.0.4 — 2026-09-28
+
+- Fix `binding.check` readiness to accept the kernel-documented request (`input.context` and `input.action` only) and read the OKF provider binding from top-level `settings`.
+- Return `needs-configuration` with a named OKF provisioning/deactivation fix for missing or invalid readiness binding data instead of refusing a well-formed kernel request as `invalid-binding`.
+- Add a real kernel readiness stdin fixture captured from `awebai/oats` main (`82f35853664245417b329955d31deb130e56203a`) and assert ready, missing-configuration, and strict unknown-key behavior.
+
 ## 4.0.3 — 2026-09-28
 
 ### Fixed

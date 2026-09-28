@@ -130,7 +130,7 @@ test("validator rejects a duplicate capability, a foreign capability id, a versi
   const g = fixture(t);
   g.manifest.capability = "acme.other"; g.manifest.version = "9.9.9"; g.manifest.agents = ["agents/x"];
   const r = rejected(g, /must be oats\.okf or oats\.okf-<role>/);
-  assert.match(r.stderr, /must match the package version 4\.0\.3/); assert.match(r.stderr, /capability agents are replaced by package souls/);
+  assert.match(r.stderr, /must match the package version 4\.0\.4/); assert.match(r.stderr, /capability agents are replaced by package souls/);
 });
 
 test("validator checks package souls and trigger templates", (t) => {
@@ -342,9 +342,9 @@ test("baseline mutation harness accepts the unmodified installed payload", (t) =
   assert.equal(f.run().status, 0);
   const result = runBaseline(f);
   assert.equal(result.status, 0, result.stdout + result.stderr);
-  assert.match(result.stdout, /ok \d+ - baseline exports/);
-  assert.match(result.stdout, /ok \d+ - baseline harvest operation/);
-  assert.match(result.stdout, /ok \d+ - baseline inspect operation/);
+  assert.match(result.stdout, /(?:ok \d+ -|✔) baseline exports/);
+  assert.match(result.stdout, /(?:ok \d+ -|✔) baseline harvest operation/);
+  assert.match(result.stdout, /(?:ok \d+ -|✔) baseline inspect operation/);
 });
 
 for (const [name, mutate, validationStatus, diagnostic] of [
@@ -365,16 +365,16 @@ for (const [name, mutate, validationStatus, diagnostic] of [
     mkdirSync(join(f.capabilityRoot, "skills"));
   }, 1, /skill tree contains no discoverable skill/],
   ["skills pointing to injection file", (f) => { f.manifest.skills = ["injects/okf.md"]; }, 1, /skill path must be a directory/],
-  ["wrong-event harvest fixed argv", (f) => { f.manifest.commands.harvest = "bin/oats-okf.mjs retire"; }, 0, /not ok \d+ - baseline harvest operation/],
-  ["wrong-event inspect fixed argv", (f) => { f.manifest.commands.inspect = "bin/oats-okf.mjs retire"; }, 0, /not ok \d+ - baseline inspect command/],
+  ["wrong-event harvest fixed argv", (f) => { f.manifest.commands.harvest = "bin/oats-okf.mjs retire"; }, 0, /(?:not ok \d+ -|✖) baseline harvest operation/],
+  ["wrong-event inspect fixed argv", (f) => { f.manifest.commands.inspect = "bin/oats-okf.mjs retire"; }, 0, /(?:not ok \d+ -|✖) baseline inspect command/],
   ["removed inspect command", (f) => { delete f.manifest.commands.inspect; }, 1, /operations.inspect.command: must name one of the manifest's commands/],
   ["removed inspect command and operation", (f) => {
     delete f.manifest.commands.inspect;
     delete f.manifest.operations.inspect;
   }, 0, /missing command inspect/],
   ["undeclared operation command", (f) => { f.manifest.operations.harvest.command = "not-declared"; }, 1, /operations.harvest.command: must name one of the manifest's commands/],
-  ["misrouted harvest operation", (f) => { f.manifest.operations.harvest.command = "inspect"; }, 0, /not ok \d+ - baseline harvest operation/],
-  ["misrouted inspect operation", (f) => { f.manifest.operations.inspect.command = "harvest"; }, 0, /not ok \d+ - baseline inspect operation/],
+  ["misrouted harvest operation", (f) => { f.manifest.operations.harvest.command = "inspect"; }, 0, /(?:not ok \d+ -|✖) baseline harvest operation/],
+  ["misrouted inspect operation", (f) => { f.manifest.operations.inspect.command = "harvest"; }, 0, /(?:not ok \d+ -|✖) baseline inspect operation/],
 ]) {
   test(`release gate rejects mutation: ${name}`, (t) => {
     const f = fixture(t);

@@ -44,9 +44,8 @@ test('exact producer incarnation and intent reach OKF check and private snapshot
     const f=fixture(t,p,kind,context),admitted=p.admitCapturedInstanceAction(f.request);
     const value=p.buildCapturedInvocationContext({loaded:f.loaded,action,instance:f.instance,intent:admitted.intent});
     assert.equal(value.intent.incarnationId,value.instance.incarnationId);assert.deepEqual(validateInvocationShape(value),value);
-    const check=spawnCheck(f,value);assert.equal(check.status,0,check.stderr);assert.deepEqual(JSON.parse(check.stdout).result,{status:'ready',problems:[]});
-    const old=structuredClone(value);delete old.intent;delete old.instance.incarnationId;
-    const refused=spawnCheck(f,old);assert.equal(refused.status,0);assert.deepEqual(JSON.parse(refused.stdout).error,{code:'invalid-binding'});
+    const check=spawnCheck(f);assert.equal(check.status,0,check.stderr);assert.deepEqual(JSON.parse(check.stdout).result,{status:'ready',problems:[]});
+    const refused=spawnCheck(f,{invocation:value});assert.equal(refused.status,0);assert.deepEqual(JSON.parse(refused.stdout).error,{code:'invalid-binding'});
     p.beginCapturedIntent({...f.request,intent:admitted.intent});
     let contextFile,bindingFile;
     p.withCapturedInvocationContextFile(value,contextEnv=>p.withCapturedBindingFile(f.loaded,bindingEnv=>{
@@ -70,6 +69,6 @@ test('exact producer incarnation and intent reach OKF check and private snapshot
   }
 });
 
-function spawnCheck(f,invocation) {
-  return spawnSync(process.execPath,[join(CAP,'bin/oats-okf-binding.mjs'),'check'],{input:JSON.stringify({schemaVersion:1,phase:'check',slot:'knowledge',capability:'oats.okf',settings:{},input:{binding:f.binding,context:f.loaded.record.context,action,invocation}}),env:f.env,encoding:'utf8'});
+function spawnCheck(f,extra={}) {
+  return spawnSync(process.execPath,[join(CAP,'bin/oats-okf-binding.mjs'),'check'],{input:JSON.stringify({schemaVersion:1,phase:'check',slot:'knowledge',capability:'oats.okf',settings:f.binding,input:{context:f.loaded.record.context,action,...extra}}),env:f.env,encoding:'utf8'});
 }

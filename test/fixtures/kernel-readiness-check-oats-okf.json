@@ -1,0 +1,33 @@
+{
+  "provenance": {
+    "capturedBy": "scripts/capture-readiness-fixture.mjs",
+    "command": "oats readiness --home <spawned kb-fixture home> --json",
+    "kernel": "awebai/oats",
+    "kernelOid": "82f35853664245417b329955d31deb130e56203a"
+  },
+  "stdin": {
+    "schemaVersion": 1,
+    "phase": "check",
+    "slot": "knowledge",
+    "capability": "oats.okf",
+    "settings": {
+      "harvest": "off",
+      "harvest-runtime": "pi",
+      "bindings-file": "/private/var/folders/n3/7j3g9hm10sbd4j8hccsvr4wh0000gn/T/oats-v2-snNhT5/okf-host/bindings.json",
+      "state-dir": "/private/var/folders/n3/7j3g9hm10sbd4j8hccsvr4wh0000gn/T/oats-v2-snNhT5/okf-host/state"
+    },
+    "input": {
+      "context": {
+        "kind": "workspace",
+        "workspace": "local//private/var/folders/n3/7j3g9hm10sbd4j8hccsvr4wh0000gn/T/oats-v2-snNhT5/remotes/ws.git",
+        "deployment": "/private/var/folders/n3/7j3g9hm10sbd4j8hccsvr4wh0000gn/T/oats-v2-snNhT5/deployment",
+        "soul": "kb",
+        "instance": "kb-fixture",
+        "home": "/private/var/folders/n3/7j3g9hm10sbd4j8hccsvr4wh0000gn/T/oats-v2-snNhT5/deployment/agents/kb/instances/kb-fixture"
+      },
+      "action": {
+        "kind": "readiness"
+      }
+    }
+  }
+}
