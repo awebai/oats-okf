@@ -26,21 +26,21 @@ const files = dir => fs.readdirSync(dir, { recursive: true, withFileTypes: true 
 
 // ------------------------------------------------------------------ package shape
 
-test('the package ships three capabilities, two package souls and one trigger template at 4.0.2 / >=0.29.0', () => {
+test('the package ships three capabilities, two package souls and one trigger template at 4.0.3 / >=0.29.0', () => {
   const pkg = readJSON(join(PKG, 'oats-package.json'));
-  assert.equal(pkg.version, '4.0.2'); assert.deepEqual(pkg.compatibility, { oats: '>=0.29.0' });
+  assert.equal(pkg.version, '4.0.3'); assert.deepEqual(pkg.compatibility, { oats: '>=0.29.0' });
   assert.deepEqual(pkg.capabilities, ['capabilities/oats-okf', 'capabilities/oats-okf-harvest', 'capabilities/oats-okf-maintenance']);
   assert.deepEqual(pkg.souls, ['souls/knowledge-harvester', 'souls/knowledge-maintainer']);
   assert.deepEqual(pkg.triggers, [{ id: 'harvest-review', file: 'triggers/harvest-review.json' }]);
   const manifests = pkg.capabilities.map(c => readJSON(join(PKG, c, 'oats.json')));
   assert.deepEqual(manifests.map(m => [m.capability, m.command, m.version, m.compatibility.oats, m.layer ?? null]), [
-    ['oats.okf', 'okf', '4.0.2', '>=0.29.0', 'knowledge'], ['oats.okf-harvest', 'okf-harvest', '4.0.2', '>=0.29.0', null], ['oats.okf-maintenance', 'okf-maintenance', '4.0.2', '>=0.29.0', null]]);
+    ['oats.okf', 'okf', '4.0.3', '>=0.29.0', 'knowledge'], ['oats.okf-harvest', 'okf-harvest', '4.0.3', '>=0.29.0', null], ['oats.okf-maintenance', 'okf-maintenance', '4.0.3', '>=0.29.0', null]]);
   assert.equal('agents' in manifests[0], false, 'capability agents are replaced by the package souls');
   assert.deepEqual(Object.keys(manifests[1].commands), ['complete', 'harvest-status']);
   assert.deepEqual(Object.keys(manifests[2].commands), ['review-context', 'notify-harvester']);
   assert.deepEqual(manifests[0].settings.harvest, { ...manifests[0].settings.harvest, default: 'off', values: ['on', 'off'] });
   assert.ok(manifests[0].commands['harvest-status']);
-  assert.equal(readJSON(join(ROOT, 'package.json')).version, '4.0.2');
+  assert.equal(readJSON(join(ROOT, 'package.json')).version, '4.0.3');
 });
 
 test('oats.okf ships exactly okf-consultation and okf-instance-knowledge; no harvest doctrine', () => {

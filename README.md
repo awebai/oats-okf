@@ -1,6 +1,14 @@
-# oats.okf 3 — external knowledge, consulted remotely, independent judgment
+# oats.okf 4 — external knowledge, consulted remotely, independent judgment
 
-The official OKF knowledge capability: **3.0.0**, requiring **OATS >=0.26.0**.
+The official OKF knowledge capability: **4.0.3**, requiring **OATS >=0.29.0**.
+
+## 4.0.3 — consultation with harvest off
+
+Harvest is off by default. Before 4.0.3, a home spawned with harvest off had no
+source, so every `oats okf` consult command and `inspect` failed. Such a home
+now consults through its soul's declaration and the deployment's bindings; it
+still registers, captures and schedules nothing. Homes spawned by 4.0.0–4.0.2
+work after `oats sync`, with no respawn. See [CHANGELOG.md](CHANGELOG.md).
 
 ## 4.0.2 — no okf team
 
@@ -191,18 +199,16 @@ compatibility is declared by the manifests and this guide.
 
 ## Configuration and ownership
 
-Install/trust this package and activate `oats.okf` using the OATS package and
-configuration skills. Activation may target sources, not necessarily the service
-worker. The legacy live-source runtime needs one effective setting:
+A workspace declares the package (`packages: { oats.okf: v4.0.3 }`) and selects
+it as the knowledge capability (`defaults: { knowledge: { oats.okf: { from:
+package } } }`, or per soul). Each deployment points it at its bindings file
+in its own `oats-local.yaml`:
 
-```sh
-oats use oats.okf --soul domain-expert --settings bindings-file=/absolute/config/okf-bindings.json
+```yaml
+settings:
+  oats.okf:
+    bindings-file: /absolute/config/okf-bindings.json
 ```
-
-Portable provider-binding preparation additionally requires an explicit
-`state-dir` setting alongside `bindings-file`. Both are captured as host-owned
-absolute locations; the codec does not derive state from an instance home or
-reread the bindings file during normalize/bind.
 
 The **2.1.2 diagnostic correction** names a missing/invalid runtime setting in
 existing wire `error: {code: "needs-configuration", message: "..."}`. Only fixed
@@ -272,6 +278,12 @@ Each accepted base carries **`okf-base.json`**:
 ```json
 {"version":1,"id":"project-knowledge","nodes":{"expert":{"path":"expert","owner":"domain-expert-stable-id"},"steward":{"path":"steward","owner":"steward-stable-id"}}}
 ```
+
+**A bound base's `id` must equal the `id` in that base's `okf-base.json`.** The
+alias (`project` above) is yours to choose, and it is what souls' `okf.json`
+names; the `id` is the base's own. Take it from the base, e.g. the aweb base's
+is `aweb-oss-knowledge`. A mismatch fails every read of that base with `E_BASE`
+("base identity/nodes mismatch").
 
 Stable owner IDs must not ambiguously identify different souls in one state
 namespace. If a stable owner ID already identifies a different soul in this state
