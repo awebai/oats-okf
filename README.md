@@ -1,6 +1,6 @@
 # oats.okf 4 — external knowledge, consulted remotely, independent judgment
 
-The official OKF knowledge capability: **4.0.3**, requiring **OATS >=0.29.0**.
+The official OKF knowledge capability: **4.0.4**, requiring **OATS >=0.29.0**.
 
 ## 4.0.3 — consultation with harvest off
 
@@ -199,7 +199,7 @@ compatibility is declared by the manifests and this guide.
 
 ## Configuration and ownership
 
-A workspace declares the package (`packages: { oats.okf: v4.0.3 }`) and selects
+A workspace declares the package (`packages: { oats.okf: v4.0.4 }`) and selects
 it as the knowledge capability (`defaults: { knowledge: { oats.okf: { from:
 package } } }`, or per soul). Each deployment points it at its bindings file
 in its own `oats-local.yaml`:

@@ -160,11 +160,11 @@ test('accepted BE+P1 tree 0c031114 actual OKF hooks and public SOURCE continuati
   const action={kind:'command',namespace:'okf',name:'complete'},selected=p.loadCapturedDispatch({deployment:f.deployment,resolution:ready.resolution,action});
   const invocation=p.buildCapturedInvocationContext({loaded:selected,action});
   assert.equal(invocation.instance,null);assert.equal(invocation.intent,null);assert.equal(invocation.priorReceipt,null);
-  // The same current-producer value is inline check input; poisoned execution
-  // pointers cannot replace it or supply a missing/invalid projection.
-  const check=value=>spawnSync(process.execPath,[join(cap,'bin/oats-okf-binding.mjs'),'check'],{input:JSON.stringify({schemaVersion:1,phase:'check',slot:'knowledge',capability:'oats.okf',settings:{},input:{binding:record.bindings.knowledge,context:record.context,action,invocation:value}}),cwd:f.deployment,env:{...f.env,OATS_INVOCATION_CONTEXT_FILE:'/poison-context',OATS_BINDING_FILE:'/poison-binding'},encoding:'utf8',timeout:30000});
-  const checked=check(invocation);assert.equal(checked.status,0,checked.stdout+checked.stderr);assert.equal(JSON.parse(checked.stdout).result.status,'ready');
-  const invalidCheck=check({...invocation,intent:{}});assert.equal(invalidCheck.status,0);assert.equal(JSON.parse(invalidCheck.stdout).error.code,'invalid-binding');
+  // Readiness check follows the documented kernel wire: the binding is the
+  // top-level settings value, and poisoned execution files cannot add authority.
+  const check=input=>spawnSync(process.execPath,[join(cap,'bin/oats-okf-binding.mjs'),'check'],{input:JSON.stringify({schemaVersion:1,phase:'check',slot:'knowledge',capability:'oats.okf',settings:record.bindings.knowledge,input}),cwd:f.deployment,env:{...f.env,OATS_INVOCATION_CONTEXT_FILE:'/poison-context',OATS_BINDING_FILE:'/poison-binding'},encoding:'utf8',timeout:30000});
+  const checked=check({context:record.context,action});assert.equal(checked.status,0,checked.stdout+checked.stderr);assert.equal(JSON.parse(checked.stdout).result.status,'ready');
+  const invalidCheck=check({context:record.context,action,invocation});assert.equal(invalidCheck.status,0);assert.equal(JSON.parse(invalidCheck.stdout).error.code,'invalid-binding');
   let contextFile,bindingFile;
   const preload=noEffectsPreload(f.root);
   p.withCapturedInvocationContextFile(invocation,contextEnv=>p.withCapturedBindingFile(selected,bindingEnv=>{
