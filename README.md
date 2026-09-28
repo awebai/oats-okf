@@ -2,6 +2,18 @@
 
 The official OKF knowledge capability: **3.0.0**, requiring **OATS >=0.26.0**.
 
+## 4.0.2 — no okf team
+
+The harvester and the maintainer no longer join an okf team; they live in the
+deployment's default team, like every instance:
+- `run-source` spawns the harvester with no `join`;
+- the `harvest-review` trigger template has no `spawn.teams`;
+- the package souls carry no `team`.
+
+There is no `okf` team to declare or map. A deployment that wants them in
+another team opts them in locally, as for any soul (OATS team model v2). See
+[CHANGELOG.md](CHANGELOG.md).
+
 ## 4.0.1 — security fix
 
 **Upgrade from 3.0.0 or 4.0.0.** A crafted Git base tree could make base

@@ -1,5 +1,32 @@
 # Changelog
 
+## 4.0.2 — 2026-09-28
+
+### Changed
+
+- **The harvester and maintainer no longer join an okf team; they live in the
+  default team.** This follows OATS team model v2, where team membership is
+  local to each deployment, so a package can't assume an `okf` team exists.
+  - `run-source` spawns `oats.okf/knowledge-harvester` with no `join` and no
+    messaging `spawn --preview`. The run records no `team`.
+  - The `harvest-review` trigger template has no `spawn.teams`.
+  - The package souls carry no `team`.
+  - `okf-maintenance notify-harvester` returns no `team` and no longer says
+    "in the okf team".
+  - `okf-trigger-setup` drops the okf team mapping step: there is no `okf`
+    team to declare or map.
+  - The harvester's and maintainer's texts (souls, skills, injects,
+    manifests) no longer mention an okf team. A max-age harvester tells its
+    operator.
+
+  **Upgrading from 4.0.x:** nothing to do. A workspace's `okf` team entry and
+  its `messaging.byTeam.okf` mapping are no longer used, and can be removed.
+  A deployment that wants the harvester and maintainer in another team opts
+  them in locally, as for any soul.
+- This repository's member files drop `team: global`
+  (`oats-membership.yaml`, `souls/oats-okf-expert`): team model v2, migration
+  step 1, proven harmless on OATS 0.29.4 (awebai/oats#262).
+
 ## 4.0.1 — 2026-09-27
 
 ### Security
