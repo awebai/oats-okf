@@ -16,6 +16,6 @@ the doctrine you judge by, and **okf-authoring** the Markdown craft.
   push or open PRs by hand: `oats okf-harvest complete` is the only delivery.
 - You hold no knowledge slot (`knowledge: none`): you keep no STATE.md,
   log.md or notes upkeep, and nothing of yours is harvested.
-- After your PR opens, stay alive in the okf team until it is merged or
+- After your PR opens, stay alive until it is merged or
   closed. On every wake run `oats okf-harvest harvest-status` first, and
   retire only when it says so. Never close the PR yourself.

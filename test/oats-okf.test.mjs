@@ -152,7 +152,7 @@ test('exported payload version, floor, required hooks and complete command inven
   assert.equal(fs.existsSync(join(CAP,'agents')),false,'the harvester is the package soul oats.okf/knowledge-harvester, not a capability agent');
   assert.ok(fs.statSync(join(ROOT,'oats-package/souls/knowledge-harvester/AGENTS.md')).isFile(),'the harvester soul keeps its one canonical instruction file');
   const m=readJSON(join(CAP,'oats.json')),distribution=readJSON(join(ROOT,'oats-package/oats-package.json'));
-  for(const manifest of [readJSON(join(ROOT,'package.json')),distribution,m])assert.equal(manifest.version,'4.0.1');
+  for(const manifest of [readJSON(join(ROOT,'package.json')),distribution,m])assert.equal(manifest.version,'4.0.2');
   for(const manifest of [distribution,m])assert.equal(manifest.compatibility.oats,'>=0.29.0');
   assert.equal(m.hooks.spawn.required,true);
   for(const c of ['harvest','inspect','setup','run-source','complete','retry','migrate','read','refresh','init','bases','index','cat','ls','links','search','harvest-status']) assert.ok(m.commands[c]);
@@ -199,15 +199,15 @@ test('notes content rewrite is captured, replay is idempotent, completion never 
   const f=fixture(t);note(f);const {s,run}=prepared(f);note(f,'decision.md','Revised observation while the worker is running.');capture(s);const before=loadStatus(s);assert.equal(before.captured.inputs.length,2);capture(s);assert.equal(loadStatus(s).captured.inputs.length,2);
   const result=complete(s,run.id,judgment(f,s,run));assert.equal(result.processed,true);assert.equal(result.receipts.project.status,'accepted');assert.match(fs.readFileSync(join(f.home,'notes/decision.md'),'utf8'),/Revised/);assert.equal(loadStatus(s).processed.length,1);
 });
-test('harvest worker spawn without a messaging capability records it and spawns without join',t=>{
+test('harvest worker spawn without a messaging capability spawns without join and records no team',t=>{
   const f=fixture(t);save(join(f.dir,'preview.json'),{modules:[{name:'oats.okf-harvest',layer:null}]});note(f);prepared(f);
   const calls=fs.readFileSync(f.calls,'utf8').trim().split('\n').map(JSON.parse),spawn=calls.find(c=>c.a[0]==='spawn' && !c.a.includes('--preview')).a;
   assert.equal(spawn.includes('--provider'),false);
-  const s=register(f.home),run=readRun(s,loadStatus(s).activeRun);assert.deepEqual(run.team,{team:'okf',messaging:null});
+  const s=register(f.home),run=readRun(s,loadStatus(s).activeRun);assert.equal(run.team,undefined,'okf 4.0.2: no okf team');
   const task=fs.readFileSync(join(run.worker.home,'TASK.md'),'utf8');
   assert.match(task,/Load the knowledge-harvest skill first/);assert.match(task,/the notes AND every transcript window; cite the turn ids/);
   assert.match(task,/'oats' 'okf-harvest' 'complete' '--source'/);assert.match(task,/'oats' 'okf-harvest' 'harvest-status'/);
-  assert.match(task,/stay alive in the okf team until your PR is merged or closed/);assert.match(task,/Never close the PR yourself/);
+  assert.match(task,/stay alive until your PR is merged or closed/);assert.doesNotMatch(task,/okf team/);assert.match(task,/Never close the PR yourself/);
   assert.doesNotMatch(task,/memory-harvest|retire normally/);
 });
 for(const [features,flag] of [[['schedule','harness'],'--harness'],[['schedule'],'--runtime'],[null,'--runtime']]) test(`harvest worker spawn passes ${flag} when oats version features are ${JSON.stringify(features)}`,t=>{
@@ -215,12 +215,12 @@ for(const [features,flag] of [[['schedule','harness'],'--harness'],[['schedule']
   note(f);prepared(f);
   const calls=fs.readFileSync(f.calls,'utf8').trim().split('\n').map(JSON.parse),spawn=calls.find(c=>c.a[0]==='spawn' && !c.a.includes('--preview')).a;
   assert.equal(spawn[spawn.indexOf(flag)+1],'pi');assert.equal(spawn.includes(flag==='--harness'?'--runtime':'--harness'),false);
-  // okf 4.0.0: the harvester is the package soul, joining the okf team through
-  // the messaging capability its preview resolves; no capability-agent flags.
+  // okf 4.0.2: the harvester is the package soul and joins no team, even with a
+  // messaging capability available; it lives in the deployment's default team.
   assert.equal(spawn[1],'oats.okf/knowledge-harvester');
-  assert.deepEqual(spawn.slice(spawn.indexOf('--provider'),spawn.indexOf('--provider')+3),['--provider','oats.fixture-chat','join=okf']);
+  assert.equal(spawn.includes('--provider'),false);assert.equal(spawn.some(a=>/^join=/.test(a)),false);
   for(const gone of ['--repo','--work']) assert.equal(spawn.includes(gone),false,gone);
-  assert.ok(calls.some(c=>c.a[0]==='spawn' && c.a[1]==='oats.okf/knowledge-harvester' && c.a.includes('--preview')),'the messaging capability comes from spawn --preview');
+  assert.equal(calls.some(c=>c.a[0]==='spawn' && c.a.includes('--preview')),false,'no preview: nothing to join');
   assert.ok(calls.some(c=>c.a[0]==='version' && c.a[1]==='--json'),'the kernel was asked, not guessed');
 });
 test('no-change/all-drop succeeds without invented Git or PR receipt',t=>{

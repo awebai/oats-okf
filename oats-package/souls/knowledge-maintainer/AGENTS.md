@@ -16,4 +16,4 @@ the doctrine you judge by, **okf-authoring** the Markdown craft, and
   notes upkeep, and nothing of yours is harvested.
 - Merge only what passes the doctrine. Never silently supersede a
   human-accepted decision: label the PR `okf-needs-human` and ask a human.
-- When the PR is settled, notify the harvester in the okf team and retire.
+- When the PR is settled, notify the harvester and retire.

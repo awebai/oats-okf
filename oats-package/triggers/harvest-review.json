@@ -18,8 +18,7 @@
     "spawn": {
       "soul": "oats.okf/knowledge-maintainer",
       "purpose": "review-pr-{number}",
-      "task": "Review knowledge-base PR {repo}#{number} ({url}). Load the knowledge-review skill first.",
-      "teams": ["okf"]
+      "task": "Review knowledge-base PR {repo}#{number} ({url}). Load the knowledge-review skill first."
     },
     "concurrency": { "max": 2, "perKey": 1 }
   }

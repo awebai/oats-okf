@@ -26,21 +26,21 @@ const files = dir => fs.readdirSync(dir, { recursive: true, withFileTypes: true 
 
 // ------------------------------------------------------------------ package shape
 
-test('the package ships three capabilities, two package souls and one trigger template at 4.0.1 / >=0.29.0', () => {
+test('the package ships three capabilities, two package souls and one trigger template at 4.0.2 / >=0.29.0', () => {
   const pkg = readJSON(join(PKG, 'oats-package.json'));
-  assert.equal(pkg.version, '4.0.1'); assert.deepEqual(pkg.compatibility, { oats: '>=0.29.0' });
+  assert.equal(pkg.version, '4.0.2'); assert.deepEqual(pkg.compatibility, { oats: '>=0.29.0' });
   assert.deepEqual(pkg.capabilities, ['capabilities/oats-okf', 'capabilities/oats-okf-harvest', 'capabilities/oats-okf-maintenance']);
   assert.deepEqual(pkg.souls, ['souls/knowledge-harvester', 'souls/knowledge-maintainer']);
   assert.deepEqual(pkg.triggers, [{ id: 'harvest-review', file: 'triggers/harvest-review.json' }]);
   const manifests = pkg.capabilities.map(c => readJSON(join(PKG, c, 'oats.json')));
   assert.deepEqual(manifests.map(m => [m.capability, m.command, m.version, m.compatibility.oats, m.layer ?? null]), [
-    ['oats.okf', 'okf', '4.0.1', '>=0.29.0', 'knowledge'], ['oats.okf-harvest', 'okf-harvest', '4.0.1', '>=0.29.0', null], ['oats.okf-maintenance', 'okf-maintenance', '4.0.1', '>=0.29.0', null]]);
+    ['oats.okf', 'okf', '4.0.2', '>=0.29.0', 'knowledge'], ['oats.okf-harvest', 'okf-harvest', '4.0.2', '>=0.29.0', null], ['oats.okf-maintenance', 'okf-maintenance', '4.0.2', '>=0.29.0', null]]);
   assert.equal('agents' in manifests[0], false, 'capability agents are replaced by the package souls');
   assert.deepEqual(Object.keys(manifests[1].commands), ['complete', 'harvest-status']);
   assert.deepEqual(Object.keys(manifests[2].commands), ['review-context', 'notify-harvester']);
   assert.deepEqual(manifests[0].settings.harvest, { ...manifests[0].settings.harvest, default: 'off', values: ['on', 'off'] });
   assert.ok(manifests[0].commands['harvest-status']);
-  assert.equal(readJSON(join(ROOT, 'package.json')).version, '4.0.1');
+  assert.equal(readJSON(join(ROOT, 'package.json')).version, '4.0.2');
 });
 
 test('oats.okf ships exactly okf-consultation and okf-instance-knowledge; no harvest doctrine', () => {
@@ -69,11 +69,11 @@ test('no symlinks anywhere in the distributed package (npm drops them)', () => {
   assert.deepEqual(links, []);
 });
 
-test('package souls: harvester and maintainer are directory souls in the okf team with no knowledge slot', () => {
+test('package souls: harvester and maintainer are directory souls with no team and no knowledge slot', () => {
   for (const [name, cap] of [['knowledge-harvester', 'oats.okf-harvest'], ['knowledge-maintainer', 'oats.okf-maintenance']]) {
     const yaml = fs.readFileSync(join(PKG, 'souls', name, 'soul.yaml'), 'utf8');
     assert.match(yaml, /^schemaVersion: 2$/m); assert.match(yaml, new RegExp(`^name: ${name}$`, 'm'));
-    assert.match(yaml, /^work: directory$/m); assert.match(yaml, /^team: okf$/m); assert.match(yaml, /^knowledge: none$/m);
+    assert.match(yaml, /^work: directory$/m); assert.doesNotMatch(yaml, /^team:/m, 'okf 4.0.2: no okf team'); assert.match(yaml, /^knowledge: none$/m);
     assert.match(yaml, new RegExp(`^  ${cap.replace('.', '\\.')}: \\{ from: here \\}$`, 'm'));
     assert.doesNotMatch(yaml, /^tasks: none$/m, 'the workspace tasks slot still applies (read-only use)');
     assert.ok(fs.statSync(join(PKG, 'souls', name, 'AGENTS.md')).isFile());
@@ -111,7 +111,7 @@ test('harvest-review template: repo required, whitelisted fields only, plan §2.
   assert.doesNotMatch(JSON.stringify(template.definition.spawn), /\{(title|body|author|labels)\}/);
   const def = instantiate(template, { repo: 'github.com/acme/knowledge' });
   assert.deepEqual(def.on, { source: 'github.pull_request', repo: 'github.com/acme/knowledge', events: ['opened', 'reopened', 'ready_for_review'], labels: ['okf-harvest'], base: 'main', poll: '2m' });
-  assert.deepEqual(def.spawn, { soul: 'oats.okf/knowledge-maintainer', purpose: 'review-pr-{number}', task: template.definition.spawn.task, teams: ['okf'], harness: 'claude', model: 'opus' });
+  assert.deepEqual(def.spawn, { soul: 'oats.okf/knowledge-maintainer', purpose: 'review-pr-{number}', task: template.definition.spawn.task, harness: 'claude', model: 'opus' });
   assert.deepEqual(def.concurrency, { max: 2, perKey: 1 });
   assert.equal(def.kind, 'trigger'); assert.match(def.id, /^[a-z0-9-]{1,40}$/);
   const purpose = render(def.spawn.purpose, { number: 99999 });
@@ -315,7 +315,7 @@ test('okf-maintenance review-context --checkout maps nodes to paths and flags ch
 test('okf-maintenance notify-harvester composes the C4 message to the provenance harvester', () => {
   const body = harvestPr(sourceFixture(), runFixture()).body;
   const m = maintCmd.notifyHarvester({ pr: 'https://github.com/acme/knowledge/pull/7', state: 'merged' }, {}, { view: () => prFixture(body) });
-  assert.deepEqual([m.to, m.team, m.subject], ['okf-harvester-2222', 'okf', 'okf: merged https://github.com/acme/knowledge/pull/7']);
+  assert.deepEqual([m.to, m.subject], ['okf-harvester-2222', 'okf: merged https://github.com/acme/knowledge/pull/7']); assert.equal(m.team, undefined, 'okf 4.0.2: no okf team');
   assert.match(m.body, /harvest-status/);
   assert.throws(() => maintCmd.notifyHarvester({ pr: 'https://github.com/acme/knowledge/pull/7', state: 'approve' }, {}, { view: () => prFixture(body) }), { code: 'E_USAGE' });
   assert.throws(() => maintCmd.notifyHarvester({ pr: 'https://github.com/acme/knowledge/pull/7', state: 'closed' }, {}, { view: () => prFixture('none') }), { code: 'E_PROVENANCE' });
@@ -338,7 +338,8 @@ test('the working-soul inject teaches the work mode and names both okf skills; r
   const setup = fs.readFileSync(join(MAINT, 'skills/okf-trigger-setup/SKILL.md'), 'utf8');
   assert.ok(setup.indexOf('## 4. Declare it in the workspace (the default)') < setup.indexOf('## 5. Or add it locally'), 'the workspace file first (plan §2.3a)');
   for (const needle of [/oats-triggers\/okf-harvest-review\.yaml/, /^kind: oats-trigger$/m, /^schemaVersion: 1$/m, /\*\.oats-trigger\.yaml/, /^from: oats\.okf:harvest-review$/m, /^set: \{ repo: github\.com\//m, /^runsOn: /m, /^owner: github\.com\//m, /assigned-elsewhere/, /owner-mismatch/, /automations\.disabled/,
-    /oats trigger add --from oats\.okf:harvest-review --set repo=/, /oats trigger test/, /oats\.aweb 1\.15\.0 or later/, /okf: \{ team: aweb:<your-org>\.okf \}/, /self-approval/i, /--jq \.permissions/]) assert.match(setup, needle);
+    /oats trigger add --from oats\.okf:harvest-review --set repo=/, /oats trigger test/, /there is no okf team to\s+declare or map/, /self-approval/i, /--jq \.permissions/]) assert.match(setup, needle);
+  assert.doesNotMatch(setup, /byTeam|join=okf|teams: \[okf\]/, 'okf 4.0.2: no okf team to map');
 });
 
 // okf 4.0.1 #3: ownership comes from the ACCEPTED okf-base.json, never the PR body or head.
