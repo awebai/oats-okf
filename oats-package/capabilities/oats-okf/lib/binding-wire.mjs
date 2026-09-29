@@ -327,17 +327,23 @@ function readinessRuntime(settings,env=process.env) {
 const shortOid=oid=>String(oid||'').slice(0,12);
 const firstLine=text=>String(text||'').split(/\r?\n/).map(s=>s.trim()).find(Boolean) || 'unknown error';
 const PROBE_OUTPUT_LIMIT=64*1024;
+function killGroup(child,signal='SIGKILL') {
+  if(!child.pid) return;
+  try { process.kill(-child.pid,signal); }
+  catch { try { child.kill(signal); } catch { /* already gone */ } }
+}
 function lsRemote(base) {
   return new Promise(resolveProbe=>{
     const args=['--no-replace-objects','-c','core.hooksPath=/dev/null','-c','protocol.ext.allow=never','ls-remote','--exit-code','--',base.repository,`refs/heads/${base.acceptedBranch}`];
-    const child=spawn('git',args,{env:gitEnv(),stdio:['ignore','pipe','pipe']});
+    const env={...gitEnv(),GIT_TERMINAL_PROMPT:'0',GIT_SSH_COMMAND:'ssh -oBatchMode=yes -oConnectTimeout=5'};
+    const child=spawn('git',args,{env,stdio:['ignore','pipe','pipe'],detached:true});
     let stdout='',stderr='',settled=false;
-    const finish=result=>{if(settled) return;settled=true;clearTimeout(timer);resolveProbe(result);};
-    const timer=setTimeout(()=>{child.kill('SIGKILL');finish({ok:false,error:'timed out'});},10000);
+    const finish=result=>{if(settled) return;settled=true;clearTimeout(timer);child.stdout?.destroy();child.stderr?.destroy();resolveProbe(result);};
+    const timer=setTimeout(()=>{killGroup(child);finish({ok:false,error:'timed out'});},10000);
     child.stdout.setEncoding('utf8');child.stderr.setEncoding('utf8');
     const collect=(which,chunk)=>{
       if(settled) return;
-      if(Buffer.byteLength(stdout)+Buffer.byteLength(stderr)+Buffer.byteLength(chunk)>PROBE_OUTPUT_LIMIT) {child.kill('SIGKILL');finish({ok:false,error:'git ls-remote output exceeded 64 KiB'});return;}
+      if(Buffer.byteLength(stdout)+Buffer.byteLength(stderr)+Buffer.byteLength(chunk)>PROBE_OUTPUT_LIMIT) {killGroup(child);finish({ok:false,error:'git ls-remote output exceeded 64 KiB'});return;}
       if(which==='stdout') stdout+=chunk; else stderr+=chunk;
     };
     child.stdout.on('data',chunk=>collect('stdout',chunk));child.stderr.on('data',chunk=>collect('stderr',chunk));
@@ -353,7 +359,8 @@ function lsRemote(base) {
   });
 }
 function checkError(error,stage) {
-  if(error.code==='E_COMMAND') return {status:'needs-configuration',problem:problem('needs-configuration','runtime:command-missing')};
+  if(error.code==='E_COMMAND' && stage==='runtime') return {status:'needs-configuration',problem:problem('needs-configuration','runtime:command-missing')};
+  if(error.code==='E_COMMAND') return {status:'unavailable',problem:problem('provider-unavailable')};
   if(error.code==='E_OWNER') return {status:'needs-configuration',problem:problem('provider-not-qualified','base:owner-unmet')};
   if(error.code==='E_CONFIRM') return {status:'needs-configuration',problem:problem('provider-not-qualified','base:source-mismatch')};
   if(stage==='runtime') return {status:'needs-configuration',problem:problem('needs-configuration','runtime:not-qualified')};
@@ -395,7 +402,7 @@ async function checkPhase(req) {
     const commit=acceptedCommit(cache,base);
     const ctx={alias,base,bindings,kind:'git',cache,commit,receipt:{base:alias,id:base.id,kind:'git',commit,fetchedAt:state.fetchedAt,stale:!!state.error,...(state.error?{reason:state.error}:{})}};
     try {
-      const v=verdict(ctx,{fetchMissing:false});
+      const v=verdict(ctx,{fetchMissing:false,saveResult:false});
       if(v.ok) accepted[alias]={nodes:v.nodes};
       else problems.push(problem('provider-not-qualified','base:not-validated'));
     } catch(error) {

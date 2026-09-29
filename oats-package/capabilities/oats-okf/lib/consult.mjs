@@ -3,9 +3,9 @@
 // partial clone per Git base (blobs arrive on first read) under the bindings'
 // stateDir; directory bases are read in place under their cooperative lock.
 import { randomUUID } from 'node:crypto';
-import { hostname } from 'node:os';
+import { hostname, tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
-import { fs, join, dirname, resolve, safePath, readJSON, save, digest, tree, withLock, fail, syncDir, identifier, relPath, within, displayRepo } from './io.mjs';
+import { fs, join, dirname, resolve, safePath, readJSON, save, digest, tree, withLock, fail, syncDir, identifier, relPath, within, displayRepo, hash } from './io.mjs';
 import { noGit, gitTimeoutMs, consultMaxAgeMs, splitRef, resolveNodes } from './config.mjs';
 import { git, gitEnv, validateBase, baseLock, journalPath, preflightLocalRepository, requireNotShallow, verifyRemote, unavailable } from './stores.mjs';
 
@@ -269,15 +269,16 @@ const VALIDATION_CODES = new Set(['E_VALIDATION', 'E_BASE', 'E_PATH', 'E_ID', 'E
 /** Whether the accepted state is a valid OKF base. Git verdicts are cached per
  *  commit inside the host cache; computing one materializes the base root into
  *  a transient host scratch that is removed before returning. */
-export function verdict(ctx, { fetchMissing = true } = {}) {
+function validationFile(ctx) { return join(ctx.cache, 'okf-validation', `${ctx.commit}-${hash({ root: ctx.base.root }).slice(0, 16)}.json`); }
+export function verdict(ctx, { fetchMissing = true, saveResult = true } = {}) {
   const judge = run => {
     try { const v = run(); return { version: 1, ok: true, digest: v.digest, nodes: v.meta.nodes }; }
     catch (e) { if (!VALIDATION_CODES.has(e.code)) throw e; return { version: 1, ok: false, error: { code: e.code, message: e.message } }; }
   };
   if (ctx.kind === 'directory') return judge(() => validateBase(ctx.base.path, ctx.base));
-  const file = join(ctx.cache, 'okf-validation', `${ctx.commit}.json`);
-  if (fs.existsSync(file)) { const cached = readJSON(file); if (cached?.version === 1) return cached; }
-  const scratch = fs.mkdtempSync(join(dirname(ctx.cache), '.validate-'));
+  const file = validationFile(ctx);
+  if (fs.existsSync(file)) { const cached = readJSON(file); if (cached?.version === 1 && cached.commit === ctx.commit && cached.root === ctx.base.root) return cached; }
+  const scratch = fs.mkdtempSync(join(saveResult ? dirname(ctx.cache) : fs.realpathSync(tmpdir()), saveResult ? '.validate-' : 'okf-validate-'));
   try {
     const result = judge(() => {
       const rows = lsTree(ctx, '', { recursive: true });
@@ -301,7 +302,7 @@ export function verdict(ctx, { fetchMissing = true } = {}) {
       }
       return validateBase(scratch, ctx.base);
     });
-    save(file, { ...result, commit: ctx.commit, at: new Date().toISOString() });
+    if (saveResult) save(file, { ...result, commit: ctx.commit, root: ctx.base.root, at: new Date().toISOString() });
     return result;
   } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
 }

@@ -132,8 +132,9 @@ function validateHarvestOffRefs(bindings,decl,primed={}) {
     if(!v?.ok) fail(v?.error?.code || 'E_VALIDATION',`base "${alias}" at ${short(v?.receipt || {base:alias,kind:'git',commit:'unknown'})}: ${v?.error?.message || 'base is not a validated knowledge tree'}`);
     accepted[alias]={nodes:v.nodes};resolvedAliases.add(alias);
   }
-  const resolved=ref=>resolvedAliases.has(ref.split('/')[0]);
-  resolveNodes({...decl,owns:decl.owns.filter(resolved),reads:decl.reads.filter(resolved)},bindings,accepted);
+  const unprimedGit=new Set(Object.entries(bindings.bases).filter(([alias,base])=>base.kind==='git' && !Object.hasOwn(primed,alias)).map(([alias])=>alias));
+  const notSkipped=ref=>!unprimedGit.has(ref.split('/')[0]);
+  resolveNodes({...decl,owns:decl.owns.filter(notSkipped),reads:decl.reads.filter(notSkipped)},bindings,accepted);
 }
 function refsByAlias(decl) {
   const out={};

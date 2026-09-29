@@ -196,6 +196,14 @@ test('harvest-off spawn still rejects primed Git declarations that reference mis
   assert.equal(fs.existsSync(join(f.home, '.okf-instance.json')), false);
 });
 
+test('harvest-off spawn still rejects declarations that reference an unbound alias', t => {
+  const f = fixture(t, { settings: { harvest: 'off' } });
+  save(join(f.soul, 'okf.json'), { version: 1, owner: 'owner-1', owns: ['project/expert'], reads: ['ghost/node'] });
+  const r = f.cli('spawn', [], OFF);
+  assert.equal(r.status, 1, r.stdout + r.stderr); assert.match(r.out.warning, /oats-okf E_CONFIG: unresolved node: ghost\/node/);
+  assert.equal(fs.existsSync(join(f.home, '.okf-instance.json')), false);
+});
+
 test('4.0.3 harvest off: a home spawned before 4.0.3 (record without a declaration) consults through the kernel\'s OATS_SOUL', t => {
   const f = fixture(t, { settings: { harvest: 'off' } });
   assert.equal(f.cli('spawn', [], OFF).status, 0);
@@ -340,7 +348,9 @@ test('Git base: links report missing targets; bases caches the validation verdic
   assert.match(links[1].refused, /escapes the base root/);
   const text = f.cli('links', ['--base', 'project', '/expert/decisions/retry-policy.md']).stdout; assert.match(text, /MISSING .*jitter\.md/); assert.match(text, /REFUSED/);
   assert.equal(f.json('bases').result.bases[0].validated.ok, false, 'a dangling link fails strict validation');
-  assert.ok(fs.existsSync(join(f.cache, 'okf-validation', `${head}.json`)), 'verdict cached per accepted commit');
+  const validationFiles = fs.readdirSync(join(f.cache, 'okf-validation')).filter(name => name.startsWith(`${head}-`));
+  assert.equal(validationFiles.length, 1, 'verdict cached per accepted commit and root');
+  assert.equal(readJSON(join(f.cache, 'okf-validation', validationFiles[0])).root, f.base.root);
   assert.deepEqual(fs.readdirSync(join(f.bindings.stateDir, 'cache')).filter(n => n.startsWith('.validate-')), [], 'validation scratch removed');
 });
 

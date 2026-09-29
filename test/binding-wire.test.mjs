@@ -5,7 +5,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import net from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { bindingChoiceKey, storeChoiceKey } from '../oats-package/capabilities/oats-okf/lib/portable-binding.mjs';
 import { CHECK_REASONS, loadInvocationKnowledgeBinding, parseBindingJson, sourceRuntimeFromKnowledgeBinding } from '../oats-package/capabilities/oats-okf/lib/binding-wire.mjs';
@@ -27,6 +28,12 @@ const contract='oats.okf.locations';
 const origin=(kind,pointer)=>({kind,document:{kind:'source',source:'git:https://example.test/source.git',revision:'a'.repeat(40),path:'soul.yaml',integrity:{format:'oats.bytes.v1',value:`sha256-${'b'.repeat(64)}`}},pointer});
 const locator=(id,path)=>({id,kind:'directory',path:`path:${path}`});
 const canonical=value=>value===null || typeof value!=='object'?JSON.stringify(value):Array.isArray(value)?`[${value.map(canonical).join(',')}]`:`{${Object.keys(value).sort().map(key=>`${JSON.stringify(key)}:${canonical(value[key])}`).join(',')}}`;
+const stateSnapshot=root=>{
+  if(!fs.existsSync(root)) return null;
+  const rows=[];
+  const walk=(dir,rel='')=>{for(const name of fs.readdirSync(dir).sort()) {const path=join(dir,name),key=rel?`${rel}/${name}`:name,stat=fs.lstatSync(path);rows.push([key,stat.isDirectory()?'dir':stat.isFile()?'file':'other',stat.mode,stat.size,stat.mtimeMs,stat.isFile()?fs.readFileSync(path).toString('base64'):null]);if(stat.isDirectory()) walk(path,key);}};
+  walk(root);return rows;
+};
 const call=(phase,request,env={})=>{
   const bytes=Buffer.isBuffer(request)?request:typeof request==='string'?request:JSON.stringify(request);
   const result=spawnSync(process.execPath,[CLI,phase],{input:bytes,encoding:Buffer.isBuffer(bytes)?undefined:'utf8',maxBuffer:2*1024*1024,env:{...process.env,...env}});
@@ -116,7 +123,7 @@ test('readiness skips harvest runtime qualification when harvest is off and name
   assert.deepEqual(on.response.result,{status:'needs-configuration',problems:[{code:'needs-configuration',message:'harvest runtime is not qualified: install/configure the selected harvest runtime or set harvest off'}]});
 });
 
-test('Git readiness uses only the stateDir consult cache for cold, warm, stale and unreachable bases',t=>{
+test('Git readiness uses only the stateDir consult cache for cold, warm, stale and unreachable bases',async t=>{
   const git=(cwd,args)=>{const result=spawnSync('git',['-C',cwd,...args],{encoding:'utf8'});assert.equal(result.status,0,result.stderr);return result.stdout.trim();};
   const commit=(cwd,msg)=>{git(cwd,['add','-A']);git(cwd,['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm',msg]);return git(cwd,['rev-parse','HEAD']);};
   const prepareGit=()=>{
@@ -140,6 +147,13 @@ test('Git readiness uses only the stateDir consult cache for cold, warm, stale a
   const start=Date.now(),checked=call('check',warm.req,warm.env),elapsed=Date.now()-start;
   assert.deepEqual(checked.response.result,{status:'ready',problems:[]});assert.ok(elapsed<5000,`warm readiness took ${elapsed}ms`);
   assert.deepEqual({head:git(cache,['rev-parse','refs/heads/main']),state:fs.statSync(state).mtimeMs},before,'warm readiness does not fetch or update cache refs/state');
+  fs.rmSync(join(cache,'okf-validation'),{recursive:true,force:true});
+  const noValidationBefore=stateSnapshot(warm.f.stateDir),noValidationChecked=call('check',warm.req,warm.env),noValidationAfter=stateSnapshot(warm.f.stateDir);
+  assert.deepEqual(noValidationChecked.response.result,{status:'ready',problems:[]});
+  assert.deepEqual(noValidationAfter,noValidationBefore,'readiness computes uncached validation without writing stateDir');
+  const reboundDoc=structuredClone(warm.doc);reboundDoc.bases['reference-base'].root='missing-root';fs.writeFileSync(warm.f.descriptorFile,JSON.stringify(reboundDoc));
+  const rebound=call('check',warm.req,warm.env);assert.notEqual(rebound.response.result.status,'ready','cached verdicts are scoped by root, not only commit');
+  fs.writeFileSync(warm.f.descriptorFile,JSON.stringify(warm.doc));
   fs.writeFileSync(join(warm.f.readPath,'reference','new.md'),'---\ntype: Note\ntitle: New\ndescription: New.\n---\n\nNew.\n');
   const old=warm.head,newHead=commit(warm.f.readPath,'moved');
   const stale=call('check',warm.req,warm.env);
@@ -149,14 +163,15 @@ test('Git readiness uses only the stateDir consult cache for cold, warm, stale a
   const unreachableWarm=call('check',warm.req,warm.env);
   assert.deepEqual(unreachableWarm.response.result,{status:'ready',problems:[],warnings:[{code:'base-unreachable',message:`okf base reference-base: ${warm.f.readPath} unreachable; readers serve the cached ${old.slice(0,12)} fetched ${JSON.parse(fs.readFileSync(state,'utf8')).fetchedAt}`} ]});
 
-  const unvalidated=prepareGit(),unvalidatedBindings=validateBindings(unvalidated.doc,unvalidated.f.descriptorFile);
-  let unvalidatedCommit;withBase(unvalidatedBindings,'reference-base',{},ctx=>{unvalidatedCommit=ctx.commit;return ctx;});
-  const unvalidatedChecked=call('check',unvalidated.req,unvalidated.env);
-  assert.deepEqual(unvalidatedChecked.response.result,{status:'ready',problems:[],warnings:[{code:'cache-not-validated',message:`okf base reference-base: cached ${unvalidatedCommit.slice(0,12)} not yet validated on this host: run \`oats okf bases\``}]});
-
   const unavailable=prepareGit();fs.rmSync(unavailable.f.stateDir,{recursive:true,force:true});fs.rmSync(unavailable.f.readPath,{recursive:true,force:true});
   const coldMissing=call('check',unavailable.req,unavailable.env);
   assert.equal(coldMissing.response.result.status,'unavailable');assert.equal(coldMissing.response.result.problems[0].code,'provider-unavailable');assert.match(coldMissing.response.result.problems[0].message,/okf base reference-base: .* main unreachable/);
+
+  const hung=prepareGit(),sockets=new Set(),server=net.createServer(socket=>{sockets.add(socket);socket.on('close',()=>sockets.delete(socket));});
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>{for(const socket of sockets) socket.destroy();server.close();});
+  hung.doc.bases['reference-base'].repository=`https://127.0.0.1:${server.address().port}/repo.git`;fs.writeFileSync(hung.f.descriptorFile,JSON.stringify(hung.doc));fs.rmSync(hung.f.stateDir,{recursive:true,force:true});
+  const hungResult=await new Promise(resolve=>{const child=spawn(process.execPath,[CLI,'check'],{env:{...process.env,...hung.env}});let stdout='',stderr='',done=false;const finish=result=>{if(done)return;done=true;clearTimeout(timer);resolve(result);};const timer=setTimeout(()=>{child.kill('SIGKILL');finish({timedOut:true,stdout,stderr});},15000);child.stdin.end(JSON.stringify(hung.req));child.stdout.setEncoding('utf8');child.stderr.setEncoding('utf8');child.stdout.on('data',c=>stdout+=c);child.stderr.on('data',c=>stderr+=c);child.on('close',status=>finish({status,stdout,stderr}));});
+  assert.equal(hungResult.timedOut,undefined,`readiness check hung: ${hungResult.stderr}`);assert.equal(hungResult.status,0,hungResult.stderr);assert.equal(JSON.parse(hungResult.stdout).result.status,'unavailable');
 
   const invalid=prepareGit();fs.rmSync(join(invalid.f.readPath,'reference','index.md'));
   commit(invalid.f.readPath,'invalid');const invalidBindings=validateBindings(invalid.doc,invalid.f.descriptorFile);withBase(invalidBindings,'reference-base',{},ctx=>verdict(ctx));
