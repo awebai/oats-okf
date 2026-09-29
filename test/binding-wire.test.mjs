@@ -182,6 +182,12 @@ test('Git readiness uses only the stateDir consult cache for cold, warm, stale a
   const fakeGit=join(bin,'git');fs.writeFileSync(fakeGit,`#!/usr/bin/env node\nprocess.stdout.write('x'.repeat(70*1024));\n`);fs.chmodSync(fakeGit,0o755);
   const noisyChecked=call('check',noisy.req,{...noisy.env,PATH:`${bin}:${process.env.PATH}`});
   assert.equal(noisyChecked.response.result.status,'unavailable');assert.match(noisyChecked.response.result.problems[0].message,/output exceeded 64 KiB/);
+
+  const sshEnv=prepareGit(),sshMarker=join(sshEnv.f.root,'ssh-invoked.txt'),sshScript=join(sshEnv.f.root,'ssh-probe.sh');fs.rmSync(sshEnv.f.stateDir,{recursive:true,force:true});
+  sshEnv.doc.bases['reference-base'].repository='git@example.invalid:x/y.git';fs.writeFileSync(sshEnv.f.descriptorFile,JSON.stringify(sshEnv.doc));
+  fs.writeFileSync(sshScript,`#!/bin/sh\nprintf '%s\\n' "$@" > ${JSON.stringify(sshMarker)}\nexit 1\n`);fs.chmodSync(sshScript,0o755);
+  const sshChecked=call('check',sshEnv.req,{...sshEnv.env,GIT_SSH_COMMAND:sshScript});
+  assert.equal(sshChecked.response.result.status,'unavailable');assert.equal(fs.existsSync(sshMarker),true,'readiness preserves operator GIT_SSH_COMMAND for ssh probes');
 });
 
 test('normalize preserves separate authority candidates and bind emits the captured runtime payload',t=>{

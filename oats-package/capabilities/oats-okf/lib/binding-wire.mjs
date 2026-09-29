@@ -335,7 +335,7 @@ function killGroup(child,signal='SIGKILL') {
 function lsRemote(base) {
   return new Promise(resolveProbe=>{
     const args=['--no-replace-objects','-c','core.hooksPath=/dev/null','-c','protocol.ext.allow=never','ls-remote','--exit-code','--',base.repository,`refs/heads/${base.acceptedBranch}`];
-    const env={...gitEnv(),GIT_TERMINAL_PROMPT:'0',GIT_SSH_COMMAND:'ssh -oBatchMode=yes -oConnectTimeout=5'};
+    const env={...gitEnv(),...(process.env.GIT_SSH_COMMAND?{GIT_SSH_COMMAND:process.env.GIT_SSH_COMMAND}:{}),GIT_TERMINAL_PROMPT:'0'};
     const child=spawn('git',args,{env,stdio:['ignore','pipe','pipe'],detached:true});
     let stdout='',stderr='',settled=false;
     const finish=result=>{if(settled) return;settled=true;clearTimeout(timer);child.stdout?.destroy();child.stderr?.destroy();resolveProbe(result);};
