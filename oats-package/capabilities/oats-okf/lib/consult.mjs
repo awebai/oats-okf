@@ -42,7 +42,7 @@ const parent = p => p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '';
 const shown = p => '/' + p;
 
 // ---------------------------------------------------------------- git cache
-const cacheDir = (bindings, base) => join(bindings.stateDir, 'cache', `${identifier(base.id)}.git`);
+export const cacheDir = (bindings, base) => join(bindings.stateDir, 'cache', `${identifier(base.id)}.git`);
 const cacheLock = (bindings, base) => join(bindings.stateDir, 'cache', `${base.id}.lock`);
 const stateFile = cache => join(cache, 'okf-consult.json');
 function gitRun(cwd, args, { input, timeout = LOCAL_GIT_MS, maxBuffer = TEXT_BYTES, encoding = 'utf8' } = {}) {
@@ -50,14 +50,14 @@ function gitRun(cwd, args, { input, timeout = LOCAL_GIT_MS, maxBuffer = TEXT_BYT
     { cwd, env: gitEnv(), input, timeout, maxBuffer, encoding });
 }
 const gitError = r => Object.assign(new Error(`git failed: ${r.error?.message || r.stderr || `exit ${r.status}`}`), { code: r.error?.code === 'ETIMEDOUT' ? 'ETIMEDOUT' : 'E_COMMAND' });
-function acceptedCommit(cache, base) {
+export function acceptedCommit(cache, base) {
   const r = gitRun(cache, ['rev-parse', '--verify', '--quiet', `refs/heads/${base.acceptedBranch}^{commit}`]);
   const oid = r.status === 0 ? r.stdout.trim() : '';
   return /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(oid) ? oid : null;
 }
 /** The cache's bookkeeping, or null when the cache is absent or belongs to a
  *  different repository/branch (then it is rebuilt, never reinterpreted). */
-function usableCache(cache, base) {
+export function usableCache(cache, base) {
   if (!fs.existsSync(cache)) return null;
   safePath(cache);
   let state;
@@ -269,7 +269,7 @@ const VALIDATION_CODES = new Set(['E_VALIDATION', 'E_BASE', 'E_PATH', 'E_ID', 'E
 /** Whether the accepted state is a valid OKF base. Git verdicts are cached per
  *  commit inside the host cache; computing one materializes the base root into
  *  a transient host scratch that is removed before returning. */
-export function verdict(ctx) {
+export function verdict(ctx, { fetchMissing = true } = {}) {
   const judge = run => {
     try { const v = run(); return { version: 1, ok: true, digest: v.digest, nodes: v.meta.nodes }; }
     catch (e) { if (!VALIDATION_CODES.has(e.code)) throw e; return { version: 1, ok: false, error: { code: e.code, message: e.message } }; }
@@ -287,7 +287,12 @@ export function verdict(ctx) {
         if (!['100644', '100755'].includes(r.mode) || r.type !== 'blob') fail('E_PATH', 'symlink or submodule in knowledge base is not allowed');
         r.target = containedTarget(scratch, r.name);
       }
-      prefetch(ctx, '');
+      if (fetchMissing) prefetch(ctx, '');
+      else {
+        const missing = gitRun(ctx.cache, ['rev-list', '--objects', '--missing=print', `${ctx.commit}:${repoPath(ctx, '')}`]);
+        if (missing.status !== 0) throw gitError(missing);
+        if (missing.stdout.split('\n').some(line => line.startsWith('?'))) unavailable(ctx.base, ctx.alias, 'read', new Error('cached validation needs missing objects'));
+      }
       for (const r of rows) {
         const target = r.target; fs.mkdirSync(dirname(target), { recursive: true });
         const fd = fs.openSync(target, 'wx', 0o600);

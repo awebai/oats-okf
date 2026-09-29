@@ -152,7 +152,7 @@ test('exported payload version, floor, required hooks and complete command inven
   assert.equal(fs.existsSync(join(CAP,'agents')),false,'the harvester is the package soul oats.okf/knowledge-harvester, not a capability agent');
   assert.ok(fs.statSync(join(ROOT,'oats-package/souls/knowledge-harvester/AGENTS.md')).isFile(),'the harvester soul keeps its one canonical instruction file');
   const m=readJSON(join(CAP,'oats.json')),distribution=readJSON(join(ROOT,'oats-package/oats-package.json'));
-  for(const manifest of [readJSON(join(ROOT,'package.json')),distribution,m])assert.equal(manifest.version,'4.0.4');
+  for(const manifest of [readJSON(join(ROOT,'package.json')),distribution,m])assert.equal(manifest.version,'4.0.5');
   for(const manifest of [distribution,m])assert.equal(manifest.compatibility.oats,'>=0.29.0');
   assert.equal(m.hooks.spawn.required,true);
   for(const c of ['harvest','inspect','setup','run-source','complete','retry','migrate','read','refresh','init','bases','index','cat','ls','links','search','harvest-status']) assert.ok(m.commands[c]);
