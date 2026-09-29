@@ -43,7 +43,7 @@ const shown = p => '/' + p;
 
 // ---------------------------------------------------------------- git cache
 export const cacheDir = (bindings, base) => join(bindings.stateDir, 'cache', `${identifier(base.id)}.git`);
-const cacheLock = (bindings, base) => join(bindings.stateDir, 'cache', `${base.id}.lock`);
+export const cacheLock = (bindings, base) => join(bindings.stateDir, 'cache', `${base.id}.lock`);
 const stateFile = cache => join(cache, 'okf-consult.json');
 function gitRun(cwd, args, { input, timeout = LOCAL_GIT_MS, maxBuffer = TEXT_BYTES, encoding = 'utf8' } = {}) {
   return spawnSync('git', ['--no-replace-objects', '--literal-pathspecs', '-c', 'core.hooksPath=/dev/null', '-c', 'protocol.ext.allow=never', '-C', cwd, ...args],
@@ -140,7 +140,7 @@ function resolveGit(bindings, alias, base, { fresh = false } = {}) {
  *  owner process on this host is gone is released (an interrupted clone is
  *  built aside and never renamed in; an interrupted fetch leaves refs whole).
  *  A live, foreign-host or unreadable owner is always waited for. */
-function clearDeadCacheLock(lock) {
+export function clearDeadCacheLock(lock) {
   let owner; try { owner = readJSON(join(lock, 'owner.json')); } catch { return; }
   if (owner?.host !== hostname() || !Number.isInteger(owner.pid)) return;
   try { process.kill(owner.pid, 0); } catch (e) {

@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { fs, join, dirname } from './io.mjs';
-import { withBase, verdict, cacheDir, short } from './consult.mjs';
+import { fs, join, dirname, withLock } from './io.mjs';
+import { withBase, verdict, cacheDir, cacheLock, clearDeadCacheLock } from './consult.mjs';
 
 const WORKER_TIMEOUT_MS = 20000;
 const OUTPUT_LIMIT = 64 * 1024;
@@ -11,10 +11,15 @@ const firstLine = text => String(text || 'unknown error').split(/\r?\n/).map(s =
 export function cleanupTempCacheDirs(bindings, alias) {
   const base = bindings.bases[alias];
   if (!base || base.kind !== 'git') return;
-  const dir = dirname(cacheDir(bindings, base));
+  const dir = dirname(cacheDir(bindings, base)), lock = cacheLock(bindings, base);
   if (!fs.existsSync(dir)) return;
-  const prefix = `.${base.id}.git.tmp-`;
-  for (const entry of fs.readdirSync(dir)) if (entry.startsWith(prefix)) fs.rmSync(join(dir, entry), { recursive: true, force: true });
+  clearDeadCacheLock(lock);
+  try {
+    withLock(lock, () => {
+      const prefix = `.${base.id}.git.tmp-`;
+      for (const entry of fs.readdirSync(dir)) if (entry.startsWith(prefix)) fs.rmSync(join(dir, entry), { recursive: true, force: true });
+    }, { waitMs: 0 });
+  } catch (error) { if (error.code !== 'E_LOCKED') throw error; }
 }
 
 function killGroup(child, signal = 'SIGKILL') {
@@ -26,7 +31,7 @@ function killGroup(child, signal = 'SIGKILL') {
 export function runWorker(bindings, alias, refs = null) {
   return withBase(bindings, alias, {}, ctx => {
     const v = verdict(ctx), wanted = Array.isArray(refs?.[alias]) ? refs[alias] : null;
-    const nodes = v.ok && wanted ? Object.fromEntries(wanted.filter(node => Object.hasOwn(v.nodes, node)).map(node => [node, v.nodes[node]])) : v.nodes;
+    const nodes = v.ok ? Object.fromEntries((wanted || []).filter(node => Object.hasOwn(v.nodes, node)).map(node => [node, v.nodes[node]])) : v.nodes;
     return v.ok
       ? { alias, primed: true, ok: true, receipt: ctx.receipt, digest: v.digest, nodes }
       : { alias, primed: true, ok: false, receipt: ctx.receipt, error: v.error };

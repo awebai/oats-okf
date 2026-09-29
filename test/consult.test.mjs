@@ -16,6 +16,7 @@ const { register, homeSource } = await mod('sources');
 const { initBase } = await mod('migration');
 const { resolveBasePath, withBase, cat: catCmd, frontmatter, markdownLinks } = await mod('consult');
 const { handleBindingRequest } = await mod('binding-wire');
+const { runSupervisor } = await mod('prime-bases');
 const { baseLock, journalPath } = await mod('stores');
 
 const put = (p, text) => { fs.mkdirSync(dirname(p), { recursive: true }); fs.writeFileSync(p, text); };
@@ -174,6 +175,17 @@ test('harvest-off spawn bounds unreachable Git priming and leaves no worker/cach
   assert.equal(sockets.size, 0, 'no hung git client remains connected to the black-hole listener');
   const leaked = processMatches([new RegExp(`git.*127\\.0\\.0\\.1:${port}`), /prime-bases\.mjs --worker/]).filter(line => !beforeProcesses.has(line));
   assert.deepEqual(leaked, [], 'no new git or worker process remains after bounded priming');
+});
+
+test('bounded priming cleanup leaves a live owner\'s temp clone and lock alone', async t => {
+  const f = fixture(t, { settings: { harvest: 'off' } });
+  const cacheRoot = join(f.bindings.stateDir, 'cache'), lock = join(cacheRoot, 'base-1.lock'), temp = join(cacheRoot, '.base-1.git.tmp-live');
+  fs.mkdirSync(lock, { recursive: true }); fs.mkdirSync(temp, { recursive: true });
+  save(join(lock, 'owner.json'), { token: 'live-owner', pid: process.pid, host: hostname() });
+  const rows = await runSupervisor({ bindings: f.bindings, aliases: ['project'], refs: { project: ['expert'] }, timeoutMs: 100 });
+  assert.deepEqual(rows, [{ alias: 'project', reason: 'timed out' }]);
+  assert.equal(fs.existsSync(lock), true, 'live owner lock survives another worker timeout');
+  assert.equal(fs.existsSync(temp), true, 'live owner temp clone survives another worker timeout');
 });
 
 test('harvest-off spawn still rejects primed Git declarations that reference missing nodes', t => {
