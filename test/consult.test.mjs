@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import { tmpdir, hostname } from 'node:os';
+import net from 'node:net';
 import { join, dirname, resolve } from 'node:path';
 import { execFileSync, spawnSync, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -14,6 +15,8 @@ const { save, readJSON } = await mod('io');
 const { register, homeSource } = await mod('sources');
 const { initBase } = await mod('migration');
 const { resolveBasePath, withBase, cat: catCmd, frontmatter, markdownLinks } = await mod('consult');
+const { handleBindingRequest } = await mod('binding-wire');
+const { runSupervisor } = await mod('prime-bases');
 const { baseLock, journalPath } = await mod('stores');
 
 const put = (p, text) => { fs.mkdirSync(dirname(p), { recursive: true }); fs.writeFileSync(p, text); };
@@ -76,6 +79,9 @@ else {console.error('unexpected fixture call '+JSON.stringify(a));process.exit(9
   return { dir, home, soul, bindings, base: bindings.bases.project, work, remote, cache, cli, json, push, missing, blob, context };
 }
 const registered = (t, opts) => { const f = fixture(t, opts); const s = register(f.home); return { ...f, s }; };
+const readiness = f => handleBindingRequest('check', { schemaVersion: 1, phase: 'check', slot: 'knowledge', capability: 'oats.okf', settings: { 'bindings-file': f.bindings.file, harvest: 'off' }, input: { context: {}, action: { kind: 'spawn' } } });
+const cacheEntries = stateDir => fs.existsSync(join(stateDir, 'cache')) ? fs.readdirSync(join(stateDir, 'cache')).sort() : [];
+const processMatches = patterns => spawnSync('ps', ['-Ao', 'pid=,command='], { encoding: 'utf8' }).stdout.split('\n').map(line => line.trim()).filter(line => patterns.some(pattern => pattern.test(line)));
 
 test('resolveBasePath: OKF link semantics and strict confinement', () => {
   assert.equal(resolveBasePath('/expert/x.md'), 'expert/x.md');
@@ -139,17 +145,65 @@ function consultsFromItsSoul(f) {
   assert.equal(inspected.source, null); assert.equal(inspected.harvest.status, 'off'); assert.match(inspected.summary, /harvest off/);
   assert.deepEqual(inspected.owns, ['project/expert']); assert.deepEqual(inspected.documents.map(d => d.label), ['Working state (STATE.md)', 'Log (log.md)']);
 }
-test('4.0.3 harvest off: a spawned home consults (bases, index, cat, ls, links, search, inspect) with no source registered', t => {
+test('4.0.3 harvest off: a spawned home consults (bases, index, cat, ls, links, search, inspect) with no source registered', async t => {
   const f = fixture(t, { settings: { harvest: 'off' } });
   const r = f.cli('spawn', [], OFF); assert.equal(r.status, 0, r.stdout + r.stderr); assert.equal(r.out.meta.harvest, 'off');
   assert.equal(fs.existsSync(join(f.home, '.okf-source.json')), false, 'still no source: harvest off registers nothing');
   assert.deepEqual(readJSON(join(f.home, '.okf-instance.json')).decl, { version: 1, owner: 'owner-1', owns: ['project/expert'], reads: ['project/peer'] });
+  assert.equal(fs.existsSync(f.cache), true, 'harvest-off spawn primes the host cache');
+  const checked = await readiness(f); assert.equal(checked.status, 'ready'); assert.equal(checked.problems.length, 0); assert.ok(!(checked.warnings || []).some(w => w.code === 'cache-not-primed'), 'next readiness is warm');
   consultsFromItsSoul(f);
   assert.deepEqual(calls(f), [], 'no schedule, capture or recall call');
   assert.equal(fs.existsSync(join(f.bindings.stateDir, 'sources')), false, 'no source descriptor, custody or status');
   const retire = f.cli('retire', [], { OATS_EVENT: 'retire' }); assert.equal(retire.status, 0, retire.stdout + retire.stderr); assert.deepEqual(retire.out.meta, { retired: true, reason: 'harvest-off' });
   assert.deepEqual(calls(f), [], 'retire takes no final capture');
 });
+test('harvest-off spawn bounds unreachable Git priming and leaves no worker/cache litter', async t => {
+  const f = fixture(t, { settings: { harvest: 'off', 'git-timeout': 1 } });
+  const sockets = new Set();
+  const server = net.createServer(socket => { sockets.add(socket); socket.on('close', () => sockets.delete(socket)); });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => { for (const socket of sockets) socket.destroy(); server.close(); });
+  const port = server.address().port, doc = readJSON(f.bindings.file), before = cacheEntries(f.bindings.stateDir);
+  const beforeProcesses = new Set(processMatches([new RegExp(`git.*127\\.0\\.0\\.1:${port}`), /prime-bases\.mjs --worker/]));
+  doc.bases.project.repository = `git://127.0.0.1:${port}/repo.git`; save(f.bindings.file, doc);
+  const started = Date.now(), r = f.cli('spawn', [], OFF), elapsed = Date.now() - started;
+  assert.equal(r.status, 0, r.stdout + r.stderr); assert.ok(elapsed < 23000, `spawn priming exceeded its bound: ${elapsed}ms`);
+  assert.match(r.out.warning, /okf base project not primed: .*; run `oats okf bases`/);
+  await new Promise(resolve => setTimeout(resolve, 250));
+  assert.deepEqual(cacheEntries(f.bindings.stateDir), before, 'failed priming leaves no cache or .tmp repository behind');
+  assert.equal(sockets.size, 0, 'no hung git client remains connected to the black-hole listener');
+  const leaked = processMatches([new RegExp(`git.*127\\.0\\.0\\.1:${port}`), /prime-bases\.mjs --worker/]).filter(line => !beforeProcesses.has(line));
+  assert.deepEqual(leaked, [], 'no new git or worker process remains after bounded priming');
+});
+
+test('bounded priming cleanup leaves a live owner\'s temp clone and lock alone', async t => {
+  const f = fixture(t, { settings: { harvest: 'off' } });
+  const cacheRoot = join(f.bindings.stateDir, 'cache'), lock = join(cacheRoot, 'base-1.lock'), temp = join(cacheRoot, '.base-1.git.tmp-live');
+  fs.mkdirSync(lock, { recursive: true }); fs.mkdirSync(temp, { recursive: true });
+  save(join(lock, 'owner.json'), { token: 'live-owner', pid: process.pid, host: hostname() });
+  const rows = await runSupervisor({ bindings: f.bindings, aliases: ['project'], refs: { project: ['expert'] }, timeoutMs: 100 });
+  assert.deepEqual(rows, [{ alias: 'project', reason: 'timed out' }]);
+  assert.equal(fs.existsSync(lock), true, 'live owner lock survives another worker timeout');
+  assert.equal(fs.existsSync(temp), true, 'live owner temp clone survives another worker timeout');
+});
+
+test('harvest-off spawn still rejects primed Git declarations that reference missing nodes', t => {
+  const f = fixture(t, { settings: { harvest: 'off' } });
+  save(join(f.soul, 'okf.json'), { version: 1, owner: 'owner-1', owns: ['project/missing'], reads: [] });
+  const r = f.cli('spawn', [], OFF);
+  assert.equal(r.status, 1, r.stdout + r.stderr); assert.match(r.out.warning, /oats-okf E_CONFIG: unresolved node: project\/missing/);
+  assert.equal(fs.existsSync(join(f.home, '.okf-instance.json')), false);
+});
+
+test('harvest-off spawn still rejects declarations that reference an unbound alias', t => {
+  const f = fixture(t, { settings: { harvest: 'off' } });
+  save(join(f.soul, 'okf.json'), { version: 1, owner: 'owner-1', owns: ['project/expert'], reads: ['ghost/node'] });
+  const r = f.cli('spawn', [], OFF);
+  assert.equal(r.status, 1, r.stdout + r.stderr); assert.match(r.out.warning, /oats-okf E_CONFIG: unresolved node: ghost\/node/);
+  assert.equal(fs.existsSync(join(f.home, '.okf-instance.json')), false);
+});
+
 test('4.0.3 harvest off: a home spawned before 4.0.3 (record without a declaration) consults through the kernel\'s OATS_SOUL', t => {
   const f = fixture(t, { settings: { harvest: 'off' } });
   assert.equal(f.cli('spawn', [], OFF).status, 0);
@@ -294,7 +348,9 @@ test('Git base: links report missing targets; bases caches the validation verdic
   assert.match(links[1].refused, /escapes the base root/);
   const text = f.cli('links', ['--base', 'project', '/expert/decisions/retry-policy.md']).stdout; assert.match(text, /MISSING .*jitter\.md/); assert.match(text, /REFUSED/);
   assert.equal(f.json('bases').result.bases[0].validated.ok, false, 'a dangling link fails strict validation');
-  assert.ok(fs.existsSync(join(f.cache, 'okf-validation', `${head}.json`)), 'verdict cached per accepted commit');
+  const validationFiles = fs.readdirSync(join(f.cache, 'okf-validation')).filter(name => name.startsWith(`${head}-`));
+  assert.equal(validationFiles.length, 1, 'verdict cached per accepted commit and root');
+  assert.equal(readJSON(join(f.cache, 'okf-validation', validationFiles[0])).root, f.base.root);
   assert.deepEqual(fs.readdirSync(join(f.bindings.stateDir, 'cache')).filter(n => n.startsWith('.validate-')), [], 'validation scratch removed');
 });
 

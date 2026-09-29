@@ -1,5 +1,14 @@
 # Changelog
 
+## 4.0.5 — 2026-09-29
+
+- Readiness checks Git bases from the consult cache in `stateDir` instead of cloning/fetching every base into scratch. A warm cache validates within the kernel readiness cap.
+- Readiness probes each accepted branch with bounded `git ls-remote`, reports stale/unreachable cached bases as warnings, and treats reachable-but-unprimed cold bases as ready with an explicit priming warning.
+- The manifest declares the new readiness warning/problem message templates.
+- Harvest-off spawn primes Git bases concurrently with a 20s per-base bound; slow or unreachable bases only add `not primed` warnings and leave no temporary cache clone behind.
+- Harvest-off spawn still fails closed for Git bases that were primed within the bound but do not satisfy the soul's declared node references, including references to unbound aliases.
+- Readiness keeps the consult cache read-only while validating, kills timed-out `ls-remote` HTTPS helpers as a process group, and scopes cached validation verdicts by both commit and base root.
+
 ## 4.0.4 — 2026-09-28
 
 - Fix `binding.check` readiness to accept the kernel-documented request (`input.context` and `input.action` only) and read the OKF provider binding from top-level `settings`.

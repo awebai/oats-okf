@@ -5,7 +5,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import net from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { bindingChoiceKey, storeChoiceKey } from '../oats-package/capabilities/oats-okf/lib/portable-binding.mjs';
 import { CHECK_REASONS, loadInvocationKnowledgeBinding, parseBindingJson, sourceRuntimeFromKnowledgeBinding } from '../oats-package/capabilities/oats-okf/lib/binding-wire.mjs';
@@ -13,21 +14,32 @@ import { bindingFingerprint, validateBindings } from '../oats-package/capabiliti
 import { initBase } from '../oats-package/capabilities/oats-okf/lib/migration.mjs';
 import { loadSource, register } from '../oats-package/capabilities/oats-okf/lib/sources.mjs';
 import { tree } from '../oats-package/capabilities/oats-okf/lib/io.mjs';
+import { verdict, withBase } from '../oats-package/capabilities/oats-okf/lib/consult.mjs';
 
 const ROOT=fileURLToPath(new URL('../',import.meta.url));
 const CLI=join(ROOT,'oats-package/capabilities/oats-okf/bin/oats-okf-binding.mjs');
-const declaredReasons=new Set(JSON.parse(fs.readFileSync(join(ROOT,'oats-package/capabilities/oats-okf/oats.json'))).binding.reasons);
+const declaredReasonList=JSON.parse(fs.readFileSync(join(ROOT,'oats-package/capabilities/oats-okf/oats.json'))).binding.reasons;
+const declaredReasons=new Set(declaredReasonList);
+const reasonPattern=template=>new RegExp(`^${template.replace(/[.*+?^${}()|[\]\\]/g,'\\$&').replace(/<[^>]+>/g,'.+').replace(/\s+/g,'\\s+')}$`);
+const declaredReasonPatterns=declaredReasonList.filter(r=>r.includes('<')).map(reasonPattern);
+const reasonAllowed=message=>declaredReasons.has(message) || declaredReasonPatterns.some(pattern=>pattern.test(message));
 const KERNEL_READINESS_FIXTURE=join(ROOT,'test/fixtures/kernel-readiness-check-oats-okf.json');
 const contract='oats.okf.locations';
 const origin=(kind,pointer)=>({kind,document:{kind:'source',source:'git:https://example.test/source.git',revision:'a'.repeat(40),path:'soul.yaml',integrity:{format:'oats.bytes.v1',value:`sha256-${'b'.repeat(64)}`}},pointer});
 const locator=(id,path)=>({id,kind:'directory',path:`path:${path}`});
 const canonical=value=>value===null || typeof value!=='object'?JSON.stringify(value):Array.isArray(value)?`[${value.map(canonical).join(',')}]`:`{${Object.keys(value).sort().map(key=>`${JSON.stringify(key)}:${canonical(value[key])}`).join(',')}}`;
+const stateSnapshot=root=>{
+  if(!fs.existsSync(root)) return null;
+  const rows=[];
+  const walk=(dir,rel='')=>{for(const name of fs.readdirSync(dir).sort()) {const path=join(dir,name),key=rel?`${rel}/${name}`:name,stat=fs.lstatSync(path);rows.push([key,stat.isDirectory()?'dir':stat.isFile()?'file':'other',stat.mode,stat.size,stat.mtimeMs,stat.isFile()?fs.readFileSync(path).toString('base64'):null]);if(stat.isDirectory()) walk(path,key);}};
+  walk(root);return rows;
+};
 const call=(phase,request,env={})=>{
   const bytes=Buffer.isBuffer(request)?request:typeof request==='string'?request:JSON.stringify(request);
   const result=spawnSync(process.execPath,[CLI,phase],{input:bytes,encoding:Buffer.isBuffer(bytes)?undefined:'utf8',maxBuffer:2*1024*1024,env:{...process.env,...env}});
   const stdout=Buffer.isBuffer(result.stdout)?result.stdout.toString('utf8'):result.stdout;
   const response=JSON.parse(stdout);
-  for(const message of [response.error?.message,...(response.result?.problems??[]).map(p=>p.message)].filter(v=>v!==undefined))assert.ok(declaredReasons.has(message),'emitted fixed reason must be declared byte-exactly');
+  for(const message of [response.error?.message,...(response.result?.problems??[]).map(p=>p.message),...(response.result?.warnings??[]).map(p=>p.message)].filter(v=>v!==undefined))assert.ok(reasonAllowed(message),`emitted reason must match a declared reason/template byte-exactly: ${message}`);
   return {...result,stdout,response};
 };
 const request=(phase,settings,input)=>({schemaVersion:1,phase,slot:'knowledge',capability:'oats.okf',settings,input});
@@ -111,6 +123,73 @@ test('readiness skips harvest runtime qualification when harvest is off and name
   assert.deepEqual(on.response.result,{status:'needs-configuration',problems:[{code:'needs-configuration',message:'harvest runtime is not qualified: install/configure the selected harvest runtime or set harvest off'}]});
 });
 
+test('Git readiness uses only the stateDir consult cache for cold, warm, stale and unreachable bases',async t=>{
+  const git=(cwd,args)=>{const result=spawnSync('git',['-C',cwd,...args],{encoding:'utf8'});assert.equal(result.status,0,result.stderr);return result.stdout.trim();};
+  const commit=(cwd,msg)=>{git(cwd,['add','-A']);git(cwd,['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm',msg]);return git(cwd,['rev-parse','HEAD']);};
+  const prepareGit=()=>{
+    const {f,binding}=prepareBinding(t),bindings=validateBindings(binding.payload.runtime.bindings,f.descriptorFile);
+    for(const [alias,nodes] of [['reference-base',{reference:{path:'reference',owner:'reference-owner'}}],['private-base',{expert:{path:'expert',owner:'expert-owner'}}]]) {
+      const file=join(f.root,`${alias}-nodes.json`);fs.writeFileSync(file,JSON.stringify(nodes));initBase(bindings,alias,file,undefined,{confirm:true});
+    }
+    git(f.readPath,['init','-q','--initial-branch=main']);git(f.readPath,['config','uploadpack.allowFilter','true']);const head=commit(f.readPath,'accepted');
+    const doc={version:1,stateDir:f.stateDir,bases:{'reference-base':{id:'reference-base',kind:'git',repository:f.readPath,root:'.',acceptedBranch:'main',pr:{repository:'example/knowledge'}},'private-base':{id:'private-base',kind:'directory',path:f.writePath}}};
+    fs.writeFileSync(f.descriptorFile,JSON.stringify(doc));
+    const req=kernelReadinessRequest({...f.settings,harvest:'off'}),env={OATS_SOUL:f.soulDir};
+    return {f,doc,req,env,head};
+  };
+  const warm=prepareGit();
+  const cold=call('check',warm.req,warm.env);
+  assert.deepEqual(cold.response.result,{status:'ready',problems:[],warnings:[{code:'cache-not-primed',message:'okf base reference-base is not cached on this host yet: run `oats okf bases` (a spawn primes it)'}]});
+  assert.equal(fs.existsSync(warm.f.stateDir),false,'cold reachable readiness does not create stateDir');
+  const runtimeBindings=validateBindings(warm.doc,warm.f.descriptorFile);withBase(runtimeBindings,'reference-base',{},ctx=>verdict(ctx));
+  const cache=join(warm.f.stateDir,'cache','reference-base.git'),state=join(cache,'okf-consult.json');
+  const before={head:git(cache,['rev-parse','refs/heads/main']),state:fs.statSync(state).mtimeMs};
+  const start=Date.now(),checked=call('check',warm.req,warm.env),elapsed=Date.now()-start;
+  assert.deepEqual(checked.response.result,{status:'ready',problems:[]});assert.ok(elapsed<5000,`warm readiness took ${elapsed}ms`);
+  assert.deepEqual({head:git(cache,['rev-parse','refs/heads/main']),state:fs.statSync(state).mtimeMs},before,'warm readiness does not fetch or update cache refs/state');
+  fs.rmSync(join(cache,'okf-validation'),{recursive:true,force:true});
+  const noValidationBefore=stateSnapshot(warm.f.stateDir),noValidationChecked=call('check',warm.req,warm.env),noValidationAfter=stateSnapshot(warm.f.stateDir);
+  assert.deepEqual(noValidationChecked.response.result,{status:'ready',problems:[]});
+  assert.deepEqual(noValidationAfter,noValidationBefore,'readiness computes uncached validation without writing stateDir');
+  const reboundDoc=structuredClone(warm.doc);reboundDoc.bases['reference-base'].root='missing-root';fs.writeFileSync(warm.f.descriptorFile,JSON.stringify(reboundDoc));
+  const rebound=call('check',warm.req,warm.env);assert.notEqual(rebound.response.result.status,'ready','cached verdicts are scoped by root, not only commit');
+  fs.writeFileSync(warm.f.descriptorFile,JSON.stringify(warm.doc));
+  fs.writeFileSync(join(warm.f.readPath,'reference','new.md'),'---\ntype: Note\ntitle: New\ndescription: New.\n---\n\nNew.\n');
+  const old=warm.head,newHead=commit(warm.f.readPath,'moved');
+  const stale=call('check',warm.req,warm.env);
+  assert.equal(stale.response.result.status,'ready');assert.deepEqual(stale.response.result.problems,[]);
+  assert.deepEqual(stale.response.result.warnings,[{code:'cache-stale',message:`okf base reference-base: cached ${old.slice(0,12)}, accepted is now ${newHead.slice(0,12)}; the next okf read refreshes it (or run \`oats okf bases --fresh\`)`}]);
+  const moved=`${warm.f.readPath}.missing`;fs.renameSync(warm.f.readPath,moved);
+  const unreachableWarm=call('check',warm.req,warm.env);
+  assert.deepEqual(unreachableWarm.response.result,{status:'ready',problems:[],warnings:[{code:'base-unreachable',message:`okf base reference-base: ${warm.f.readPath} unreachable; readers serve the cached ${old.slice(0,12)} fetched ${JSON.parse(fs.readFileSync(state,'utf8')).fetchedAt}`} ]});
+
+  const unavailable=prepareGit();fs.rmSync(unavailable.f.stateDir,{recursive:true,force:true});fs.rmSync(unavailable.f.readPath,{recursive:true,force:true});
+  const coldMissing=call('check',unavailable.req,unavailable.env);
+  assert.equal(coldMissing.response.result.status,'unavailable');assert.equal(coldMissing.response.result.problems[0].code,'provider-unavailable');assert.match(coldMissing.response.result.problems[0].message,/okf base reference-base: .* main unreachable/);
+
+  const hung=prepareGit(),sockets=new Set(),server=net.createServer(socket=>{sockets.add(socket);socket.on('close',()=>sockets.delete(socket));});
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>{for(const socket of sockets) socket.destroy();server.close();});
+  hung.doc.bases['reference-base'].repository=`https://127.0.0.1:${server.address().port}/repo.git`;fs.writeFileSync(hung.f.descriptorFile,JSON.stringify(hung.doc));fs.rmSync(hung.f.stateDir,{recursive:true,force:true});
+  const hungResult=await new Promise(resolve=>{const child=spawn(process.execPath,[CLI,'check'],{env:{...process.env,...hung.env}});let stdout='',stderr='',done=false;const finish=result=>{if(done)return;done=true;clearTimeout(timer);resolve(result);};const timer=setTimeout(()=>{child.kill('SIGKILL');finish({timedOut:true,stdout,stderr});},15000);child.stdin.end(JSON.stringify(hung.req));child.stdout.setEncoding('utf8');child.stderr.setEncoding('utf8');child.stdout.on('data',c=>stdout+=c);child.stderr.on('data',c=>stderr+=c);child.on('close',status=>finish({status,stdout,stderr}));});
+  assert.equal(hungResult.timedOut,undefined,`readiness check hung: ${hungResult.stderr}`);assert.equal(hungResult.status,0,hungResult.stderr);assert.equal(JSON.parse(hungResult.stdout).result.status,'unavailable');
+
+  const invalid=prepareGit();fs.rmSync(join(invalid.f.readPath,'reference','index.md'));
+  commit(invalid.f.readPath,'invalid');const invalidBindings=validateBindings(invalid.doc,invalid.f.descriptorFile);withBase(invalidBindings,'reference-base',{},ctx=>verdict(ctx));
+  const invalidChecked=call('check',invalid.req,invalid.env);
+  assert.deepEqual(invalidChecked.response.result,{status:'needs-configuration',problems:[{code:'provider-not-qualified',message:'declared knowledge base is not a validated knowledge tree'}]});
+
+  const noisy=prepareGit(),bin=join(noisy.f.root,'fake-bin');fs.mkdirSync(bin);fs.rmSync(noisy.f.stateDir,{recursive:true,force:true});
+  const fakeGit=join(bin,'git');fs.writeFileSync(fakeGit,`#!/usr/bin/env node\nprocess.stdout.write('x'.repeat(70*1024));\n`);fs.chmodSync(fakeGit,0o755);
+  const noisyChecked=call('check',noisy.req,{...noisy.env,PATH:`${bin}:${process.env.PATH}`});
+  assert.equal(noisyChecked.response.result.status,'unavailable');assert.match(noisyChecked.response.result.problems[0].message,/output exceeded 64 KiB/);
+
+  const sshEnv=prepareGit(),sshMarker=join(sshEnv.f.root,'ssh-invoked.txt'),sshScript=join(sshEnv.f.root,'ssh-probe.sh'),sshHome=join(sshEnv.f.root,'ssh-home');fs.rmSync(sshEnv.f.stateDir,{recursive:true,force:true});fs.mkdirSync(sshHome);
+  sshEnv.doc.bases['reference-base'].repository='git@example.invalid:x/y.git';fs.writeFileSync(sshEnv.f.descriptorFile,JSON.stringify(sshEnv.doc));
+  fs.writeFileSync(sshScript,`#!/bin/sh\nprintf '%s\\n' "$@" > ${JSON.stringify(sshMarker)}\nexit 1\n`);fs.chmodSync(sshScript,0o755);fs.writeFileSync(join(sshHome,'.gitconfig'),`[core]\n\tsshCommand = ${sshScript}\n`);
+  const sshChecked=call('check',sshEnv.req,{...sshEnv.env,HOME:sshHome});
+  assert.equal(sshChecked.response.result.status,'unavailable');assert.equal(fs.existsSync(sshMarker),true,'readiness honours operator core.sshCommand like consult reads');
+});
+
 test('normalize preserves separate authority candidates and bind emits the captured runtime payload',t=>{
   const {f,normalized,bound}=prepareBinding(t);
   assert.deepEqual(normalized.requirements.map(({key,kind})=>[key,kind]),[[storeChoiceKey('reference'),'equals'],[bindingChoiceKey('write.default'),'required']]);
@@ -162,17 +241,28 @@ test('check validates real directory and private-staged Git acceptance read-only
   const remoteBefore=git(['rev-parse','HEAD']);
   const transport={HOME:gitHome,TMPDIR:scratch,PATH:`${bin}:${process.env.PATH}`,FIXTURE_GIT_REPO:f.readPath};
   const gitChecked=call('check',request('check',gitBinding, {context:{},action:{kind:'spawn'}}),transport);
-  assert.equal(gitChecked.status,0,gitChecked.stderr);assert.deepEqual(gitChecked.response.result,{status:'ready',problems:[]});
-  assert.equal(git(['rev-parse','HEAD']),remoteBefore);assert.deepEqual(fs.readdirSync(scratch),[],'private Git staging is removed after check');
+  assert.equal(gitChecked.status,0,gitChecked.stderr);assert.deepEqual(gitChecked.response.result,{status:'ready',problems:[],warnings:[
+    {code:'cache-not-primed',message:'okf base reference-base is not cached on this host yet: run `oats okf bases` (a spawn primes it)'},
+    {code:'base-unresolved',message:'okf base reference-base: harvest runtime check skipped node resolution because the base is not cached'},
+  ]});
+  assert.equal(git(['rev-parse','HEAD']),remoteBefore);assert.deepEqual(fs.readdirSync(scratch),[],'cold readiness does not stage or clone Git');assert.equal(fs.existsSync(f.stateDir),false);
+  const oldEnv={...process.env};Object.assign(process.env,transport);
+  try { withBase(gitBinding.payload.runtime.bindings,'reference-base',{},ctx=>verdict(ctx)); }
+  finally { for(const key of Object.keys(process.env)) delete process.env[key];Object.assign(process.env,oldEnv); }
+  const warmChecked=call('check',request('check',gitBinding, {context:{},action:{kind:'spawn'}}),transport);
+  assert.deepEqual(warmChecked.response.result,{status:'ready',problems:[]});
   const wrongOwner=structuredClone(gitBinding);wrongOwner.payload.owns.push({store:'reference-base',node:'reference',steward:'expert-owner'});wrongOwner.payload.runtime.declaration.owns.push('reference-base/reference');
   const refused=call('check',request('check',wrongOwner, {context:{},action:{kind:'spawn'}}),transport);
   assert.deepEqual(refused.response.result,{status:'needs-configuration',problems:[{code:'provider-not-qualified',message:'knowledge base owner or remote custody requirement not met'}]});
-  assert.equal(git(['rev-parse','HEAD']),remoteBefore);assert.deepEqual(fs.readdirSync(scratch),[],'failed Git qualification also removes private staging');
+  assert.equal(git(['rev-parse','HEAD']),remoteBefore);assert.deepEqual(fs.readdirSync(scratch),[],'failed Git qualification also avoids private staging');
 
   const rewriteHome=join(f.root,'rewrite-home');fs.mkdirSync(rewriteHome);fs.writeFileSync(join(rewriteHome,'.gitconfig'),`[url "file://${f.readPath}"]\n\tinsteadOf = https://example.test/knowledge.git\n`);
   const rewritten=structuredClone(binding);rewritten.payload.stores['reference-base']={...gitBinding.payload.stores['reference-base'],repository:'https://example.test/knowledge.git'};rewritten.payload.runtime.bindings.bases['reference-base']=rewritten.payload.stores['reference-base'];
   const redirected=call('check',request('check',rewritten, {context:{},action:{kind:'spawn'}}),{HOME:rewriteHome,TMPDIR:scratch});
-  assert.deepEqual(redirected.response.result,{status:'needs-configuration',problems:[{code:'provider-not-qualified',message:'knowledge base owner or remote custody requirement not met'}]},'rewritten effective Git origins do not qualify');
+  assert.deepEqual(redirected.response.result,{status:'ready',problems:[],warnings:[
+    {code:'cache-not-primed',message:'okf base reference-base is not cached on this host yet: run `oats okf bases` (a spawn primes it)'},
+    {code:'base-unresolved',message:'okf base reference-base: harvest runtime check skipped node resolution because the base is not cached'},
+  ]},'cold reachable Git is not fetched or origin-verified by readiness');
   assert.deepEqual(fs.readdirSync(scratch),[]);
 });
 
@@ -369,11 +459,11 @@ test('manifest owns all three binding phase commands',()=>{
   assert.equal(distribution.compatibility.oats,manifest.compatibility.oats);
   const {reasons,...phases}=manifest.binding;
   assert.deepEqual(phases,{version:1,normalize:'binding-normalize',bind:'binding-bind',check:'binding-check'});
-  assert.equal(reasons.length,19);assert.equal(new Set(reasons).size,19);assert.ok(reasons.every(reason=>typeof reason==='string'&&reason.length>0));
+  assert.equal(reasons.length,26);assert.equal(new Set(reasons).size,26);assert.ok(reasons.every(reason=>typeof reason==='string'&&reason.length>0));
   // Every check-phase reason the wire can emit is in the manifest byte-exact —
   // the kernel may only pass literals it was told about.
   for(const reason of CHECK_REASONS) assert.ok(reasons.includes(reason),`manifest lacks check reason: ${reason}`);
-  assert.ok(reasons.every(r=>!/:\/\/|^\/|\s\/|\$\{|\{\{/.test(r) && r.length<=120),'reasons carry no URLs, paths, values or templates');
+  assert.ok(reasons.every(r=>!/:\/\/|^\/|\s\/|\$\{|\{\{/.test(r) && r.length<=200),'reasons carry no URLs, paths or values');
   for(const name of Object.values(manifest.binding).filter(value=>typeof value==='string')) assert.ok(Object.hasOwn(manifest.commands,name));
   assert.equal(manifest.settings['state-dir'].default,undefined);
 });
