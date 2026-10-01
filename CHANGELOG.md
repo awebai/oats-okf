@@ -12,8 +12,9 @@
   - A known PR that is merged is settled before any baseline check. The
     receipt becomes `accepted`, with `mergeCommit` and the accepted head.
   - If the PR was merged at a head other than the delivered commit, an
-    `okf-review` verdict (`merge` or `amend+merge`) from a repository member
-    must name that head as `headSha`. The receipt also records `mergedHead`
+    `okf-review` verdict (`merge` or `amend+merge`) must name that head as
+    `headSha`, from a repository member or from the account that merged the
+    PR. The receipt also records `mergedHead`
     and `verdict`.
   - Without such a verdict, `complete` fails with `E_PR`, naming the remedy.
     It never fails with `E_BASELINE`, and never rejudges merged inputs.

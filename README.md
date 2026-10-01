@@ -902,13 +902,13 @@ any baseline check: the receipt becomes `accepted`, with the `mergeCommit`.
 The maintainer may amend the PR branch before merging it (the knowledge-review
 skill's `amend+merge`). Its head is then not the delivered commit. Acceptance
 then requires an `okf-review` verdict comment that:
-- comes from a repository member, collaborator or owner;
+- comes from a repository member, collaborator or owner, or from the account
+  that merged the PR;
 - has verdict `merge` or `amend+merge`;
 - names the merged head as its `headSha`.
 
-A comment posted with a GitHub App installation token has no member
-association, so it does not count. The maintainer posts its verdicts from a
-user account with access to the repository.
+A maintainer running on a GitHub App installation token has no member
+association, but its verdict counts when the same account merged the PR.
 
 The receipt also records `mergedHead` and `verdict`. A merged PR without such a
 verdict fails with `E_PR`, naming the remedy (record the verdict, then complete

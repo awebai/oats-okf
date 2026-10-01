@@ -410,12 +410,15 @@ export function confirmGitBaseline(base,stage,{alias=base.id}={}) {
 const prMatches=(pr,base,branch,identity)=>pr?.headRefName===branch && pr.baseRefName===base.acceptedBranch && Number.isInteger(pr.number) && pr.number>=1 && /^https:\/\//.test(pr.url) && (!identity || (pr.number===identity.number && pr.url===identity.url));
 const MERGE_VERDICTS=['merge','amend+merge'],REVIEWER_ASSOCIATIONS=['OWNER','MEMBER','COLLABORATOR'];
 /** The verdict of the latest okf-review comment (the knowledge-review skill's
- *  record) that a repository member left on `pr` for the head it merged: a
- *  merge verdict, or null when there is none or it is not a merge. */
+ *  record) left on `pr` for the head it merged, by a repository member or by
+ *  the account that merged it (merging proves write access; a GitHub App
+ *  token's comments carry no member association): a merge verdict, or null
+ *  when there is none or it is not a merge. */
 function mergeVerdict(base,pr,cwd) {
-  const {comments}=JSON.parse(exec('gh',['pr','view',String(pr.number),'--repo',base.pr.repository,'--json','comments'],{cwd,env:gitEnv()}));
+  const {comments,mergedBy}=JSON.parse(exec('gh',['pr','view',String(pr.number),'--repo',base.pr.repository,'--json','comments,mergedBy'],{cwd,env:gitEnv()}));
+  const merger=typeof mergedBy?.login==='string' && mergedBy.login?mergedBy.login:null;
   for(const comment of [...(Array.isArray(comments)?comments:[])].reverse()) {
-    if(!REVIEWER_ASSOCIATIONS.includes(comment?.authorAssociation)) continue;
+    if(!REVIEWER_ASSOCIATIONS.includes(comment?.authorAssociation) && !(merger && comment?.author?.login===merger)) continue;
     // A body written in GitHub's web UI has CRLF line endings.
     const block=/```okf-review[ \t]*\r?\n([\s\S]*?)\r?\n```/.exec(String(comment.body || ''));
     let review;try {review=block && JSON.parse(block[1]);} catch {continue;}
@@ -434,7 +437,7 @@ function acceptMerged(base,cwd,branch,receipt,pr,persist,acceptedHead) {
   let verdict=null;
   if(pr.headRefOid!==receipt.commit) {
     verdict=mergeVerdict(base,pr,cwd);
-    if(!verdict) fail('E_PR',`PR ${pr.url} was merged at head ${pr.headRefOid}, not at the delivered commit ${receipt.commit}, and no okf-review verdict (merge or amend+merge) from a repository member names that head; record the maintainer's verdict on the PR, then run complete again (merged inputs need no rejudgment)`);
+    if(!verdict) fail('E_PR',`PR ${pr.url} was merged at head ${pr.headRefOid}, not at the delivered commit ${receipt.commit}, and no okf-review verdict (merge or amend+merge) from a repository member or the account that merged it names that head; record the maintainer's verdict on the PR, then run complete again (merged inputs need no rejudgment)`);
   }
   git(cwd,['merge-base','--is-ancestor',merge,acceptedHead]);
   Object.assign(receipt,{status:'accepted',acceptedCommit:acceptedHead,mergeCommit:merge,...(verdict?{mergedHead:pr.headRefOid,verdict}:{}),acceptedAt:new Date().toISOString()});persist();
