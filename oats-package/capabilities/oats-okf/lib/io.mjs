@@ -89,8 +89,8 @@ export const identityKeys = ['OATS_INSTANCE','OATS_INSTANCE_HOME','OATS_HOME','P
 export function cleanEnv(env = process.env) {
   return Object.fromEntries(Object.entries(env).filter(([k]) => !/^(OATS_(?!HOME_DIR$|PACKAGE_CATALOG$)|PI_AGENT|GIT_)/.test(k)));
 }
-export function exec(bin, args, { cwd, env = cleanEnv(), timeout = 30000, maxBuffer = 16*1024*1024, acceptedStatus = [0] } = {}) {
-  const r = spawnSync(bin, args, { cwd, env, encoding: 'utf8', timeout, maxBuffer });
+export function exec(bin, args, { cwd, env = cleanEnv(), timeout = 30000, maxBuffer = 16*1024*1024, acceptedStatus = [0], input } = {}) {
+  const r = spawnSync(bin, args, { cwd, env, encoding: 'utf8', timeout, maxBuffer, input });
   if(r.error || !acceptedStatus.includes(r.status)) throw Object.assign(new Error(`${bin} ${args[0]} failed: ${r.error?.message || r.stderr || `exit ${r.status}`}`),{code:'E_COMMAND',stdout:r.stdout,status:r.status});
   return r.stdout.trim();
 }

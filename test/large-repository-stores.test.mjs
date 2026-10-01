@@ -63,6 +63,32 @@ test('stageBase stays sparse when the repository does not honour object filters 
   assert.ok(!fs.existsSync(join(dest,'receipts.zip')),'still sparse to the base root');
 });
 
+/** Count the packs the fixture's server sends: every fetch that transfers objects runs
+ *  pack-objects once, through the host-level hook (git honours it from global config only). */
+function countServedPacks(f) {
+  const log=join(f.dir,'packs.log'),hook=join(f.dir,'count-pack.sh');
+  fs.writeFileSync(hook,`#!/bin/sh\necho pack >> '${log}'\nexec "$@"\n`,{mode:0o755});
+  fs.writeFileSync(join(process.env.HOME,'.gitconfig'),`[uploadpack]\n\tpackObjectsHook = ${hook}\n`);
+  return ()=>fs.existsSync(log)?fs.readFileSync(log,'utf8').split('\n').filter(Boolean).length:0;
+}
+function commitConcepts(f,count) {
+  for(let i=0;i<count;i++) put(join(f.repo,'knowledge','expert',`c${i}.md`),`---\ntype: Lesson\ntitle: C${i}\ndescription: Concept ${i}.\n---\n\nBody ${i}.\n`);
+  put(join(f.repo,'knowledge','expert','index.md'),`# expert\n\n* [Big](big.md) - big\n${Array.from({length:count},(_,i)=>`* [C${i}](c${i}.md) - c${i}\n`).join('')}`);
+  git(f.repo,['add','.']);git(f.repo,['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','concepts']);
+}
+
+test('stageBase fetches the base root\'s blobs in one batch, whatever their number, with the accepted bytes',t=>{
+  const f=largeRepoFixture(t);commitConcepts(f,60);
+  const packs=countServedPacks(f);
+  const stage=stageBase(f.base,join(f.dir,'stage'));
+  // One pack for the blobless clone, one for the root's blobs; none per file.
+  assert.equal(packs(),2,'clone plus one batched blob fetch');
+  assert.equal(git(join(f.dir,'stage'),['config','--get','remote.origin.promisor']),'true','a real partial clone');
+  const accepted=join(f.dir,'accepted-checkout');git(f.dir,['clone','-q',f.repo,accepted]);
+  assert.deepEqual(stage.files,tree(join(accepted,'knowledge')),'the same bytes as the accepted root');
+  assert.ok(!fs.existsSync(join(f.dir,'stage','receipts.zip')),'nothing outside the root');
+});
+
 test('git-timeout is a validated setting with a large default for remote operations',t=>{
   const old=process.env.OATS_SETTINGS; t.after(()=>{process.env.OATS_SETTINGS=old;});
   process.env.OATS_SETTINGS=JSON.stringify({'git-timeout':120});

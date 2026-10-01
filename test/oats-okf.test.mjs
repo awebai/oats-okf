@@ -1774,6 +1774,16 @@ test('4.0.0 harvest-status and setup --harvest report and edit only the deployme
   put(join(ws,'oats-local.yaml'),'settings: {oats.okf: {harvest: off}}\n');const flow=f.cli('setup',['--harvest','on'],{OATS_WORKSPACE:ws});assert.equal(flow.out.result.written,false);assert.match(flow.out.result.add,/harvest: on/);
   assert.equal(f.cli('setup',['--harvest','yes'],{OATS_WORKSPACE:ws}).out.error.code,'E_USAGE');assert.equal(f.cli('setup',['--harvest','on','--enable'],{OATS_WORKSPACE:ws}).out.error.code,'E_USAGE');
 });
+test('4.0.6 harvest-status reports unknown, with the reason, when the soul opt-out cannot be read',t=>{
+  const f=fixture(t);f.source();
+  const unset=f.cli('harvest-status',[],{OATS_SOUL:''});assert.equal(unset.status,0,unset.stdout+unset.stderr);
+  assert.equal(unset.out.result.harvest,'unknown','an unreadable opt-out is not a definite off');assert.match(unset.out.result.reason,/OATS_SOUL unset/);assert.match(unset.out.result.reason,/capture treats it as off/);
+  put(join(f.soul,'soul.yaml'),'name: source\nknowledge: {harvest: {nested: off}}\n');
+  const bad=f.cli('harvest-status');assert.equal(bad.out.result.harvest,'unknown');assert.match(bad.out.result.reason,/flow mapping/);
+  // A deployment that does not switch harvest on is a definite off, whatever the soul says.
+  const off=f.cli('harvest-status',[],{OATS_SETTINGS:JSON.stringify({...JSON.parse(process.env.OATS_SETTINGS),harvest:'off'})});assert.equal(off.out.result.harvest,'off');
+  put(join(f.soul,'soul.yaml'),'name: source\nknowledge: { harvest: off }\n');assert.equal(f.cli('harvest-status').out.result.harvest,'off','a readable opt-out is off');
+});
 test('4.0.0 judgment: transcript promotions cite their turn ids; task refs are bounded strings',t=>{
   const f=fixture(t),s=f.source();records(f,2,64);capture(s);const r=runSource(s,{manual:true,noLaunch:true});const run=readRun(s,r.run);
   const file=judgment(f,s,run,{cite:false});assert.throws(()=>complete(s,run.id,file),/must cite the turn ids/);

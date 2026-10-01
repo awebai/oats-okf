@@ -45,12 +45,23 @@ export function validateBase(root, base) {
   if(result.errors.length || result.warnings.length) fail('E_VALIDATION', [...result.errors,...result.warnings].join('; '));
   return {files,meta,digest:digest(files)};
 }
+/** Git must never fetch a missing blob on its own, one round trip per object:
+ *  a read of a blob the stage lacks fails instead (git 2.45+; an older git
+ *  ignores the variable and fetches it). fetchBlobs fetches them in one batch. */
+const noLazyFetch=()=>({...gitEnv(),GIT_NO_LAZY_FETCH:'1'});
+/** Fetch the blobs among `oids` that a partial stage lacks, in ONE fetch by id. */
+function fetchBlobs(cwd,oids) {
+  if(!oids.length) return;
+  const missing=git(cwd,['cat-file','--batch-check'],{env:noLazyFetch(),input:oids.join('\n')+'\n'}).split('\n').filter(l=>l.endsWith(' missing')).map(l=>l.split(' ')[0]);
+  if(!missing.length) return;
+  git(cwd,['-c','fetch.negotiationAlgorithm=noop','fetch','-q','--no-tags','--no-write-fetch-head','--recurse-submodules=no','--stdin','origin'],{input:missing.join('\n')+'\n',timeout:gitTimeoutMs()});
+}
 /** Write a blob straight to a file descriptor: no in-memory buffer, so object
  *  size never limits what a base may hold. The remote budget applies because a
  *  partial clone fetches a missing blob on its first read. */
 function writeBlob(cwd,oid,target,mode) {
   const fd=fs.openSync(target,'wx',mode);
-  let result; try { result=spawnSync('git',['--no-replace-objects','-c','core.hooksPath=/dev/null','-C',cwd,'cat-file','blob',oid],{cwd,env:gitEnv(),timeout:gitTimeoutMs(),stdio:['ignore',fd,'pipe']}); } finally { fs.closeSync(fd); }
+  let result; try { result=spawnSync('git',['--no-replace-objects','-c','core.hooksPath=/dev/null','-C',cwd,'cat-file','blob',oid],{cwd,env:noLazyFetch(),timeout:gitTimeoutMs(),stdio:['ignore',fd,'pipe']}); } finally { fs.closeSync(fd); }
   if(result.error || result.status!==0) fail('E_COMMAND','Git object read failed');
   fs.chmodSync(target,mode);
 }
@@ -75,6 +86,7 @@ function materializeGitObjects(base,dest,head) {
   // for publication, but bytes outside the base root are never read, so the
   // size of the rest of the repository does not matter. The scope checks know
   // that an entry outside the root is expected to be absent (see outsideBase).
+  fetchBlobs(dest,[...new Set([...entries].filter(([p])=>!outsideBase(base,p)).map(([,entry])=>entry.oid))]);
   for(const [p,entry] of entries) {
     if(outsideBase(base,p)) continue;
     // relPath above already refused traversal; containment is asserted again
@@ -92,7 +104,7 @@ function clone(base, dest, selectedHead, { alias = base.id } = {}) {
   // on demand. Only a remote that does not offer object filtering gets a plain
   // single-branch clone instead; any other failure is the failure it is. The
   // ancestry the publication checks walk is present either way.
-  const cloneArgs=['clone','--no-hardlinks','--no-checkout','--single-branch','--branch',base.acceptedBranch];
+  const cloneArgs=['clone','--no-local','--no-hardlinks','--no-checkout','--single-branch','--branch',base.acceptedBranch];
   try { git(dirname(dest),[...cloneArgs,'--filter=blob:none','--',base.repository,dest],{timeout:gitTimeoutMs()}); }
   catch(e) {
     if(e.code==='E_COMMAND' && /filter/i.test(e.message)) {
