@@ -39,7 +39,7 @@ test('a live holder is never stolen from: the wait is bounded and the lock is ke
   t.after(() => child.kill('SIGKILL'));
   held(lock, { token: 'live-owner', pid: child.pid, host: hostname() });
   const started = Date.now();
-  assert.throws(() => withLock(lock, () => 1, { reclaimDead: true, waitMs: 300 }), /busy or abandoned/);
+  assert.throws(() => withLock(lock, () => 1, { reclaimDead: true, waitMs: 300 }), /busy lock: .* held by running process \d+/);
   assert.ok(Date.now() - started < 5000, 'bounded wait');
   assert.equal(readJSON(join(lock, 'owner.json')).token, 'live-owner');
 });

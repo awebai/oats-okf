@@ -124,7 +124,8 @@ then checks the accepted baseline and publishes:
   not accepted knowledge until it is merged.
 - Directory base: a journaled, digest-confirmed publication (no PR).
 
-Delivery runs in the background. The command answers within 30 s:
+Delivery runs in the background. After persisting your judgment, the command
+waits up to 30 s for delivery, then answers:
 - with the final receipt, when delivery finished in that time;
 - otherwise with `status: delivering`. Delivery continues without you. Run
   `oats okf-harvest harvest-status --source <descriptor> --run <run>` to follow

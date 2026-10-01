@@ -10,8 +10,9 @@
   - Delivery runs in a detached worker that owns `worker.lock`, logs to
     `delivery.log` in the run directory, and records `run.delivery` (state,
     pid, step, error).
-  - `oats okf complete` answers within 30 s: with the final receipt, or with
-    `status: delivering` and the progress.
+  - After persisting the judgment, `oats okf complete` waits up to 30 s for
+    delivery. It answers with the final receipt, or with `status: delivering`
+    and the progress.
   - A run has at most one delivery worker. A killed `complete` or worker
     loses nothing: a rerun resumes, and never pushes or opens a PR twice.
   - A `worker.lock` whose owner pid is dead is reclaimed automatically; live
@@ -22,7 +23,7 @@
 - **No false `E_BASELINE` when a Git base's head moves outside its root** (#30).
   - The baseline is checked when delivery starts. It compares the root's tree,
     then the root's digest.
-  - A read-only base accepts the new head and records it (`acceptedHead`).
+  - A read-only base accepts the new head and records it (`confirmedHead`).
   - A written base is committed onto the new head (`receipt.parent`).
   - Only changed root bytes fail with `E_BASELINE`. The judgment stays
     persisted, and recovery is `retry --rejudge`.

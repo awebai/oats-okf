@@ -5,8 +5,9 @@ The official OKF knowledge capability: **4.0.6**, requiring **OATS >=0.29.0**.
 ## 4.0.6 — harvest completion on a real host
 
 - `oats okf complete` persists the harvester's judgment first, then delivers
-  in a detached worker. It answers within 30 s: with the final receipt when
-  delivery ends by then, otherwise with `status: delivering` and its progress.
+  in a detached worker. After persisting the judgment it waits up to 30 s:
+  it answers with the final receipt when delivery ends by then, otherwise
+  with `status: delivering` and its progress.
   A killed `complete` loses nothing. Rerunning it resumes and never judges
   again.
 - A worker lock left by a dead process is reclaimed automatically.
@@ -776,7 +777,7 @@ judged bytes:
 
 What happens when the head moved outside the root:
 - A read-only (no-change) base is accepted, and its receipt records
-  `acceptedHead`.
+  `confirmedHead`.
 - A written base is committed onto the new head (`receipt.parent`).
 - A commit made before the head moved again is delivered as it is: the PR still
   merges cleanly, and nothing is ever force-pushed.

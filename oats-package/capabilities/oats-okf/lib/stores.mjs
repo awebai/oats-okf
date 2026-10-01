@@ -52,7 +52,9 @@ const noLazyFetch=()=>({...gitEnv(),GIT_NO_LAZY_FETCH:'1'});
 /** Fetch the blobs among `oids` that a partial stage lacks, in ONE fetch by id. */
 function fetchBlobs(cwd,oids) {
   if(!oids.length) return;
-  const missing=git(cwd,['cat-file','--batch-check'],{env:noLazyFetch(),input:oids.join('\n')+'\n'}).split('\n').filter(l=>l.endsWith(' missing')).map(l=>l.split(' ')[0]);
+  // rev-list --missing=print reports a missing object without fetching it on
+  // any git with partial clone (cat-file would fetch each one before 2.45).
+  const missing=git(cwd,['rev-list','--objects','--no-object-names','--missing=print','--no-walk','--stdin'],{env:noLazyFetch(),input:oids.join('\n')+'\n'}).split('\n').filter(l=>l.startsWith('?')).map(l=>l.slice(1));
   if(!missing.length) return;
   git(cwd,['-c','fetch.negotiationAlgorithm=noop','fetch','-q','--no-tags','--no-write-fetch-head','--recurse-submodules=no','--stdin','origin'],{input:missing.join('\n')+'\n',timeout:gitTimeoutMs()});
 }
@@ -410,7 +412,7 @@ export function gitPublish(base, stage, proposal, receipt, persist, {beforePubli
   // The judged root must still be accepted. A head that moved outside it is
   // delivered onto; changed root bytes are never rebased without rejudging.
   const accepted=fetchAccepted(base,cwd);
-  if(!rootUnchanged(base,stage,cwd,accepted)) {
+  if(accepted!==receipt.confirmedHead && !rootUnchanged(base,stage,cwd,accepted)) {
     // A known or uncertain previously created PR may be reconciled, but a
     // committed/pushed proposal alone does not authorize a NEW stale-base PR.
     const prior=receipt.commit?prRows(base,branch,cwd,{identity:prIdentity}).filter(p=>p.headRefOid===receipt.commit && p.headRefName===branch && p.baseRefName===base.acceptedBranch):[];

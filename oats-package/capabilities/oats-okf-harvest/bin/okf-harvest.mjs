@@ -13,7 +13,7 @@ const HELP = `oats okf-harvest complete --source FILE --run ID --judgment ABS_FI
 oats okf-harvest harvest-status --source FILE --run ID [--json]
 complete runs the source's frozen \`oats okf complete\` in its deployment (the
 only delivery path): it persists the judgment, then delivers in the background,
-answering \`delivering\` when delivery outlasts its 30 s receipt. harvest-status reports each PR's state and what to do:
+answering \`delivering\` when delivery outlasts the 30 s it waits. harvest-status reports each PR's state and what to do:
 stay, retire or max-age (setting harvester-max-age, default 7d).
 `;
 const fail = (code, message, extra = {}) => { throw Object.assign(new Error(message), { code, ...extra }); };

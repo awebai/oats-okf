@@ -308,8 +308,9 @@ function persistJudgment(source,run,judgmentFile) {
  *  the bytes judged (multi-base publication is not a transaction). Receipts
  *  exist only once every base is confirmed, so recovery never mistakes an
  *  unconfirmed no-change for a settled destination. A Git head that moved
- *  outside the root is no change: a read-only base records the head it was
- *  confirmed at, and a written one is delivered onto it (gitPublish). */
+ *  outside the root is no change: a Git receipt records the head its root was
+ *  confirmed at (confirmedHead), and a written base is delivered onto it
+ *  (gitPublish). */
 function confirmBaselines(source,run) {
   const pending=Object.entries(run.proposals || {}).filter(([alias])=>!Object.hasOwn(run.receipts,alias));
   if(!pending.length) return;
@@ -324,7 +325,7 @@ function confirmBaselines(source,run) {
         if(stageBase(base,join(checkDir,'base'),{alias}).digest!==s.digest) fail('E_BASELINE','accepted base changed; rejudge on fresh baseline');
       } finally {fs.rmSync(checkDir,{recursive:true,force:true});}
     }
-    receipts[alias]={status:p.changed?'validated':'no-change',proposal:p.proposal,proposalHash:p.proposalHash,...(!p.changed && head?{acceptedHead:head}:{})};
+    receipts[alias]={status:p.changed?'validated':'no-change',proposal:p.proposal,proposalHash:p.proposalHash,...(head?{confirmedHead:head}:{})};
   }
   Object.assign(run.receipts,receipts);persist(source,run);
 }
@@ -370,6 +371,12 @@ const DELIVERY_WORKER=fileURLToPath(new URL('./delivery-worker.mjs',import.meta.
 const deliveryLog=(source,id)=>join(dirname(runPath(source,id)),'delivery.log');
 /** Whether the run's recorded delivery worker is a process still running here. */
 const liveDelivery=run=>['starting','running'].includes(run.delivery?.state) && run.delivery.host===hostname() && pidAlive(run.delivery.pid);
+const deliveryProgress=run=>({status:'delivering',run:run.id,processed:false,receipts:run.receipts,delivery:run.delivery,
+  next:`delivery continues in the background (pid ${run.delivery.pid}, log ${run.delivery.log}); harvest-status, or the complete command again, reports its progress`});
+/** A run's live delivery worker owns it: recovery waits for it to end. */
+function refuseLiveDelivery(run) {
+  if(liveDelivery(run)) fail('E_RECOVERY',`delivery of run ${run.id} is in progress (pid ${run.delivery.pid}, ${run.delivery.step || run.delivery.state}); follow it with harvest-status and rejudge only once it has ended`);
+}
 /** Start the detached worker that delivers a judged run. Caller holds the
  *  worker lock, which the worker takes next (one worker per run: a live one
  *  is never doubled). Its own session survives the caller, and its output goes
@@ -387,15 +394,26 @@ function startDelivery(source,run) {
 /** The detached worker's side: deliver a judged run under the worker lock,
  *  recording progress and outcome in run.delivery. */
 export function deliver(source,id) {
-  return withWorkerLock(source,()=>{
-    const run=completableRun(source,id);
-    if(!run.judgment) fail('E_RUN','run has no persisted judgment to deliver');
-    const {error,...previous}=run.delivery || {};
-    const record=fields=>{run.delivery={...run.delivery,...fields,updatedAt:new Date().toISOString()};persist(source,run);};
-    run.delivery={...previous,pid:process.pid,host:hostname()};record({state:'running',step:'confirming baselines'});
-    try {const result=deliverRun(source,run);record({state:'done'});return result;}
-    catch(e) {record({state:'failed',error:{code:e.code || 'E_OKF',message:redactUrls(e.message)}});throw e;}
-  },{waitMs:DELIVERY_LOCK_WAIT_MS});
+  // Every failure is recorded under the lock, including one before delivery
+  // starts, so the run never shows a stopped worker with no reason.
+  const failed=(run,e)=>{run.delivery={...run.delivery,pid:process.pid,host:hostname(),state:'failed',error:{code:e.code || 'E_OKF',message:redactUrls(e.message)},updatedAt:new Date().toISOString()};persist(source,run);};
+  try {
+    return withWorkerLock(source,()=>{
+      let run;
+      try {
+        run=completableRun(source,id);
+        if(!run.judgment) fail('E_RUN','run has no persisted judgment to deliver');
+        const {error,...previous}=run.delivery || {};
+        const record=fields=>{run.delivery={...run.delivery,...fields,updatedAt:new Date().toISOString()};persist(source,run);};
+        run.delivery={...previous,pid:process.pid,host:hostname()};record({state:'running',step:'confirming baselines'});
+        const result=deliverRun(source,run);record({state:'done'});return result;
+      } catch(e) {failed(run ?? readRun(source,id),e);throw e;}
+    },{waitMs:DELIVERY_LOCK_WAIT_MS});
+  } catch(e) {
+    // The lock never came free: record why once it does, if it does soon.
+    if(e.code==='E_LOCKED') try {withWorkerLock(source,()=>{const run=readRun(source,id);if(run.delivery?.pid===process.pid) failed(run,e);},{waitMs:5000});} catch { /* the log keeps it */ }
+    throw e;
+  }
 }
 /** `oats okf complete`: persist the judgment, then deliver in a detached
  *  worker, answering with the final receipt if delivery ends within
@@ -415,8 +433,7 @@ export async function completeInBackground(source,id,judgmentFile,{receiptWithin
   let run=readRun(source,id);
   while(liveDelivery(run) && Date.now()<deadline) {await new Promise(r=>setTimeout(r,100));run=readRun(source,id);}
   const delivery=run.delivery;
-  if(liveDelivery(run)) return {status:'delivering',run:id,processed:false,receipts:run.receipts,delivery,
-    next:`delivery continues in the background (pid ${delivery.pid}, log ${delivery.log}); harvest-status, or this complete command again, reports its progress`};
+  if(liveDelivery(run)) return deliveryProgress(run);
   if(delivery.state==='failed') throw Object.assign(new Error(`${delivery.error.message} (delivery log: ${delivery.log}); fix the cause, then run complete again to resume, or retry --rejudge after E_BASELINE`),{code:delivery.error.code});
   if(delivery.state!=='done') fail('E_DELIVERY',`the delivery worker (pid ${delivery.pid}) stopped at "${delivery.step || delivery.state}"; run complete again to resume (log: ${delivery.log})`);
   return {status:run.status,run:id,processed:run.status==='processed',receipts:run.receipts};
@@ -456,6 +473,8 @@ export function retry(source,{run:id,rejudge=false,launch=false,adoptHome}={}) {
   }
   const status=loadStatus(source);if(!status.activeRun) return runSource(source,{manual:true,noLaunch:!launch});
   const run=readRun(source,status.activeRun);
+  if(rejudge) refuseLiveDelivery(run);
+  else if(liveDelivery(run)) return deliveryProgress(run);
   if(rejudge && !run.judgment && ['spawn-intent','scaffolded','launch-intent','launch-unknown'].includes(run.status)) fail('E_RECOVERY','inspect/adopt the uncertain worker before rejudging; never duplicate an uncertain spawn or launch');
   if(rejudge && run.recoveryOf && !Object.values(run.receipts).some(r=>['accepted','delivered','no-change'].includes(r.status))) return recoverRun(source,run.id,{launch});
   if(rejudge) return withWorkerLock(source,()=>{
@@ -546,6 +565,7 @@ function checkRecoveryGuards(source,run) {
 function recoverRun(source,id,{launch=false}={}) {
   return withWorkerLock(source,()=>{
     const previous=readRun(source,id),status=loadStatus(source),successor=status.recoveries?.[id];
+    refuseLiveDelivery(previous);
     if(status.activeRun && status.activeRun!==id && status.activeRun!==successor) fail('E_RECOVERY',`another active run ${status.activeRun}; finish it before explicit recovery`);
     if(successor) {
       const existing=readRun(source,successor);

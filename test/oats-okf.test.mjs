@@ -19,7 +19,7 @@ const {register,registerCaptured,capture,input,loadStatus,loadSource,saveStatus,
 const {cat:consultCat,acceptedResolution}=await mod('consult');
 /** An okf 3.0.0 consult read of one accepted file (no local view). */
 const readAccepted=(s,path='/expert/index.md',alias=Object.keys(s.bindings.bases)[0])=>consultCat(s,{base:alias},[path]).result;
-const {runSource,readRun,complete,completeInBackground,retry,completionArgv,completionCommand}=await mod('worker');
+const {runSource,readRun,complete,completeInBackground,deliver,retry,completionArgv,completionCommand}=await mod('worker');
 const {initBase,migrate,deliverMigration,cutoverMigration}=await mod('migration');
 const {stageBase,baseLock,journalPath,directoryPublish}=await mod('stores');
 const {inspect:inspectSource,capturedAuthority}=await mod('inspection');
@@ -243,8 +243,8 @@ test('directory crash midway publication blocks readers, retry recovers and conf
 });
 test('source and base contention do not expire or steal locks',t=>{
   const f=fixture(t);const s=f.source();note(f);
-  withLock(join(dirname(s.file),'capture.lock'),()=>assert.throws(()=>capture(s),/busy or abandoned/));
-  withLock(baseLock(f.base),()=>assert.throws(()=>stageBase(f.base,join(f.dir,'stage')),/busy or abandoned/));
+  withLock(join(dirname(s.file),'capture.lock'),()=>assert.throws(()=>capture(s),/busy lock/));
+  withLock(baseLock(f.base),()=>assert.throws(()=>stageBase(f.base,join(f.dir,'stage')),/busy lock/));
 });
 test('frozen bindings prevent alias retargeting queued source input',t=>{
   const f=fixture(t);note(f);const s=f.source();capture(s,{final:true});const changed=readJSON(f.bindingFile);changed.bases.project.path='another-base';save(f.bindingFile,changed);
@@ -580,10 +580,22 @@ test('4.0.6 a written Git base whose head moved outside its root is delivered on
   assert.match(git(f.repo,['show',`${receipt.commit}:knowledge/expert/decision.md`]),/prevents hidden delivery/);
   assert.deepEqual(git(f.repo,['diff','--name-only',moved,receipt.commit]).split('\n').sort(),['knowledge/expert/decision.md','knowledge/expert/index.md','knowledge/expert/log.md']);
 });
+test('4.0.6 a commit made before the head moved again outside the root is delivered as it is, never rebuilt',t=>{
+  const f=fixture(t,{kind:'git'});note(f);const {s,run}=prepared(f);const j=judgment(f,s,run);
+  const marker=join(f.dir,'push-failed-once');
+  gitWrapper(f,`if(a.includes('push') && !fs.existsSync(${JSON.stringify(marker)})) {fs.writeFileSync(${JSON.stringify(marker)},'');process.exit(1);}`);
+  assert.throws(()=>complete(s,run.id,j),/git --no-replace-objects failed/);
+  const committed=readRun(s,run.id).receipts.project;assert.equal(committed.status,'push-unknown');assert.equal(committed.parent,run.stages.project.head);
+  fs.rmSync(join(f.dir,'bin/git'));
+  acceptedCommit(f,{'code.txt':'moved again\n'});
+  const r=retry(s);const receipt=r.receipts.project;assert.equal(receipt.status,'delivered');
+  assert.equal(receipt.commit,committed.commit,'the same commit is pushed');assert.equal(git(f.repo,['rev-parse',`${receipt.commit}^`]),run.stages.project.head);
+  assert.equal(readJSON(join(f.dir,'pr.json')).length,1);
+});
 test('4.0.6 a read-only Git base whose head moved outside its root is accepted and its new head recorded',t=>{
   const f=fixture(t,{kind:'git'});note(f);const {s,run}=prepared(f);const j=judgment(f,s,run,{drop:true});
   const moved=acceptedCommit(f,{'code.txt':'busy repository\n'});
-  const r=complete(s,run.id,j);assert.equal(r.status,'processed');assert.equal(r.receipts.project.status,'no-change');assert.equal(r.receipts.project.acceptedHead,moved);
+  const r=complete(s,run.id,j);assert.equal(r.status,'processed');assert.equal(r.receipts.project.status,'no-change');assert.equal(r.receipts.project.confirmedHead,moved);
   assert.equal(readRun(s,run.id).stages.project.head,run.stages.project.head,'the judged head stays the record of what was staged');
 });
 test('4.0.6 a change inside a Git base root needs a rejudge; the judgment stays persisted',t=>{
@@ -596,7 +608,7 @@ test('4.0.6 a change inside a Git base root needs a rejudge; the judgment stays 
 test('4.0.6 a mode-only change inside a Git base root leaves its digest, so it is no baseline change',t=>{
   const f=fixture(t,{kind:'git'});note(f);const {s,run}=prepared(f);const j=judgment(f,s,run,{drop:true});
   fs.chmodSync(join(f.repo,'knowledge/peer/log.md'),0o755);git(f.repo,['add','.']);git(f.repo,['-c','user.name=Other','-c','user.email=other@example.invalid','commit','-qm','mode only']);
-  const r=complete(s,run.id,j);assert.equal(r.status,'processed');assert.equal(r.receipts.project.acceptedHead,git(f.repo,['rev-parse','HEAD']));
+  const r=complete(s,run.id,j);assert.equal(r.status,'processed');assert.equal(r.receipts.project.confirmedHead,git(f.repo,['rev-parse','HEAD']));
 });
 const pause=ms=>new Promise(r=>setTimeout(r,ms));
 const alive=pid=>{try{process.kill(pid,0);return true;}catch{return false;}};
@@ -646,6 +658,20 @@ test('4.0.6 a delivery worker killed mid-publish is resumed without a duplicate 
   assert.equal(stalled.status,'processed');assert.notEqual(stalled.delivery?.pid,pid);
   assert.equal(stalled.receipts.project.commit,pushed,'the pushed commit is reused, never rebuilt or force-pushed');
   assert.equal(readJSON(join(f.dir,'pr.json')).length,1);
+});
+test('4.0.6 retry reports a live delivery and refuses to rejudge under it',async t=>{
+  const f=fixture(t,{kind:'git'});note(f);const {s,run}=prepared(f);const j=judgment(f,s,run);put(join(f.dir,'gh-slow'),'4000');
+  const first=await completeInBackground(s,run.id,j,{receiptWithinMs:100});t.after(()=>{try{process.kill(-first.delivery.pid,'SIGKILL');}catch{}});
+  const r=retry(s);assert.equal(r.status,'delivering');assert.equal(r.delivery.pid,first.delivery.pid);
+  assert.throws(()=>retry(s,{rejudge:true}),e=>e.code==='E_RECOVERY' && /in progress/.test(e.message));
+  await until(()=>readRun(s,run.id).delivery?.state==='done');
+});
+test('4.0.6 a delivery that fails before it starts records why',t=>{
+  const f=fixture(t,{kind:'git'});note(f);const {s,run}=prepared(f);const j=judgment(f,s,run);put(join(f.dir,'gh-fail'),'1');
+  assert.throws(()=>complete(s,run.id,j));
+  const status=loadStatus(s);status.recoveries={[run.id]:'99999999-9999-4999-8999-999999999999'};saveStatus(s,status);
+  assert.throws(()=>deliver(s,run.id),e=>e.code==='E_RECOVERY');
+  const recorded=readRun(s,run.id).delivery;assert.equal(recorded.state,'failed');assert.equal(recorded.error.code,'E_RECOVERY');assert.equal(recorded.pid,process.pid);
 });
 test('4.0.6 the complete command answers with a receipt and delivers in the background',t=>{
   const f=fixture(t,{kind:'git'});note(f);const {s,run}=prepared(f);const j=judgment(f,s,run);
