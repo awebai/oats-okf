@@ -1237,7 +1237,8 @@ test('custody R2 late replacement refs cannot contaminate private baseline or tr
   const r=complete(s,run.id,j);assert.equal(r.processed,true);
   const recorded=fs.readFileSync(calls,'utf8').trim().split('\n').map(JSON.parse);
   for(const c of recorded.filter(c=>c.a.includes('core.hooksPath=/dev/null'))) {assert.ok(c.a.includes('--no-replace-objects'));assert.equal(c.env,'1');}
-  for(const cmd of ['clone','fetch','diff','read-tree','write-tree','commit-tree','cat-file','ls-tree','push']) assert.ok(recorded.some(c=>c.a.includes(cmd)),cmd);
+  // complete confirms the baseline by a fetch into the stage: it clones only for recovery.
+  for(const cmd of ['fetch','diff','read-tree','write-tree','commit-tree','cat-file','ls-tree','push']) assert.ok(recorded.some(c=>c.a.includes(cmd)),cmd);
   fs.rmSync(join(f.dir,'bin/git'));
   assert.equal(git(f.repo,['--no-replace-objects','show',`${r.receipts.project.commit}:code.txt`]),'code baseline');
   assert.equal(git(f.repo,['--no-replace-objects','cat-file','commit',r.receipts.project.commit]).split('\n').filter(l=>l.startsWith('parent ')).join('\n'),`parent ${stage.head}`);
@@ -1248,11 +1249,11 @@ for(const defect of ['tree','parent']) test(`custody R2 final raw commit verific
   // replacement. The final guard must inspect what Git will actually publish.
   const mutation=defect==='tree'?`fs.writeFileSync(cwd+'/code.txt','unauthorized actual object\\n');execFileSync(real,['-C',cwd,'add','--all']);badArgs[badArgs.indexOf('commit-tree')+1]=execFileSync(real,['-C',cwd,'write-tree'],{encoding:'utf8'}).trim();`:`badArgs.splice(badArgs.indexOf('-p'),2);`;
   gitWrapper(f,`if(a.includes('commit-tree')) {const good=execFileSync(real,a,{encoding:'utf8'}).trim(),badArgs=[...a];${mutation}const bad=execFileSync(real,badArgs,{encoding:'utf8'}).trim();execFileSync(real,['-C',cwd,'replace','-f',bad,good]);console.log(bad);process.exit(0);}`);
-  assert.throws(()=>complete(s,run.id,j),defect==='tree'?/publication tree changes files outside/:/exactly the frozen baseline as its parent/);noPublication(f,s);
+  assert.throws(()=>complete(s,run.id,j),defect==='tree'?/publication tree changes files outside/:/exactly its recorded accepted parent/);noPublication(f,s);
   const receipt=readRun(s,run.id).receipts.project;assert.equal(receipt.status,'committed');
   // Retry re-verifies the immutable object, even with a persisted commit receipt.
   fs.rmSync(join(f.dir,'bin/git'));
-  assert.throws(()=>retry(s),defect==='tree'?/publication tree changes files outside/:/exactly the frozen baseline as its parent/);noPublication(f,s);
+  assert.throws(()=>retry(s),defect==='tree'?/publication tree changes files outside/:/exactly its recorded accepted parent/);noPublication(f,s);
 });
 function journalCrash(f,s,run,j,base,phase='before-install') {
   const code=`import fs from 'node:fs';import {syncBuiltinESMExports} from 'node:module';import {loadSource} from ${JSON.stringify(new URL('../oats-package/capabilities/oats-okf/lib/sources.mjs',import.meta.url).href)};import {complete} from ${JSON.stringify(new URL('../oats-package/capabilities/oats-okf/lib/worker.mjs',import.meta.url).href)};
