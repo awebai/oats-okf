@@ -19,7 +19,7 @@ const {register,registerCaptured,capture,input,loadStatus,loadSource,saveStatus,
 const {cat:consultCat,acceptedResolution}=await mod('consult');
 /** An okf 3.0.0 consult read of one accepted file (no local view). */
 const readAccepted=(s,path='/expert/index.md',alias=Object.keys(s.bindings.bases)[0])=>consultCat(s,{base:alias},[path]).result;
-const {runSource,readRun,complete,retry,completionArgv,completionCommand}=await mod('worker');
+const {runSource,readRun,complete,completeInBackground,deliver,retry,completionArgv,completionCommand}=await mod('worker');
 const {initBase,migrate,deliverMigration,cutoverMigration}=await mod('migration');
 const {stageBase,baseLock,journalPath,directoryPublish}=await mod('stores');
 const {inspect:inspectSource,capturedAuthority}=await mod('inspection');
@@ -78,7 +78,7 @@ if(a[0]==='label') {if(a[1]!=='create' || !a.includes('--force')) process.exit(4
 else if(a[0]!=='pr') process.exit(44);
 else if(a[1]==='list') {if(fs.existsSync(join(root,'gh-unavailable'))) process.exit(45);console.log(JSON.stringify((fs.existsSync(p)?JSON.parse(fs.readFileSync(p,'utf8')):[]).filter(pr=>pr.headRefName===val('--head') && (!a.includes('--base') || pr.baseRefName===val('--base')))));}
 else if(a[1]==='view') {if(fs.existsSync(join(root,'gh-unavailable'))) process.exit(45);const pr=(fs.existsSync(p)?JSON.parse(fs.readFileSync(p,'utf8')):[]).find(pr=>pr.number===Number(a[2]));if(!pr) {console.error('known PR missing');process.exit(46);}console.log(JSON.stringify(pr));}
-else if(a[1]==='create') {if(fs.existsSync(join(root,'gh-fail'))) process.exit(42);const branch=val('--head'),oid=execFileSync('git',['ls-remote','origin','refs/heads/'+branch],{encoding:'utf8'}).trim().split(/\\s/)[0];const rows=fs.existsSync(p)?JSON.parse(fs.readFileSync(p,'utf8')):[],number=rows.length+1;rows.push({number,url:'https://github.com/fixture/knowledge/pull/'+number,state:'OPEN',headRefName:branch,headRefOid:oid,baseRefName:val('--base'),mergedAt:null,mergeCommit:null});fs.writeFileSync(join(root,'pr-'+number+'-created.json'),JSON.stringify({title:val('--title'),body:val('--body'),labels:a.filter((x,i)=>a[i-1]==='--label')}));fs.writeFileSync(p,JSON.stringify(rows));if(fs.existsSync(join(root,'gh-uncertain'))) process.exit(43);console.log('https://github.com/fixture/knowledge/pull/1');}
+else if(a[1]==='create') {if(fs.existsSync(join(root,'gh-fail'))) process.exit(42);if(fs.existsSync(join(root,'gh-slow'))) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,Number(fs.readFileSync(join(root,'gh-slow'),'utf8')));const branch=val('--head'),oid=execFileSync('git',['ls-remote','origin','refs/heads/'+branch],{encoding:'utf8'}).trim().split(/\\s/)[0];const rows=fs.existsSync(p)?JSON.parse(fs.readFileSync(p,'utf8')):[],number=rows.length+1;rows.push({number,url:'https://github.com/fixture/knowledge/pull/'+number,state:'OPEN',headRefName:branch,headRefOid:oid,baseRefName:val('--base'),mergedAt:null,mergeCommit:null});fs.writeFileSync(join(root,'pr-'+number+'-created.json'),JSON.stringify({title:val('--title'),body:val('--body'),labels:a.filter((x,i)=>a[i-1]==='--label')}));fs.writeFileSync(p,JSON.stringify(rows));if(fs.existsSync(join(root,'gh-uncertain'))) process.exit(43);console.log('https://github.com/fixture/knowledge/pull/1');}
 else process.exit(44);
 `);fs.chmodSync(gh,0o755);
   const repo=join(dir,'accepted-repo'); const base=kind==='directory'?{id:'base-1',kind,path:'base'}:{id:'base-1',kind,repository:repo,root,acceptedBranch:'main',pr:{repository:'fixture/knowledge'}};
@@ -152,7 +152,7 @@ test('exported payload version, floor, required hooks and complete command inven
   assert.equal(fs.existsSync(join(CAP,'agents')),false,'the harvester is the package soul oats.okf/knowledge-harvester, not a capability agent');
   assert.ok(fs.statSync(join(ROOT,'oats-package/souls/knowledge-harvester/AGENTS.md')).isFile(),'the harvester soul keeps its one canonical instruction file');
   const m=readJSON(join(CAP,'oats.json')),distribution=readJSON(join(ROOT,'oats-package/oats-package.json'));
-  for(const manifest of [readJSON(join(ROOT,'package.json')),distribution,m])assert.equal(manifest.version,'4.0.5');
+  for(const manifest of [readJSON(join(ROOT,'package.json')),distribution,m])assert.equal(manifest.version,'4.0.6');
   for(const manifest of [distribution,m])assert.equal(manifest.compatibility.oats,'>=0.29.0');
   assert.equal(m.hooks.spawn.required,true);
   for(const c of ['harvest','inspect','setup','run-source','complete','retry','migrate','read','refresh','init','bases','index','cat','ls','links','search','harvest-status']) assert.ok(m.commands[c]);
@@ -207,7 +207,7 @@ test('harvest worker spawn without a messaging capability spawns without join an
   const task=fs.readFileSync(join(run.worker.home,'TASK.md'),'utf8');
   assert.match(task,/Load the knowledge-harvest skill first/);assert.match(task,/the notes AND every transcript window; cite the turn ids/);
   assert.match(task,/'oats' 'okf-harvest' 'complete' '--source'/);assert.match(task,/'oats' 'okf-harvest' 'harvest-status'/);
-  assert.match(task,/stay alive until your PR is merged or closed/);assert.doesNotMatch(task,/okf team/);assert.match(task,/Never close the PR yourself/);
+  assert.match(task,/stay alive until your PR is merged or closed/);assert.match(task,/status delivering.*run the completion command again/);assert.doesNotMatch(task,/okf team/);assert.match(task,/Never close the PR yourself/);
   assert.doesNotMatch(task,/memory-harvest|retire normally/);
 });
 for(const [features,flag] of [[['schedule','harness'],'--harness'],[['schedule'],'--runtime'],[null,'--runtime']]) test(`harvest worker spawn passes ${flag} when oats version features are ${JSON.stringify(features)}`,t=>{
@@ -243,8 +243,8 @@ test('directory crash midway publication blocks readers, retry recovers and conf
 });
 test('source and base contention do not expire or steal locks',t=>{
   const f=fixture(t);const s=f.source();note(f);
-  withLock(join(dirname(s.file),'capture.lock'),()=>assert.throws(()=>capture(s),/busy or abandoned/));
-  withLock(baseLock(f.base),()=>assert.throws(()=>stageBase(f.base,join(f.dir,'stage')),/busy or abandoned/));
+  withLock(join(dirname(s.file),'capture.lock'),()=>assert.throws(()=>capture(s),/busy lock/));
+  withLock(baseLock(f.base),()=>assert.throws(()=>stageBase(f.base,join(f.dir,'stage')),/busy lock/));
 });
 test('frozen bindings prevent alias retargeting queued source input',t=>{
   const f=fixture(t);note(f);const s=f.source();capture(s,{final:true});const changed=readJSON(f.bindingFile);changed.bases.project.path='another-base';save(f.bindingFile,changed);
@@ -568,6 +568,126 @@ test('Git outside-base edits and tracked directory bypass are rejected',t=>{
 });
 test('Git empty input judgment has no commit, push or PR',t=>{
   const f=fixture(t,{kind:'git'});note(f);const {s,run}=prepared(f);const r=complete(s,run.id,judgment(f,s,run,{drop:true}));assert.equal(r.receipts.project.status,'no-change');assert.equal(fs.existsSync(join(f.dir,'pr.json')),false);
+});
+/** Commit `files` (path → text) to the accepted repository: another writer moving its head. */
+function acceptedCommit(f,files) {for(const [p,text] of Object.entries(files)) put(join(f.repo,p),text);git(f.repo,['add','.']);git(f.repo,['-c','user.name=Other','-c','user.email=other@example.invalid','commit','-qm','another writer']);return git(f.repo,['rev-parse','HEAD']);}
+test('4.0.6 a written Git base whose head moved outside its root is delivered onto the new head',t=>{
+  const f=fixture(t,{kind:'git'});note(f);const {s,run}=prepared(f);const j=judgment(f,s,run);
+  const moved=acceptedCommit(f,{'code.txt':'busy repository\n'});
+  const r=complete(s,run.id,j);assert.equal(r.status,'processed');const receipt=r.receipts.project;assert.equal(receipt.status,'delivered');
+  assert.equal(git(f.repo,[`rev-parse`,`${receipt.commit}^`]),moved,'the publication commit sits on the moved head');
+  assert.equal(git(f.repo,['show',`${receipt.commit}:code.txt`]),'busy repository','the other writer\'s change is kept');
+  assert.match(git(f.repo,['show',`${receipt.commit}:knowledge/expert/decision.md`]),/prevents hidden delivery/);
+  assert.deepEqual(git(f.repo,['diff','--name-only',moved,receipt.commit]).split('\n').sort(),['knowledge/expert/decision.md','knowledge/expert/index.md','knowledge/expert/log.md']);
+});
+test('4.0.6 a commit made before the head moved again outside the root is delivered as it is, never rebuilt',t=>{
+  const f=fixture(t,{kind:'git'});note(f);const {s,run}=prepared(f);const j=judgment(f,s,run);
+  const marker=join(f.dir,'push-failed-once');
+  gitWrapper(f,`if(a.includes('push') && !fs.existsSync(${JSON.stringify(marker)})) {fs.writeFileSync(${JSON.stringify(marker)},'');process.exit(1);}`);
+  assert.throws(()=>complete(s,run.id,j),/git --no-replace-objects failed/);
+  const committed=readRun(s,run.id).receipts.project;assert.equal(committed.status,'push-unknown');assert.equal(committed.parent,run.stages.project.head);
+  fs.rmSync(join(f.dir,'bin/git'));
+  acceptedCommit(f,{'code.txt':'moved again\n'});
+  const r=retry(s);const receipt=r.receipts.project;assert.equal(receipt.status,'delivered');
+  assert.equal(receipt.commit,committed.commit,'the same commit is pushed');assert.equal(git(f.repo,['rev-parse',`${receipt.commit}^`]),run.stages.project.head);
+  assert.equal(readJSON(join(f.dir,'pr.json')).length,1);
+});
+test('4.0.6 a read-only Git base whose head moved outside its root is accepted and its new head recorded',t=>{
+  const f=fixture(t,{kind:'git'});note(f);const {s,run}=prepared(f);const j=judgment(f,s,run,{drop:true});
+  const moved=acceptedCommit(f,{'code.txt':'busy repository\n'});
+  const r=complete(s,run.id,j);assert.equal(r.status,'processed');assert.equal(r.receipts.project.status,'no-change');assert.equal(r.receipts.project.confirmedHead,moved);
+  assert.equal(readRun(s,run.id).stages.project.head,run.stages.project.head,'the judged head stays the record of what was staged');
+});
+test('4.0.6 a change inside a Git base root needs a rejudge; the judgment stays persisted',t=>{
+  const f=fixture(t,{kind:'git'});note(f);const {s,run}=prepared(f);const j=judgment(f,s,run,{drop:true});
+  acceptedCommit(f,{'knowledge/peer/log.md':'* another writer\n'});
+  assert.throws(()=>complete(s,run.id,j),e=>e.code==='E_BASELINE');
+  const after=readRun(s,run.id);assert.ok(after.judgment,'the judgment survives the failed delivery');assert.equal(loadStatus(s).processed.length,0);
+  assert.equal(retry(s,{rejudge:true}).status,'abandoned');
+});
+test('4.0.6 a mode-only change inside a Git base root leaves its digest, so it is no baseline change',t=>{
+  const f=fixture(t,{kind:'git'});note(f);const {s,run}=prepared(f);const j=judgment(f,s,run,{drop:true});
+  fs.chmodSync(join(f.repo,'knowledge/peer/log.md'),0o755);git(f.repo,['add','.']);git(f.repo,['-c','user.name=Other','-c','user.email=other@example.invalid','commit','-qm','mode only']);
+  const r=complete(s,run.id,j);assert.equal(r.status,'processed');assert.equal(r.receipts.project.confirmedHead,git(f.repo,['rev-parse','HEAD']));
+});
+const pause=ms=>new Promise(r=>setTimeout(r,ms));
+const alive=pid=>{try{process.kill(pid,0);return true;}catch{return false;}};
+async function until(check,ms=20000) {const end=Date.now()+ms;for(;;){const v=check();if(v)return v;if(Date.now()>end)throw new Error('condition not met in time');await pause(50);}}
+test('4.0.6 complete hands a slow delivery to ONE detached worker and returns a receipt within its budget',async t=>{
+  const f=fixture(t,{kind:'git'});note(f);const {s,run}=prepared(f);const j=judgment(f,s,run);put(join(f.dir,'gh-slow'),'4000');
+  const started=Date.now();const first=await completeInBackground(s,run.id,j,{receiptWithinMs:300});
+  assert.ok(Date.now()-started<3000,'the receipt does not wait for delivery');
+  assert.equal(first.status,'delivering');assert.equal(first.processed,false);assert.ok(first.delivery.pid);assert.match(first.next,/harvest-status|complete/);
+  t.after(()=>{try{process.kill(first.delivery.pid,'SIGKILL');}catch{}});
+  assert.ok(readRun(s,run.id).judgment,'the judgment is persisted before delivery');
+  const again=await completeInBackground(s,run.id,join(f.dir,'no-such-judgment.json'),{receiptWithinMs:100});
+  assert.equal(again.status,'delivering');assert.equal(again.delivery.pid,first.delivery.pid,'a second complete never starts another worker');
+  const done=await completeInBackground(s,run.id,join(f.dir,'no-such-judgment.json'),{receiptWithinMs:20000});
+  assert.equal(done.status,'processed');assert.equal(done.receipts.project.status,'delivered');assert.equal(readJSON(join(f.dir,'pr.json')).length,1);
+  const after=readRun(s,run.id);assert.equal(after.delivery.state,'done');assert.match(after.delivery.step,/project: delivered/);
+  assert.ok(fs.existsSync(join(dirname(join(s.bindings.stateDir,'sources',s.id,'runs',run.id,'run.json')),'delivery.log')),'the worker writes to a log in the run directory');
+});
+test('4.0.6 the delivery worker outlives the complete call that started it',async t=>{
+  const f=fixture(t,{kind:'git'});note(f);const {s,run}=prepared(f);const j=judgment(f,s,run);put(join(f.dir,'gh-slow'),'1500');
+  const workerModule=new URL('../oats-package/capabilities/oats-okf/lib/worker.mjs',import.meta.url).href,sourceModule=new URL('../oats-package/capabilities/oats-okf/lib/sources.mjs',import.meta.url).href;
+  const code=`import {loadSource} from ${JSON.stringify(sourceModule)};import {completeInBackground} from ${JSON.stringify(workerModule)};const r=await completeInBackground(loadSource(${JSON.stringify(s.file)}),${JSON.stringify(run.id)},${JSON.stringify(j)},{receiptWithinMs:100});process.stdout.write(JSON.stringify(r));process.exit(0);`;
+  const child=spawnSync(process.execPath,['--input-type=module','-e',code],{env:process.env,encoding:'utf8'});assert.equal(child.status,0,child.stderr);
+  const answer=JSON.parse(child.stdout);assert.equal(answer.status,'delivering');t.after(()=>{try{process.kill(-answer.delivery.pid,'SIGKILL');}catch{}});
+  await until(()=>readRun(s,run.id).delivery?.state==='done');
+  assert.equal(readRun(s,run.id).receipts.project.status,'delivered');assert.equal(readJSON(join(f.dir,'pr.json')).length,1);
+});
+test('4.0.6 a complete killed after persisting its judgment leaves a resumable run and a reclaimable lock',async t=>{
+  const f=fixture(t,{kind:'git'});note(f);const {s,run}=prepared(f);const j=judgment(f,s,run);
+  const workerModule=new URL('../oats-package/capabilities/oats-okf/lib/worker.mjs',import.meta.url).href,sourceModule=new URL('../oats-package/capabilities/oats-okf/lib/sources.mjs',import.meta.url).href;
+  const code=`import {loadSource} from ${JSON.stringify(sourceModule)};import {completeInBackground} from ${JSON.stringify(workerModule)};await completeInBackground(loadSource(${JSON.stringify(s.file)}),${JSON.stringify(run.id)},${JSON.stringify(j)},{afterJudgment:()=>process.kill(process.pid,'SIGKILL')});`;
+  const child=spawnSync(process.execPath,['--input-type=module','-e',code],{env:process.env,encoding:'utf8'});assert.equal(child.signal,'SIGKILL',child.stderr);
+  const lock=join(dirname(s.file),'worker.lock');assert.ok(fs.existsSync(lock),'the killed holder left its lock');
+  const judged=readRun(s,run.id);assert.ok(judged.judgment,'the judgment was persisted');assert.deepEqual(judged.receipts,{});
+  fs.rmSync(j);
+  const r=await completeInBackground(s,run.id,j,{receiptWithinMs:20000});
+  assert.equal(r.status,'processed','the rerun reclaims the dead lock and resumes without the judgment file');assert.equal(readJSON(join(f.dir,'pr.json')).length,1);
+});
+test('4.0.6 a delivery worker killed mid-publish is resumed without a duplicate push or PR',async t=>{
+  const f=fixture(t,{kind:'git'});note(f);const {s,run}=prepared(f);const j=judgment(f,s,run);put(join(f.dir,'gh-slow'),'30000');
+  const first=await completeInBackground(s,run.id,j,{receiptWithinMs:100});
+  const pid=first.delivery.pid;t.after(()=>{try{process.kill(-pid,'SIGKILL');}catch{}});
+  await until(()=>readRun(s,run.id).receipts.project?.status==='pr-intent');
+  const pushed=readRun(s,run.id).receipts.project.commit;
+  process.kill(-pid,'SIGKILL');await until(()=>!alive(pid));fs.rmSync(join(f.dir,'gh-slow')); // the worker leads its own process group, gh included
+  const stalled=await completeInBackground(s,run.id,j,{receiptWithinMs:20000});
+  assert.equal(stalled.status,'processed');assert.notEqual(stalled.delivery?.pid,pid);
+  assert.equal(stalled.receipts.project.commit,pushed,'the pushed commit is reused, never rebuilt or force-pushed');
+  assert.equal(readJSON(join(f.dir,'pr.json')).length,1);
+});
+test('4.0.6 retry reports a live delivery and refuses to rejudge under it',async t=>{
+  const f=fixture(t,{kind:'git'});note(f);const {s,run}=prepared(f);const j=judgment(f,s,run);put(join(f.dir,'gh-slow'),'4000');
+  const first=await completeInBackground(s,run.id,j,{receiptWithinMs:100});t.after(()=>{try{process.kill(-first.delivery.pid,'SIGKILL');}catch{}});
+  const r=retry(s);assert.equal(r.status,'delivering');assert.equal(r.delivery.pid,first.delivery.pid);
+  assert.throws(()=>retry(s,{rejudge:true}),e=>e.code==='E_RECOVERY' && /in progress/.test(e.message));
+  await until(()=>readRun(s,run.id).delivery?.state==='done');
+});
+test('4.0.6 a delivery that fails before it starts records why',t=>{
+  const f=fixture(t,{kind:'git'});note(f);const {s,run}=prepared(f);const j=judgment(f,s,run);put(join(f.dir,'gh-fail'),'1');
+  assert.throws(()=>complete(s,run.id,j));
+  const status=loadStatus(s);status.recoveries={[run.id]:'99999999-9999-4999-8999-999999999999'};saveStatus(s,status);
+  assert.throws(()=>deliver(s,run.id),e=>e.code==='E_RECOVERY');
+  const recorded=readRun(s,run.id).delivery;assert.equal(recorded.state,'failed');assert.equal(recorded.error.code,'E_RECOVERY');assert.equal(recorded.pid,process.pid);
+});
+test('4.0.6 the complete command answers with a receipt and delivers in the background',t=>{
+  const f=fixture(t,{kind:'git'});note(f);const {s,run}=prepared(f);const j=judgment(f,s,run);
+  const r=f.cli('complete',['--source',s.file,'--run',run.id,'--judgment',j]);assert.equal(r.status,0,r.stdout+r.stderr);
+  assert.equal(r.out.result.status,'processed');assert.equal(r.out.result.receipts.project.status,'delivered');assert.equal(readRun(s,run.id).delivery.state,'done');
+});
+test('4.0.6 delivery from a partial stage fetches no blob outside the root',t=>{
+  const f=fixture(t,{kind:'git'});git(f.repo,['config','uploadpack.allowFilter','true']);
+  note(f);const {s,run}=prepared(f);const j=judgment(f,s,run);
+  const checkout=run.stages.project.checkout,outside=git(f.repo,['rev-parse','HEAD:code.txt']);
+  assert.equal(git(checkout,['config','--get','remote.origin.promisor']),'true','a real partial stage');
+  const absent=()=>spawnSync('git',['-C',checkout,'cat-file','-e',outside],{env:{...process.env,GIT_NO_LAZY_FETCH:'1'}}).status!==0;
+  assert.ok(absent(),'staging fetched no blob outside the root');
+  const r=complete(s,run.id,j);assert.equal(r.receipts.project.status,'delivered');
+  assert.ok(absent(),'delivery fetched no blob outside the root');
+  assert.equal(git(f.repo,['show',`${r.receipts.project.commit}:code.txt`]),'code baseline','the outside entry is the accepted one');
 });
 test('migration preserves originals, rewrites root links, delivers directory and explicitly cuts over',t=>{
   const f=fixture(t);const legacy=join(f.soul,'knowledge');put(join(legacy,'index.md'),'---\nokf_version: "0.1"\n---\n\n# Old\n* [Rationale](/rationale.md) - Why.\n');put(join(legacy,'rationale.md'),'---\ntype: Decision\ntitle: Rationale\ndescription: Why.\n---\n\nPreserved human rationale.\n');put(join(legacy,'log.md'),'# History\n');const original=tree(legacy);
@@ -978,6 +1098,12 @@ test('custody R1 actual full publication tree diff rejects an out-of-base index 
   gitWrapper(f,`if(a.includes('write-tree') && process.env.GIT_INDEX_FILE) {fs.writeFileSync(cwd+'/code.txt','unauthorized publication index\\n');execFileSync(real,['-C',cwd,'add','code.txt']);fs.writeFileSync(cwd+'/code.txt','code baseline\\n');}`);
   assert.throws(()=>complete(s,run.id,j),/publication tree changes files outside/);noPublication(f,s);
 });
+test('4.0.6 the publication tree of a partial stage still refuses an out-of-base index change',t=>{
+  const f=fixture(t,{kind:'git'});git(f.repo,['config','uploadpack.allowFilter','true']);note(f);const {s,run}=prepared(f),j=judgment(f,s,run);
+  // Independently exercise the final tree guard, after both scope checks.
+  gitWrapper(f,`if(a.includes('write-tree') && process.env.GIT_INDEX_FILE) {fs.writeFileSync(cwd+'/code.txt','unauthorized publication index\\n');execFileSync(real,['-C',cwd,'add','code.txt']);fs.writeFileSync(cwd+'/code.txt','code baseline\\n');}`);
+  assert.throws(()=>complete(s,run.id,j),/publication tree changes files outside/);noPublication(f,s);
+});
 for(const mode of ['local','ambient','multiple','pushInsteadOf']) test(`custody R1 ${mode} effective push destination fails BEFORE unauthorized transfer`,t=>{
   const f=fixture(t,{kind:'git'}),wrong=join(f.dir,'unapproved.git');fs.mkdirSync(wrong);git(wrong,['init','--bare','-q']);
   const before=tree(wrong);note(f);const {s,run}=prepared(f),j=judgment(f,s,run),cwd=run.stages.project.checkout;
@@ -1137,7 +1263,8 @@ test('custody R2 late replacement refs cannot contaminate private baseline or tr
   const r=complete(s,run.id,j);assert.equal(r.processed,true);
   const recorded=fs.readFileSync(calls,'utf8').trim().split('\n').map(JSON.parse);
   for(const c of recorded.filter(c=>c.a.includes('core.hooksPath=/dev/null'))) {assert.ok(c.a.includes('--no-replace-objects'));assert.equal(c.env,'1');}
-  for(const cmd of ['clone','fetch','diff','read-tree','write-tree','commit-tree','cat-file','ls-tree','push']) assert.ok(recorded.some(c=>c.a.includes(cmd)),cmd);
+  // complete confirms the baseline by a fetch into the stage: it clones only for recovery.
+  for(const cmd of ['fetch','diff','read-tree','write-tree','commit-tree','cat-file','ls-tree','push']) assert.ok(recorded.some(c=>c.a.includes(cmd)),cmd);
   fs.rmSync(join(f.dir,'bin/git'));
   assert.equal(git(f.repo,['--no-replace-objects','show',`${r.receipts.project.commit}:code.txt`]),'code baseline');
   assert.equal(git(f.repo,['--no-replace-objects','cat-file','commit',r.receipts.project.commit]).split('\n').filter(l=>l.startsWith('parent ')).join('\n'),`parent ${stage.head}`);
@@ -1148,11 +1275,11 @@ for(const defect of ['tree','parent']) test(`custody R2 final raw commit verific
   // replacement. The final guard must inspect what Git will actually publish.
   const mutation=defect==='tree'?`fs.writeFileSync(cwd+'/code.txt','unauthorized actual object\\n');execFileSync(real,['-C',cwd,'add','--all']);badArgs[badArgs.indexOf('commit-tree')+1]=execFileSync(real,['-C',cwd,'write-tree'],{encoding:'utf8'}).trim();`:`badArgs.splice(badArgs.indexOf('-p'),2);`;
   gitWrapper(f,`if(a.includes('commit-tree')) {const good=execFileSync(real,a,{encoding:'utf8'}).trim(),badArgs=[...a];${mutation}const bad=execFileSync(real,badArgs,{encoding:'utf8'}).trim();execFileSync(real,['-C',cwd,'replace','-f',bad,good]);console.log(bad);process.exit(0);}`);
-  assert.throws(()=>complete(s,run.id,j),defect==='tree'?/publication tree changes files outside/:/exactly the frozen baseline as its parent/);noPublication(f,s);
+  assert.throws(()=>complete(s,run.id,j),defect==='tree'?/publication tree changes files outside/:/exactly its recorded accepted parent/);noPublication(f,s);
   const receipt=readRun(s,run.id).receipts.project;assert.equal(receipt.status,'committed');
   // Retry re-verifies the immutable object, even with a persisted commit receipt.
   fs.rmSync(join(f.dir,'bin/git'));
-  assert.throws(()=>retry(s),defect==='tree'?/publication tree changes files outside/:/exactly the frozen baseline as its parent/);noPublication(f,s);
+  assert.throws(()=>retry(s),defect==='tree'?/publication tree changes files outside/:/exactly its recorded accepted parent/);noPublication(f,s);
 });
 function journalCrash(f,s,run,j,base,phase='before-install') {
   const code=`import fs from 'node:fs';import {syncBuiltinESMExports} from 'node:module';import {loadSource} from ${JSON.stringify(new URL('../oats-package/capabilities/oats-okf/lib/sources.mjs',import.meta.url).href)};import {complete} from ${JSON.stringify(new URL('../oats-package/capabilities/oats-okf/lib/worker.mjs',import.meta.url).href)};
@@ -1773,6 +1900,16 @@ test('4.0.0 harvest-status and setup --harvest report and edit only the deployme
   f.cli('setup',['--harvest','off'],{OATS_WORKSPACE:ws});assert.match(fs.readFileSync(join(ws,'oats-local.yaml'),'utf8'),/ {4}harvest: off\n/);
   put(join(ws,'oats-local.yaml'),'settings: {oats.okf: {harvest: off}}\n');const flow=f.cli('setup',['--harvest','on'],{OATS_WORKSPACE:ws});assert.equal(flow.out.result.written,false);assert.match(flow.out.result.add,/harvest: on/);
   assert.equal(f.cli('setup',['--harvest','yes'],{OATS_WORKSPACE:ws}).out.error.code,'E_USAGE');assert.equal(f.cli('setup',['--harvest','on','--enable'],{OATS_WORKSPACE:ws}).out.error.code,'E_USAGE');
+});
+test('4.0.6 harvest-status reports unknown, with the reason, when the soul opt-out cannot be read',t=>{
+  const f=fixture(t);f.source();
+  const unset=f.cli('harvest-status',[],{OATS_SOUL:''});assert.equal(unset.status,0,unset.stdout+unset.stderr);
+  assert.equal(unset.out.result.harvest,'unknown','an unreadable opt-out is not a definite off');assert.match(unset.out.result.reason,/OATS_SOUL unset/);assert.match(unset.out.result.reason,/capture treats it as off/);
+  put(join(f.soul,'soul.yaml'),'name: source\nknowledge: {harvest: {nested: off}}\n');
+  const bad=f.cli('harvest-status');assert.equal(bad.out.result.harvest,'unknown');assert.match(bad.out.result.reason,/flow mapping/);
+  // A deployment that does not switch harvest on is a definite off, whatever the soul says.
+  const off=f.cli('harvest-status',[],{OATS_SETTINGS:JSON.stringify({...JSON.parse(process.env.OATS_SETTINGS),harvest:'off'})});assert.equal(off.out.result.harvest,'off');
+  put(join(f.soul,'soul.yaml'),'name: source\nknowledge: { harvest: off }\n');assert.equal(f.cli('harvest-status').out.result.harvest,'off','a readable opt-out is off');
 });
 test('4.0.0 judgment: transcript promotions cite their turn ids; task refs are bounded strings',t=>{
   const f=fixture(t),s=f.source();records(f,2,64);capture(s);const r=runSource(s,{manual:true,noLaunch:true});const run=readRun(s,r.run);
