@@ -404,6 +404,37 @@ export function confirmGitBaseline(base,stage,{alias=base.id}={}) {
   }
   fail('E_BASELINE','accepted base changed; rejudge on fresh baseline');
 }
+const MERGE_VERDICTS=['merge','amend+merge'],REVIEWER_ASSOCIATIONS=['OWNER','MEMBER','COLLABORATOR'];
+/** The verdict of the latest okf-review comment (the knowledge-review skill's
+ *  record) that a repository member left on `pr` for the head it merged: a
+ *  merge verdict, or null when there is none or it is not a merge. */
+function mergeVerdict(base,pr,cwd) {
+  const {comments}=JSON.parse(exec('gh',['pr','view',String(pr.number),'--repo',base.pr.repository,'--json','comments'],{cwd,env:gitEnv()}));
+  for(const comment of [...(Array.isArray(comments)?comments:[])].reverse()) {
+    if(!REVIEWER_ASSOCIATIONS.includes(comment?.authorAssociation)) continue;
+    const block=/```okf-review[ \t]*\n([\s\S]*?)\n```/.exec(String(comment.body || ''));
+    let review;try {review=block && JSON.parse(block[1]);} catch {continue;}
+    if(review?.pr===pr.url && review.headSha===pr.headRefOid) return MERGE_VERDICTS.includes(review.verdict)?review.verdict:null;
+  }
+  return null;
+}
+/** Record acceptance of the receipt's merged PR, at its merge commit. The PR
+ *  was merged either at the delivered commit, or at a head the maintainer
+ *  amended, which a member's okf-review merge verdict must name. Either way the
+ *  merge settles the inputs: never a baseline check, never a rejudge. */
+function acceptMerged(base,cwd,branch,receipt,pr,persist,acceptedHead) {
+  if(pr.headRefName!==branch || pr.baseRefName!==base.acceptedBranch || !Number.isInteger(pr.number) || !/^https:\/\//.test(pr.url) || (receipt.pr && (pr.number!==receipt.pr.number || pr.url!==receipt.pr.url))) fail('E_PR','merged PR identity/head/base could not be verified');
+  const merge=pr.mergeCommit?.oid;
+  if(!merge) fail('E_CONFIRM','merged PR lacks merge commit');
+  let verdict=null;
+  if(pr.headRefOid!==receipt.commit) {
+    verdict=mergeVerdict(base,pr,cwd);
+    if(!verdict) fail('E_PR',`PR ${pr.url} was merged at head ${pr.headRefOid}, not at the delivered commit ${receipt.commit}, and no okf-review verdict (merge or amend+merge) from a repository member names that head; record the maintainer's verdict on the PR, then run complete again (merged inputs need no rejudgment)`);
+  }
+  git(cwd,['merge-base','--is-ancestor',merge,acceptedHead]);
+  Object.assign(receipt,{status:'accepted',acceptedCommit:acceptedHead,mergeCommit:merge,...(verdict?{mergedHead:pr.headRefOid,verdict}:{}),acceptedAt:new Date().toISOString()});persist();
+  return receipt;
+}
 export function gitPublish(base, stage, proposal, receipt, persist, {beforePublish=()=>{},prIdentity=receipt.pr,pr:presentation}={}) {
   const cwd=stage.checkout, branch=`okf/${proposal.attempt || proposal.run}-${base.id}`;
   verifyRemote(base,cwd);
@@ -412,6 +443,12 @@ export function gitPublish(base, stage, proposal, receipt, persist, {beforePubli
   // The judged root must still be accepted. A head that moved outside it is
   // delivered onto; changed root bytes are never rebased without rejudging.
   const accepted=fetchAccepted(base,cwd);
+  // A known PR that is merged is settled by its merge, whatever the accepted
+  // branch holds now (the merge itself changes the root).
+  if(receipt.commit && prIdentity) {
+    const [known]=prRows(base,branch,cwd,{identity:prIdentity});
+    if(known.mergedAt) return acceptMerged(base,cwd,branch,receipt,known,persist,accepted);
+  }
   if(accepted!==receipt.confirmedHead && !rootUnchanged(base,stage,cwd,accepted)) {
     // A known or uncertain previously created PR may be reconciled, but a
     // committed/pushed proposal alone does not authorize a NEW stale-base PR.
@@ -490,13 +527,7 @@ export function gitPublish(base, stage, proposal, receipt, persist, {beforePubli
   if(matching.length!==1 || rows.length!==1) {receipt.status='pr-unknown';persist();fail('E_PR','actual PR identity/head/base could not be uniquely verified');}
   const pr=matching[0];receipt.pr=pr;receipt.status='delivered';receipt.deliveredAt ||= new Date().toISOString();persist();
   if(pr.state==='CLOSED' && !pr.mergedAt) {receipt.status='rejected';persist();fail('E_PR','PR closed without merge; retained proposal requires operator review');}
-  if(pr.mergedAt) {
-    git(cwd,['fetch','origin',`refs/heads/${base.acceptedBranch}`],{timeout:gitTimeoutMs()});
-    const merge=pr.mergeCommit?.oid;
-    if(!merge) fail('E_CONFIRM','merged PR lacks merge commit');
-    git(cwd,['merge-base','--is-ancestor',merge,'FETCH_HEAD']);
-    receipt.status='accepted';receipt.acceptedCommit=git(cwd,['rev-parse','FETCH_HEAD']);receipt.acceptedAt=new Date().toISOString();persist();
-  }
+  if(pr.mergedAt) acceptMerged(base,cwd,branch,receipt,pr,persist,fetchAccepted(base,cwd));
   return receipt;
 }
 
