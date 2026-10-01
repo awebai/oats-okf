@@ -2100,3 +2100,9 @@ test('4.1.0 harvest --once is the operator\'s: refused from inside the target se
   assert.throws(()=>harvestOnce({home:f.home,records:o.file,noLaunch:true}),e=>e.code==='E_INVOCATION' && /another-soul/.test(e.message));
   assert.deepEqual(o.sources(),[]);
 });
+test('4.1.0 a one-shot writes only the nodes its soul owns; other nodes stay read-only',t=>{
+  const o=onceFixture(t);const {f}=o;
+  const r=harvestOnce({home:f.home,records:o.file,noLaunch:true});const s=loadSource(r.source);const run=readRun(s,r.run);
+  assert.throws(()=>complete(s,run.id,judgment(f,s,run,{node:'peer'})),e=>['E_JUDGMENT','E_OWNER'].includes(e.code));
+  assert.equal(fs.existsSync(join(f.dir,'pr.json')),false,'nothing was published');
+});
