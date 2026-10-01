@@ -1,5 +1,24 @@
 # Changelog
 
+## 4.0.7 — 2026-10-01
+
+### Fixed
+
+- **`complete` records acceptance of an amended and merged PR** (#32). After
+  the maintainer's `amend+merge` verdict, `oats okf complete --run <id>`
+  failed with `E_BASELINE`, and the receipt stayed `delivered`. The merge
+  itself changes the root, and the PR head was no longer the harvester's
+  commit. Now:
+  - A known PR that is merged is settled before any baseline check. The
+    receipt becomes `accepted`, with `mergeCommit` and the accepted head.
+  - If the PR was merged at a head other than the delivered commit, an
+    `okf-review` verdict (`merge` or `amend+merge`) must name that head as
+    `headSha`, from a repository member or from the account that merged the
+    PR. The receipt also records `mergedHead`
+    and `verdict`.
+  - Without such a verdict, `complete` fails with `E_PR`, naming the remedy.
+    It never fails with `E_BASELINE`, and never rejudges merged inputs.
+
 ## 4.0.6 — 2026-10-01
 
 ### Fixed

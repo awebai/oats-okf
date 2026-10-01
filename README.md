@@ -1,6 +1,13 @@
 # oats.okf 4 — external knowledge, consulted remotely, independent judgment
 
-The official OKF knowledge capability: **4.0.6**, requiring **OATS >=0.29.0**.
+The official OKF knowledge capability: **4.0.7**, requiring **OATS >=0.29.0**.
+
+## 4.0.7 — acceptance of an amended and merged PR
+
+`oats okf complete --run <id>` after the maintainer's `amend+merge` verdict
+records acceptance of the merged PR at its merge commit. It no longer fails
+with `E_BASELINE`, and nothing is rejudged. See
+[CHANGELOG.md](CHANGELOG.md).
 
 ## 4.0.6 — harvest completion on a real host
 
@@ -216,7 +223,7 @@ compatibility is declared by the manifests and this guide.
 
 ## Configuration and ownership
 
-A workspace declares the package (`packages: { oats.okf: v4.0.6 }`) and selects
+A workspace declares the package (`packages: { oats.okf: v4.0.7 }`) and selects
 it as the knowledge capability (`defaults: { knowledge: { oats.okf: { from:
 package } } }`, or per soul). Each deployment points it at its bindings file
 in its own `oats-local.yaml`:
@@ -889,7 +896,23 @@ journal after operator inspection, never delete it to bypass recovery. These
 proofs assume all writers obey the lock/journal protocol, not arbitrary deletion
 of coordination state. Frozen ownership checks still apply.
 Once a PR merges, repeat **complete with the same source/run**, without judgment,
-to reconcile merge-visible acceptance. Durable proposals can reconstruct a real
+to reconcile merge-visible acceptance. A merged PR is settled by its merge, before
+any baseline check: the receipt becomes `accepted`, with the `mergeCommit`.
+
+The maintainer may amend the PR branch before merging it (the knowledge-review
+skill's `amend+merge`). Its head is then not the delivered commit. Acceptance
+then requires an `okf-review` verdict comment that:
+- comes from a repository member, collaborator or owner, or from the account
+  that merged the PR;
+- has verdict `merge` or `amend+merge`;
+- names the merged head as its `headSha`.
+
+A maintainer running on a GitHub App installation token has no member
+association, but its verdict counts when the same account merged the PR.
+
+The receipt also records `mergedHead` and `verdict`. A merged PR without such a
+verdict fails with `E_PR`, naming the remedy (record the verdict, then complete
+again). Merged inputs are never rejudged. Durable proposals can reconstruct a real
 Git delivery checkout if the old worker disappeared. No source home is required.
 
 ### Closed-after-delivery recovery

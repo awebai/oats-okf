@@ -152,7 +152,7 @@ test('exported payload version, floor, required hooks and complete command inven
   assert.equal(fs.existsSync(join(CAP,'agents')),false,'the harvester is the package soul oats.okf/knowledge-harvester, not a capability agent');
   assert.ok(fs.statSync(join(ROOT,'oats-package/souls/knowledge-harvester/AGENTS.md')).isFile(),'the harvester soul keeps its one canonical instruction file');
   const m=readJSON(join(CAP,'oats.json')),distribution=readJSON(join(ROOT,'oats-package/oats-package.json'));
-  for(const manifest of [readJSON(join(ROOT,'package.json')),distribution,m])assert.equal(manifest.version,'4.0.6');
+  for(const manifest of [readJSON(join(ROOT,'package.json')),distribution,m])assert.equal(manifest.version,'4.0.7');
   for(const manifest of [distribution,m])assert.equal(manifest.compatibility.oats,'>=0.29.0');
   assert.equal(m.hooks.spawn.required,true);
   for(const c of ['harvest','inspect','setup','run-source','complete','retry','migrate','read','refresh','init','bases','index','cat','ls','links','search','harvest-status']) assert.ok(m.commands[c]);
@@ -761,6 +761,54 @@ test('failed Git publication survives worker deletion, then merge-visible accept
   // Simulate native GitHub merge with actual Git history and deterministic gh.
   git(f.repo,['merge','--ff-only',r.branch]);const pr=readJSON(join(f.dir,'pr.json'));pr[0].state='MERGED';pr[0].mergedAt='2026-09-13T12:00:00Z';pr[0].mergeCommit={oid:r.commit};save(join(f.dir,'pr.json'),pr);
   const accepted=complete(s,run.id);assert.equal(accepted.receipts.project.status,'accepted');assert.equal(loadStatus(s).accepted[`${run.id}/project`].acceptedCommit,r.commit);
+});
+/** A delivered Git run whose PR the maintainer amended (a commit on the PR branch) and squash-merged. */
+function amendedAndMerged(t,{verdict='amend+merge',headSha,association='OWNER',author='host',mergedBy='maintainer',comment=true,crlf=false,uncertain=false}={}) {
+  const f=fixture(t,{kind:'git'});note(f);const {s,run}=prepared(f);const j=judgment(f,s,run);
+  // uncertain: gh created the PR but failed, so the receipt has no PR identity.
+  if(uncertain) {put(join(f.dir,'gh-uncertain'),'1');assert.throws(()=>complete(s,run.id,j));fs.rmSync(join(f.dir,'gh-uncertain'));}
+  else complete(s,run.id,j);
+  const r=readRun(s,run.id).receipts.project;assert.equal(r.status,uncertain?'pr-unknown':'delivered');
+  const cid=['-c','user.name=Maintainer','-c','user.email=maintainer@example.invalid'];
+  git(f.repo,['checkout','-q',r.branch]);fs.appendFileSync(join(f.repo,'knowledge/expert/decision.md'),'Superseded wording, amended in review.\n');
+  git(f.repo,['add','.']);git(f.repo,[...cid,'commit','-qm','okf-review amendment']);const amended=git(f.repo,['rev-parse','HEAD']);
+  git(f.repo,['checkout','-q','main']);git(f.repo,['merge','--squash','-q',r.branch]);git(f.repo,[...cid,'commit','-qm','squash merge']);const merge=git(f.repo,['rev-parse','HEAD']);
+  const pr=readJSON(join(f.dir,'pr.json'));
+  const block=JSON.stringify({verdict,pr:pr[0].url,headSha:headSha ?? amended,checks:{},amendments:['expert/decision.md: wording'],reason:'fixable'});
+  Object.assign(pr[0],{state:'MERGED',mergedAt:'2026-10-01T12:00:00Z',mergeCommit:{oid:merge},headRefOid:amended,mergedBy:typeof mergedBy==='string'?{login:mergedBy}:mergedBy,
+    comments:comment?[{author:{login:author},authorAssociation:association,body:`<!-- okf-review -->\n\`\`\`okf-review\n${block}\n\`\`\`\nProse.`.replaceAll('\n',crlf?'\r\n':'\n')}]:[]});
+  save(join(f.dir,'pr.json'),pr);
+  return {f,s,run,r,amended,merge};
+}
+test('4.0.7 an amend+merge verdict at the merged head records acceptance with the merge commit, never E_BASELINE',t=>{
+  const {f,s,run,r,amended,merge}=amendedAndMerged(t);
+  const done=complete(s,run.id);const receipt=done.receipts.project;
+  assert.equal(receipt.status,'accepted');assert.equal(receipt.mergeCommit,merge);assert.equal(receipt.mergedHead,amended);assert.equal(receipt.commit,r.commit,'the delivered commit stays on the receipt');
+  assert.equal(receipt.verdict,'amend+merge');assert.equal(done.status,'processed');assert.equal(loadStatus(s).accepted[`${run.id}/project`].mergeCommit,merge);
+  assert.equal(complete(s,run.id).receipts.project.status,'accepted','a repeat is a no-op');
+});
+test('4.0.7 a merge verdict at the merged head is accepted too',t=>{
+  const {s,run}=amendedAndMerged(t,{verdict:'merge'});assert.equal(complete(s,run.id).receipts.project.status,'accepted');
+});
+test('4.0.7 a verdict from the account that merged is accepted even with no member association (a GitHub App token)',t=>{
+  // gh's shapes for an App: mergedBy is app/<name>, a comment author is <name>.
+  const {s,run}=amendedAndMerged(t,{association:'NONE',author:'okf-maintainer',mergedBy:{is_bot:true,login:'app/okf-maintainer'}});
+  assert.equal(complete(s,run.id).receipts.project.status,'accepted');
+});
+test('4.0.7 a verdict written in GitHub\'s web UI (CRLF line endings) is read',t=>{
+  const {s,run}=amendedAndMerged(t,{crlf:true});assert.equal(complete(s,run.id).receipts.project.status,'accepted');
+});
+test('4.0.7 an amended merge of a PR whose creation was uncertain is settled by its merge too',t=>{
+  const {s,run,amended,merge}=amendedAndMerged(t,{uncertain:true});const receipt=complete(s,run.id).receipts.project;
+  assert.equal(receipt.status,'accepted');assert.equal(receipt.mergeCommit,merge);assert.equal(receipt.mergedHead,amended);
+});
+test('4.0.7 a merged PR whose head is not the delivered commit needs a member\'s merge verdict naming that head; never E_BASELINE or a rejudge',t=>{
+  for(const [why,opts] of [['no verdict',{comment:false}],['a verdict for another head',{headSha:'f'.repeat(40)}],['a close verdict',{verdict:'close'}],['a verdict by a non-member who did not merge',{association:'NONE',author:'drive-by',mergedBy:'maintainer'}],['a non-member App verdict when another App merged',{association:'NONE',author:'drive-by',mergedBy:{is_bot:true,login:'app/okf-maintainer'}}]]) {
+    const {s,run}=amendedAndMerged(t,opts);
+    assert.throws(()=>complete(s,run.id),e=>e.code==='E_PR' && /merged at head/.test(e.message) && /okf-review/.test(e.message),why);
+    assert.equal(readRun(s,run.id).receipts.project.status,'delivered',why);
+    assert.throws(()=>retry(s,{run:run.id,rejudge:true}),e=>e.code==='E_RECOVERY' && /merged at an amended head .*run complete/.test(e.message),why);
+  }
 });
 test('existing, overlapping and hidden directory stages cannot bypass publication',t=>{
   const f=fixture(t);assert.throws(()=>stageBase(f.base,f.base.path),/exists/);assert.throws(()=>stageBase(f.base,join(f.base.path,'nested')),/overlaps/);
