@@ -1,5 +1,5 @@
 import test from 'node:test';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -20,6 +20,7 @@ const {cat:consultCat,acceptedResolution}=await mod('consult');
 /** An okf 3.0.0 consult read of one accepted file (no local view). */
 const readAccepted=(s,path='/expert/index.md',alias=Object.keys(s.bindings.bases)[0])=>consultCat(s,{base:alias},[path]).result;
 const {runSource,readRun,complete,completeInBackground,deliver,retry,completionArgv,completionCommand}=await mod('worker');
+const {harvestOnce}=await mod('once');
 const {initBase,migrate,deliverMigration,cutoverMigration}=await mod('migration');
 const {stageBase,baseLock,journalPath,directoryPublish}=await mod('stores');
 const {inspect:inspectSource,capturedAuthority}=await mod('inspection');
@@ -152,7 +153,7 @@ test('exported payload version, floor, required hooks and complete command inven
   assert.equal(fs.existsSync(join(CAP,'agents')),false,'the harvester is the package soul oats.okf/knowledge-harvester, not a capability agent');
   assert.ok(fs.statSync(join(ROOT,'oats-package/souls/knowledge-harvester/AGENTS.md')).isFile(),'the harvester soul keeps its one canonical instruction file');
   const m=readJSON(join(CAP,'oats.json')),distribution=readJSON(join(ROOT,'oats-package/oats-package.json'));
-  for(const manifest of [readJSON(join(ROOT,'package.json')),distribution,m])assert.equal(manifest.version,'4.0.7');
+  for(const manifest of [readJSON(join(ROOT,'package.json')),distribution,m])assert.equal(manifest.version,'4.1.0');
   for(const manifest of [distribution,m])assert.equal(manifest.compatibility.oats,'>=0.29.0');
   assert.equal(m.hooks.spawn.required,true);
   for(const c of ['harvest','inspect','setup','run-source','complete','retry','migrate','read','refresh','init','bases','index','cat','ls','links','search','harvest-status']) assert.ok(m.commands[c]);
@@ -2004,4 +2005,98 @@ for (const [label, arrange, env, why] of [['the deployment switched off', () => 
 });
 test('4.0.1 registration records the soul directory for later switch re-reads', t => {
   const f = fixture(t); const s = f.source(); assert.equal(s.soulDir, fs.realpathSync(f.soul));
+});
+
+// ------------------------------------------------------------------ 4.1.0 one-shot harvest (#37)
+const sha256=bytes=>createHash('sha256').update(bytes).digest('hex');
+/** A harvest-off seat run by the operator (no instance env), with notes in its
+ *  home and one archived note, and a manifest naming them. */
+function onceFixture(t,{notes=2,body=''}={}) {
+  const f=fixture(t,{kind:'git'});
+  process.env.OATS_SETTINGS=JSON.stringify({'bindings-file':f.bindingFile,harvest:'off'});
+  for(const k of ['OATS_HOME','OATS_INSTANCE_HOME','OATS_INSTANCE','OATS_AGENT']) delete process.env[k];
+  const entries=[];
+  for(let i=0;i<notes;i++) {const path=`notes/n${i}.md`,text=`---\ntype: Decision\ntitle: N${i}\n---\n\nNote ${i}: explicit custody prevents hidden fallback.${body}\n`;put(join(f.home,path),text);entries.push({path,sha256:sha256(text)});}
+  const archive=join(f.dir,'archive');const old='---\ntype: Lesson\ntitle: Old\n---\n\nArchived lesson from the classic seat.\n';put(join(archive,'old.md'),old);
+  entries.push({path:join(archive,'old.md'),sha256:sha256(old)});
+  const manifest={version:1,instance:'source-one',roots:[archive],notes:entries};
+  const file=join(f.dir,'manifest.json');const write=(m=manifest)=>{save(file,m);return file;};write();
+  const sources=()=>{const d=join(f.bindings.stateDir,'sources');return fs.existsSync(d)?fs.readdirSync(d):[];};
+  return {f,manifest,file,write,archive,sources};
+}
+test('4.1.0 harvest --once refuses a bad manifest before anything is stored',t=>{
+  const o=onceFixture(t);const {f,manifest}=o;
+  const refuse=(m,code,re,why)=>{assert.throws(()=>harvestOnce({home:f.home,records:o.write(m),noLaunch:true}),e=>e.code===code && re.test(e.message),why);assert.deepEqual(o.sources(),[],`${why}: nothing stored`);};
+  const note=(i,patch)=>({...manifest,notes:manifest.notes.map((n,j)=>j===i?{...n,...patch}:n)});
+  refuse(note(0,{sha256:'0'.repeat(64)}),'E_RECORDS',/sha256 mismatch.*notes\/n0\.md/,'hash mismatch');
+  refuse(note(0,{path:join(f.dir,'elsewhere.md')}),'E_PATH',/outside/,'outside the home and roots');
+  put(join(f.dir,'elsewhere.md'),'x');fs.symlinkSync(join(f.dir,'elsewhere.md'),join(f.home,'notes','link.md'));
+  refuse(note(0,{path:'notes/link.md',sha256:sha256('x')}),'E_PATH',/symlink/,'symlinked file');
+  fs.mkdirSync(join(f.home,'notes','folder.md'));
+  refuse(note(0,{path:'notes/folder.md'}),'E_PATH',/regular file/,'directory entry');
+  fs.linkSync(join(f.home,'notes','n1.md'),join(f.home,'notes','hard.md'));
+  refuse(note(0,{path:'notes/hard.md',sha256:manifest.notes[1].sha256}),'E_PATH',/hardlink/,'hardlink');
+  refuse({...manifest,notes:[manifest.notes[0],manifest.notes[0]]},'E_RECORDS',/duplicate/,'duplicate');
+  refuse(note(0,{path:'notes/n0.txt'}),'E_RECORDS',/\.md/,'not markdown');
+  refuse({...manifest,instance:'someone-else'},'E_RECORDS',/instance/,'another instance');
+  refuse({...manifest,notes:[{path:'notes/*.md',sha256:manifest.notes[0].sha256}]},'E_PATH',/no such file|outside|regular file/,'no globbing');
+  refuse({...manifest,sessions:[{path:'notes/n0.md',sha256:manifest.notes[0].sha256,format:'codex'}]},'E_UNSUPPORTED',/capture-file/,'sessions need the kernel feature');
+  refuse({...manifest,extra:1},'E_RECORDS',/unknown/,'unknown key');
+  fs.symlinkSync(o.archive,join(f.dir,'archive-link'));
+  refuse({...manifest,roots:[join(f.dir,'archive-link')]},'E_PATH',/symlink/,'symlinked root');
+});
+test('4.1.0 harvest --once harvests the listed notes through the normal review path and registers nothing',t=>{
+  const o=onceFixture(t);const {f}=o;const before=fs.readdirSync(f.home).sort();
+  const r=harvestOnce({home:f.home,records:o.file,noLaunch:true});
+  assert.equal(r.status,'ready');assert.equal(r.inputs.total,3);assert.equal(r.inputs.remaining,0);
+  assert.equal(fs.existsSync(join(f.home,'.okf-source.json')),false,'no source marker in the home');
+  assert.deepEqual(fs.readdirSync(f.home).sort(),before,'the home is not written');
+  assert.equal(hasCalls(f).filter(c=>c.a[0]==='schedule' || c.a[0]==='capture').length,0,'no schedule, no capture');
+  const s=loadSource(r.source);assert.equal(s.once.manifestHash.length,64);assert.equal(s.instance,'source-one');assert.equal(s.owner,'owner-1');
+  const once=readJSON(join(dirname(r.source),'once.json'));assert.deepEqual(once.entries.map(e=>e.name),['notes/n0.md','notes/n1.md','old.md']);
+  assert.doesNotMatch(JSON.stringify(once),new RegExp(o.archive.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),'no archive paths in the receipt');
+  const run=readRun(s,r.run);assert.equal(run.inputs.length,3);
+  const task=fs.readFileSync(join(run.worker.home,'TASK.md'),'utf8');assert.match(task,/archived records/);assert.match(task,/never copy third-party/);
+  const done=complete(s,run.id,judgment(f,s,run));assert.equal(done.receipts.project.status,'delivered');
+  const created=readJSON(join(f.dir,'pr-1-created.json'));assert.deepEqual(created.labels,['okf-harvest']);
+  const block=JSON.parse(/```okf-harvest\n([\s\S]*?)\n```/.exec(created.body)[1]);assert.deepEqual(block.once,{manifest:s.once.manifestHash,entries:3,override:false});
+  const again=harvestOnce({home:f.home,records:o.file,noLaunch:true});assert.equal(again.status,'already-delivered');assert.equal(again.source,r.source);
+  assert.equal(readJSON(join(f.dir,'pr.json')).length,1,'a rerun never opens another PR');
+  const st=f.cli('harvest-status',['--home',f.home]);assert.equal(st.status,0,st.stdout+st.stderr);assert.equal(st.out.result.instance.registered,false);
+  assert.deepEqual(st.out.result.sources,[],'one-shots are not registered sources');assert.equal(st.out.result.once.length,1);assert.equal(st.out.result.once[0].state,'delivered');
+});
+test('4.1.0 a large set drains in several runs; each says how many inputs remain',t=>{
+  const o=onceFixture(t,{notes:8,body:' '+'x'.repeat(60000)});const {f}=o;
+  const first=harvestOnce({home:f.home,records:o.file,noLaunch:true});
+  assert.ok(first.inputs.remaining>0);assert.match(first.next,new RegExp(`${first.inputs.remaining} inputs remain; rerun the same command to continue`));
+  const s=loadSource(first.source);let run=readRun(s,first.run);complete(s,run.id,judgment(f,s,run));
+  const second=harvestOnce({home:f.home,records:o.file,noLaunch:true});assert.notEqual(second.run,first.run);
+  assert.equal(second.inputs.total,first.inputs.total);assert.ok(second.inputs.processed>=run.inputs.length);
+  assert.equal(readJSON(join(dirname(first.source),'once.json')).runs.length,2,'the receipt shows the progress');
+  const cli=f.cli('harvest',['--once','--home',f.home,'--records',o.file,'--no-launch']);assert.equal(cli.status,0,cli.stdout+cli.stderr);assert.match(cli.out.result.next,/inputs remain; rerun the same command/);
+  const text=spawnSync(process.execPath,[CLI,'harvest','--once','--home',f.home,'--records',o.file,'--no-launch'],{cwd:f.dir,env:process.env,encoding:'utf8'});
+  assert.equal(text.status,0,text.stderr);assert.match(text.stdout,/one-shot harvest of .*inputs \d+\/\d+ processed; \d+ inputs remain; rerun the same command/);
+});
+test('4.1.0 a different manifest repeating already-harvested notes is refused',t=>{
+  const o=onceFixture(t);const {f,manifest}=o;
+  const r=harvestOnce({home:f.home,records:o.file,noLaunch:true});const s=loadSource(r.source);const run=readRun(s,r.run);complete(s,run.id,judgment(f,s,run));
+  assert.throws(()=>harvestOnce({home:f.home,records:o.write({...manifest,notes:manifest.notes.slice(0,2)}),noLaunch:true}),e=>e.code==='E_ONCE_OVERLAP' && e.message.includes(s.id));
+});
+test('4.1.0 a soul opt-out (or an unreadable one) is refused unless overridden, and the override is recorded',t=>{
+  const o=onceFixture(t);const {f}=o;
+  put(join(f.soul,'soul.yaml'),'name: source\nknowledge: { harvest: off }\n');
+  assert.throws(()=>harvestOnce({home:f.home,records:o.file,noLaunch:true}),e=>e.code==='E_HARVEST_OFF' && /opts out/.test(e.message) && /--override-opt-out/.test(e.message) && /recorded in the PR/.test(e.message));
+  put(join(f.soul,'soul.yaml'),'name: source\nknowledge: {harvest: {nested: off}}\n');
+  assert.throws(()=>harvestOnce({home:f.home,records:o.file,noLaunch:true}),e=>e.code==='E_HARVEST_OFF' && /could not be read/.test(e.message));
+  assert.deepEqual(o.sources(),[]);
+  const r=harvestOnce({home:f.home,records:o.file,noLaunch:true,overrideOptOut:true});const s=loadSource(r.source);assert.equal(s.once.override,true);
+  const run=readRun(s,r.run);complete(s,run.id,judgment(f,s,run));
+  assert.equal(JSON.parse(/```okf-harvest\n([\s\S]*?)\n```/.exec(readJSON(join(f.dir,'pr-1-created.json')).body)[1]).once.override,true);
+});
+test('4.1.0 harvest --once is the operator\'s: refused from inside the target seat or for another soul',t=>{
+  const o=onceFixture(t);const {f}=o;
+  assert.throws(()=>harvestOnce({home:f.home,records:o.file,noLaunch:true,env:{...process.env,OATS_INSTANCE_HOME:f.home}}),e=>e.code==='E_INVOCATION' && /itself/.test(e.message));
+  put(join(f.soul,'soul.yaml'),'name: another-soul\nwork: directory\n');
+  assert.throws(()=>harvestOnce({home:f.home,records:o.file,noLaunch:true}),e=>e.code==='E_INVOCATION' && /another-soul/.test(e.message));
+  assert.deepEqual(o.sources(),[]);
 });

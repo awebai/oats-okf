@@ -10,21 +10,32 @@ function registeredSources(soul) {
   let bindings;
   try { bindings = loadBindings(); } catch (e) { return { error: `${e.code || 'E_CONFIG'}: ${e.message}` }; }
   const dir = join(bindings.stateDir, 'sources');
-  if (!fs.existsSync(dir)) return { stateDir: bindings.stateDir, sources: [] };
-  const rows = [];
+  if (!fs.existsSync(dir)) return { stateDir: bindings.stateDir, sources: [], once: [] };
+  const rows = [], once = [];
   for (const id of fs.readdirSync(dir).sort()) {
-    if (rows.length >= SOURCE_LIMIT) return { stateDir: bindings.stateDir, sources: rows, truncated: true };
+    if (rows.length + once.length >= SOURCE_LIMIT) return { stateDir: bindings.stateDir, sources: rows, once, truncated: true };
     let source, status;
     try { source = readJSON(join(dir, id, 'source.json')); status = readJSON(join(dir, id, 'status.json')); } catch { continue; }
     if (soul && source.agent !== soul) continue;
+    // okf 4.1.0: a one-shot harvest is not a registered source; it is listed apart.
+    if (source.once) { once.push(onceRow(id, dir, source, status)); continue; }
     rows.push({ id, soul: source.agent, instance: source.instance, created: source.created, retired: status.retired === true, auto: status.auto === true, activeRun: status.activeRun || null, schedule: status.schedule?.id || null, file: join(dir, id, 'source.json') });
   }
-  return { stateDir: bindings.stateDir, sources: rows };
+  return { stateDir: bindings.stateDir, sources: rows, once };
+}
+/** A one-shot harvest's state, from its receipt and status. */
+function onceRow(id, dir, source, status) {
+  const total = status.captured.inputs.length, processed = status.captured.inputs.filter((i) => status.processed.includes(i)).length;
+  let runs = []; try { runs = readJSON(join(dir, id, 'once.json')).runs; } catch { /* a one-shot that failed before its receipt */ }
+  const prs = Object.values(status.delivered || {}).map((r) => r.pr?.url).filter(Boolean);
+  const state = status.activeRun ? 'running' : processed < total ? 'partial' : prs.length ? 'delivered' : 'processed';
+  return { id, instance: source.instance, soul: source.agent, manifest: source.once.manifestHash, override: source.once.override, inputs: { total, processed }, runs, prs, state, file: join(dir, id, 'source.json') };
 }
 export function harvestStatus({ home, flags = {} }) {
   const sw = harvestSwitch({ settings: settings(), soulDir: process.env.OATS_SOUL });
   const soul = flags.soul || process.env.OATS_AGENT || null;
-  const inHome = !!process.env.OATS_INSTANCE_HOME && fs.existsSync(join(home, 'instance.json'));
+  // A seat's own home, or one the operator names with --home.
+  const inHome = (!!process.env.OATS_INSTANCE_HOME || !!flags.home) && fs.existsSync(join(home, 'instance.json'));
   const instance = inHome ? { home, registered: fs.existsSync(markerPath(home)), spawnedWith: fs.existsSync(markerPath(home)) ? 'on' : harvestOffRecord(home) ? 'off' : 'unknown' } : null;
   // Capture fails closed on an opt-out it cannot read; a status read does not
   // turn that uncertainty into a definite off.

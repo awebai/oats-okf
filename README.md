@@ -1,6 +1,53 @@
 # oats.okf 4 — external knowledge, consulted remotely, independent judgment
 
-The official OKF knowledge capability: **4.0.7**, requiring **OATS >=0.29.0**.
+The official OKF knowledge capability: **4.1.0**, requiring **OATS >=0.29.0**.
+
+## 4.1.0 — a one-shot reviewed harvest from an explicit record set
+
+When a seat moves (for example from a classic deployment to a v2 workspace)
+its unharvested notes must still reach the knowledge base, but nothing was
+registered to capture them. The operator now harvests that seat once, from a
+manifest of hash-verified files:
+
+```sh
+oats okf harvest --once --home /abs/instance-home --records /abs/manifest.json --soul <its soul> [--override-opt-out] [--no-launch]
+```
+
+```json
+{"version":1,"instance":"<instance name>","roots":["/abs/archive"],
+ "notes":[{"path":"notes/x.md","sha256":"<64 hex>"},{"path":"/abs/archive/y.md","sha256":"<64 hex>"}]}
+```
+
+- **Inputs:** only the listed files. A relative path is in the home; an
+  absolute one is in the home or a listed root. Every file is a regular,
+  single-link `.md` reached through no symlink (canonical paths: no symlinked
+  directory anywhere on the way). Its sha256 is checked against exactly the
+  bytes then used. Any bad entry refuses the whole manifest before anything is
+  stored. Bounds: 2000 entries, 16 MiB a file, 256 MiB in all.
+- **Session records** (archived harness transcripts) are refused with
+  `E_UNSUPPORTED` until OATS offers `oats capture --file` (feature
+  `capture-file`); oats.okf never parses harness formats itself.
+- **Attribution:** the seat's soul and its `okf.json` owner (pinned as at
+  registration); writes only to the nodes it owns, reads read-only. `--soul`
+  must name the seat's soul, and a seat cannot run it on itself.
+- **The normal path:** the knowledge-harvester judges, `complete` publishes a
+  PR labelled `okf-harvest`, the knowledge-maintainer reviews it. Nothing
+  merges directly. The PR's provenance carries
+  `once: {manifest, entries, override}`, never paths.
+- **One-shot:** no home pointer, no schedule, no capture. Its custody is
+  `<stateDir>/sources/<id>/` with `once` in the descriptor and a receipt
+  `once.json` (entry names and hashes, runs). The id is derived from the seat,
+  owner and manifest, so a rerun with the same manifest continues it: it runs
+  the next bounded run (each run says how many inputs remain), or answers
+  `already-delivered`. A different manifest repeating notes another one-shot
+  of the seat already harvested is refused (`E_ONCE_OVERLAP`).
+- **Switches:** the host's harvest switch does not apply (an explicit
+  operator action). A soul's opt-out, or an opt-out that cannot be read, is
+  refused unless `--override-opt-out`, which the receipt and the PR record.
+- **Privacy:** the same exclusion rules as every harvest; the harvester's task
+  says the records are archived and may hold third-party content.
+- `oats okf harvest-status --home <seat>` shows the seat with no registered
+  source and its one-shots apart (`once`: state, runs, PRs).
 
 ## 4.0.7 — acceptance of an amended and merged PR
 
@@ -223,7 +270,7 @@ compatibility is declared by the manifests and this guide.
 
 ## Configuration and ownership
 
-A workspace declares the package (`packages: { oats.okf: v4.0.7 }`) and selects
+A workspace declares the package (`packages: { oats.okf: v4.1.0 }`) and selects
 it as the knowledge capability (`defaults: { knowledge: { oats.okf: { from:
 package } } }`, or per soul). Each deployment points it at its bindings file
 in its own `oats-local.yaml`:
