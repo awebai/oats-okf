@@ -906,6 +906,10 @@ then requires an `okf-review` verdict comment that:
 - has verdict `merge` or `amend+merge`;
 - names the merged head as its `headSha`.
 
+A comment posted with a GitHub App installation token has no member
+association, so it does not count. The maintainer posts its verdicts from a
+user account with access to the repository.
+
 The receipt also records `mergedHead` and `verdict`. A merged PR without such a
 verdict fails with `E_PR`, naming the remedy (record the verdict, then complete
 again). Merged inputs are never rejudged. Durable proposals can reconstruct a real

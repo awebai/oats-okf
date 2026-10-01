@@ -763,9 +763,12 @@ test('failed Git publication survives worker deletion, then merge-visible accept
   const accepted=complete(s,run.id);assert.equal(accepted.receipts.project.status,'accepted');assert.equal(loadStatus(s).accepted[`${run.id}/project`].acceptedCommit,r.commit);
 });
 /** A delivered Git run whose PR the maintainer amended (a commit on the PR branch) and squash-merged. */
-function amendedAndMerged(t,{verdict='amend+merge',headSha,association='OWNER',comment=true}={}) {
+function amendedAndMerged(t,{verdict='amend+merge',headSha,association='OWNER',comment=true,crlf=false,uncertain=false}={}) {
   const f=fixture(t,{kind:'git'});note(f);const {s,run}=prepared(f);const j=judgment(f,s,run);
-  const r=complete(s,run.id,j).receipts.project;assert.equal(r.status,'delivered');
+  // uncertain: gh created the PR but failed, so the receipt has no PR identity.
+  if(uncertain) {put(join(f.dir,'gh-uncertain'),'1');assert.throws(()=>complete(s,run.id,j));fs.rmSync(join(f.dir,'gh-uncertain'));}
+  else complete(s,run.id,j);
+  const r=readRun(s,run.id).receipts.project;assert.equal(r.status,uncertain?'pr-unknown':'delivered');
   const cid=['-c','user.name=Maintainer','-c','user.email=maintainer@example.invalid'];
   git(f.repo,['checkout','-q',r.branch]);fs.appendFileSync(join(f.repo,'knowledge/expert/decision.md'),'Superseded wording, amended in review.\n');
   git(f.repo,['add','.']);git(f.repo,[...cid,'commit','-qm','okf-review amendment']);const amended=git(f.repo,['rev-parse','HEAD']);
@@ -773,7 +776,7 @@ function amendedAndMerged(t,{verdict='amend+merge',headSha,association='OWNER',c
   const pr=readJSON(join(f.dir,'pr.json'));
   const block=JSON.stringify({verdict,pr:pr[0].url,headSha:headSha ?? amended,checks:{},amendments:['expert/decision.md: wording'],reason:'fixable'});
   Object.assign(pr[0],{state:'MERGED',mergedAt:'2026-10-01T12:00:00Z',mergeCommit:{oid:merge},headRefOid:amended,
-    comments:comment?[{author:{login:'host'},authorAssociation:association,body:`<!-- okf-review -->\n\`\`\`okf-review\n${block}\n\`\`\`\nProse.`}]:[]});
+    comments:comment?[{author:{login:'host'},authorAssociation:association,body:`<!-- okf-review -->\n\`\`\`okf-review\n${block}\n\`\`\`\nProse.`.replaceAll('\n',crlf?'\r\n':'\n')}]:[]});
   save(join(f.dir,'pr.json'),pr);
   return {f,s,run,r,amended,merge};
 }
@@ -787,12 +790,19 @@ test('4.0.7 an amend+merge verdict at the merged head records acceptance with th
 test('4.0.7 a merge verdict at the merged head is accepted too',t=>{
   const {s,run}=amendedAndMerged(t,{verdict:'merge'});assert.equal(complete(s,run.id).receipts.project.status,'accepted');
 });
+test('4.0.7 a verdict written in GitHub\'s web UI (CRLF line endings) is read',t=>{
+  const {s,run}=amendedAndMerged(t,{crlf:true});assert.equal(complete(s,run.id).receipts.project.status,'accepted');
+});
+test('4.0.7 an amended merge of a PR whose creation was uncertain is settled by its merge too',t=>{
+  const {s,run,amended,merge}=amendedAndMerged(t,{uncertain:true});const receipt=complete(s,run.id).receipts.project;
+  assert.equal(receipt.status,'accepted');assert.equal(receipt.mergeCommit,merge);assert.equal(receipt.mergedHead,amended);
+});
 test('4.0.7 a merged PR whose head is not the delivered commit needs a member\'s merge verdict naming that head; never E_BASELINE or a rejudge',t=>{
   for(const [why,opts] of [['no verdict',{comment:false}],['a verdict for another head',{headSha:'f'.repeat(40)}],['a close verdict',{verdict:'close'}],['a verdict by a non-member',{association:'NONE'}]]) {
     const {s,run}=amendedAndMerged(t,opts);
     assert.throws(()=>complete(s,run.id),e=>e.code==='E_PR' && /merged at head/.test(e.message) && /okf-review/.test(e.message),why);
     assert.equal(readRun(s,run.id).receipts.project.status,'delivered',why);
-    assert.throws(()=>retry(s,{run:run.id,rejudge:true}),e=>e.code!=='E_BASELINE',why);
+    assert.throws(()=>retry(s,{run:run.id,rejudge:true}),e=>e.code==='E_RECOVERY' && /merged at an amended head .*run complete/.test(e.message),why);
   }
 });
 test('existing, overlapping and hidden directory stages cannot bypass publication',t=>{
