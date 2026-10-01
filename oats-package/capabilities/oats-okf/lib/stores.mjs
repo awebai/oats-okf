@@ -416,7 +416,9 @@ const MERGE_VERDICTS=['merge','amend+merge'],REVIEWER_ASSOCIATIONS=['OWNER','MEM
  *  when there is none or it is not a merge. */
 function mergeVerdict(base,pr,cwd) {
   const {comments,mergedBy}=JSON.parse(exec('gh',['pr','view',String(pr.number),'--repo',base.pr.repository,'--json','comments,mergedBy'],{cwd,env:gitEnv()}));
-  const merger=typeof mergedBy?.login==='string' && mergedBy.login?mergedBy.login:null;
+  // gh prints an App merger as app/<name> but its comments' author as <name>;
+  // a login cannot contain '/', so stripping the prefix is safe for users.
+  const merger=typeof mergedBy?.login==='string' && mergedBy.login?mergedBy.login.replace(/^app\//,''):null;
   for(const comment of [...(Array.isArray(comments)?comments:[])].reverse()) {
     if(!REVIEWER_ASSOCIATIONS.includes(comment?.authorAssociation) && !(merger && comment?.author?.login===merger)) continue;
     // A body written in GitHub's web UI has CRLF line endings.

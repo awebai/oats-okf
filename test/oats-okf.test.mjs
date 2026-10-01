@@ -775,7 +775,7 @@ function amendedAndMerged(t,{verdict='amend+merge',headSha,association='OWNER',a
   git(f.repo,['checkout','-q','main']);git(f.repo,['merge','--squash','-q',r.branch]);git(f.repo,[...cid,'commit','-qm','squash merge']);const merge=git(f.repo,['rev-parse','HEAD']);
   const pr=readJSON(join(f.dir,'pr.json'));
   const block=JSON.stringify({verdict,pr:pr[0].url,headSha:headSha ?? amended,checks:{},amendments:['expert/decision.md: wording'],reason:'fixable'});
-  Object.assign(pr[0],{state:'MERGED',mergedAt:'2026-10-01T12:00:00Z',mergeCommit:{oid:merge},headRefOid:amended,mergedBy:{login:mergedBy},
+  Object.assign(pr[0],{state:'MERGED',mergedAt:'2026-10-01T12:00:00Z',mergeCommit:{oid:merge},headRefOid:amended,mergedBy:typeof mergedBy==='string'?{login:mergedBy}:mergedBy,
     comments:comment?[{author:{login:author},authorAssociation:association,body:`<!-- okf-review -->\n\`\`\`okf-review\n${block}\n\`\`\`\nProse.`.replaceAll('\n',crlf?'\r\n':'\n')}]:[]});
   save(join(f.dir,'pr.json'),pr);
   return {f,s,run,r,amended,merge};
@@ -791,7 +791,8 @@ test('4.0.7 a merge verdict at the merged head is accepted too',t=>{
   const {s,run}=amendedAndMerged(t,{verdict:'merge'});assert.equal(complete(s,run.id).receipts.project.status,'accepted');
 });
 test('4.0.7 a verdict from the account that merged is accepted even with no member association (a GitHub App token)',t=>{
-  const {s,run}=amendedAndMerged(t,{association:'NONE',author:'okf-maintainer-app[bot]',mergedBy:'okf-maintainer-app[bot]'});
+  // gh's shapes for an App: mergedBy is app/<name>, a comment author is <name>.
+  const {s,run}=amendedAndMerged(t,{association:'NONE',author:'okf-maintainer',mergedBy:{is_bot:true,login:'app/okf-maintainer'}});
   assert.equal(complete(s,run.id).receipts.project.status,'accepted');
 });
 test('4.0.7 a verdict written in GitHub\'s web UI (CRLF line endings) is read',t=>{
@@ -802,7 +803,7 @@ test('4.0.7 an amended merge of a PR whose creation was uncertain is settled by 
   assert.equal(receipt.status,'accepted');assert.equal(receipt.mergeCommit,merge);assert.equal(receipt.mergedHead,amended);
 });
 test('4.0.7 a merged PR whose head is not the delivered commit needs a member\'s merge verdict naming that head; never E_BASELINE or a rejudge',t=>{
-  for(const [why,opts] of [['no verdict',{comment:false}],['a verdict for another head',{headSha:'f'.repeat(40)}],['a close verdict',{verdict:'close'}],['a verdict by a non-member who did not merge',{association:'NONE',author:'drive-by',mergedBy:'maintainer'}]]) {
+  for(const [why,opts] of [['no verdict',{comment:false}],['a verdict for another head',{headSha:'f'.repeat(40)}],['a close verdict',{verdict:'close'}],['a verdict by a non-member who did not merge',{association:'NONE',author:'drive-by',mergedBy:'maintainer'}],['a non-member App verdict when another App merged',{association:'NONE',author:'drive-by',mergedBy:{is_bot:true,login:'app/okf-maintainer'}}]]) {
     const {s,run}=amendedAndMerged(t,opts);
     assert.throws(()=>complete(s,run.id),e=>e.code==='E_PR' && /merged at head/.test(e.message) && /okf-review/.test(e.message),why);
     assert.equal(readRun(s,run.id).receipts.project.status,'delivered',why);
