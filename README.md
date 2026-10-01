@@ -1,6 +1,22 @@
 # oats.okf 4 — external knowledge, consulted remotely, independent judgment
 
-The official OKF knowledge capability: **4.0.5**, requiring **OATS >=0.29.0**.
+The official OKF knowledge capability: **4.0.6**, requiring **OATS >=0.29.0**.
+
+## 4.0.6 — harvest completion on a real host
+
+- `oats okf complete` persists the harvester's judgment first, then delivers
+  in a detached worker. It answers within 30 s: with the final receipt when
+  delivery ends by then, otherwise with `status: delivering` and its progress.
+  A killed `complete` loses nothing. Rerunning it resumes and never judges
+  again.
+- A worker lock left by a dead process is reclaimed automatically.
+- A Git base whose head moved outside its knowledge root is no longer a
+  baseline change. Only changed root bytes need a rejudge.
+- Staging fetches a base root's blobs in one batch, and delivery fetches no
+  blob outside the root.
+- `harvest-status` reports `unknown` when it cannot read a soul's opt-out.
+
+See [CHANGELOG.md](CHANGELOG.md).
 
 ## 4.0.3 — consultation with harvest off
 
@@ -199,7 +215,7 @@ compatibility is declared by the manifests and this guide.
 
 ## Configuration and ownership
 
-A workspace declares the package (`packages: { oats.okf: v4.0.5 }`) and selects
+A workspace declares the package (`packages: { oats.okf: v4.0.6 }`) and selects
 it as the knowledge capability (`defaults: { knowledge: { oats.okf: { from:
 package } } }`, or per soul). Each deployment points it at its bindings file
 in its own `oats-local.yaml`:
@@ -718,6 +734,59 @@ checks are not a comprehensive data-loss-prevention claim.
 oats okf complete --source /absolute/state/sources/UUID/source.json --run RUN_UUID --judgment /absolute/worker/work/judgment.json --soul domain-expert --json
 ```
 
+**Judgment first, delivery in the background.**
+
+`complete` works in two stages.
+
+1. It runs only local checks: the judgment, every staged base and the
+   provenance. It then persists the judgment and its proposals in one
+   `run.json` write, before any network call. From then on the run never
+   judges again: a rerun of `complete` (with or without `--judgment`) resumes
+   from what was persisted.
+2. Delivery runs in a detached worker (`lib/delivery-worker.mjs`, in its own
+   session). It holds the source's `worker.lock` and logs to `delivery.log`
+   in the run directory. Its progress is recorded in `run.json` `delivery`:
+   - `state`: `starting`, `running`, `done` or `failed`;
+   - `pid`, `host` and `step` (`<alias>: <receipt status>`, checkpointed after
+     each idempotent step);
+   - `error`.
+
+`complete` waits up to 30 s for the worker.
+- If delivery ends in time, it answers with the final receipt.
+- Otherwise it answers with `status: delivering`, the `delivery` record and the
+  next step. `oats okf-harvest harvest-status` reports the same.
+
+A run has at most one delivery worker. A second `complete` that finds a live
+one reports its progress and starts nothing.
+
+If a worker dies, a rerun of `complete` starts a new one. That worker resumes
+from the last checkpoint. A pushed commit or a created PR is found again, never
+pushed or created twice.
+
+Captured completions (a kernel-supplied `OATS_BINDING_FILE`) still deliver
+inline: their private binding file need not outlive the call. They can
+therefore still exceed an agent's tool-call limit.
+
+**Baselines.** The baseline check runs when delivery starts, before any
+destination changes. A Git base passes when its knowledge root still holds the
+judged bytes:
+- The root's tree at the new accepted head is compared with the judged one.
+- If the trees differ, the root is staged at the new head and compared by
+  digest. So a mode-only change is no baseline change.
+
+What happens when the head moved outside the root:
+- A read-only (no-change) base is accepted, and its receipt records
+  `acceptedHead`.
+- A written base is committed onto the new head (`receipt.parent`).
+- A commit made before the head moved again is delivered as it is: the PR still
+  merges cleanly, and nothing is ever force-pushed.
+
+Changed root bytes fail with `E_BASELINE`. The judgment stays persisted, and
+recovery is `oats okf retry --rejudge`.
+
+Receipts are created only once every base is confirmed. Recovery therefore never
+takes an unconfirmed no-change for a settled destination.
+
 Actual delivery receipts, not instructions or a file saying "done", advance
 processing. All-drop/no-change is successful processed input without a fake PR.
 
@@ -734,7 +803,8 @@ processing. All-drop/no-change is successful processed input without a fake PR.
   All Git invocations (including clone, recovery and transport) disable
   replacement-object interpretation; local `refs/replace/*` cannot substitute a
   frozen baseline, tree, blob or publication commit. Raw commit objects must have
-  exactly the frozen baseline as their sole parent. Both the frozen knowledge
+  exactly their recorded accepted parent (the frozen baseline, or the head it
+  moved to outside the root) as their sole parent. Both the frozen knowledge
   snapshot and the publication tree are checked against their immutable objects,
   including on retry. Ignores or content transformations that omit/change validated bytes
   fail before push. The worker's index is preserved; staged outside-base edits
@@ -743,8 +813,12 @@ processing. All-drop/no-change is successful processed input without a fake PR.
   the frozen repository before publication; no redirected transfer is attempted.
   Status distinguishes commit-intent/committed, push-intent/push-unknown/pushed,
   pr-intent/pr-unknown, delivered, rejected and merge-visible accepted. No force
-  push or direct fallback. A baseline change requires new judgment, not automatic
-  rebasing of model output. Same-repository PR head/base/commit must match.
+  push or direct fallback. Changed root bytes require new judgment, never
+  automatic rebasing of model output. Same-repository PR head/base/commit must match.
+  The publication index is written with `write-tree --missing-ok`, so a
+  blob:none stage never fetches the blobs outside the root. The tree check
+  still proves the root's content, and that every entry outside it is the
+  accepted tree's (by object id).
 - **Directory:** durable proposal, cooperative base lock, baseline comparison,
   publication journal, file-by-file atomic replacement and final full validation
   plus digest confirmation. Atomic-write scratch lives in the owned sibling
@@ -856,8 +930,15 @@ commit/push/PR creation. These observations cannot atomically lock GitHub agains
 concurrent external reopen/merge actions; stop and reconcile on any detected
 change rather than overriding it. No direct-write or force-push fallback exists.
 
+A source's `worker.lock` is reclaimed automatically when its owner is a process
+on this host that is gone. A lock with no readable owner is reclaimed only once
+it is 30 s old. Reclaimers are serialized by a `worker.lock.reclaim` guard. A
+live holder is never stolen from, and every wait is bounded. Every holder's work
+resumes from what it persisted.
+
 Base locks never expire automatically. An unreadable owner needs manual forensic
-recovery; a known dead **local** holder can be released explicitly:
+recovery. A known dead **local** holder is named in the `E_LOCKED` error, with
+the command that releases it:
 
 ```sh
 oats okf unlock --lock /absolute/path/to/lock --token TOKEN_FROM_OWNER_JSON --soul domain-expert --json

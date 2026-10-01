@@ -1,5 +1,47 @@
 # Changelog
 
+## 4.0.6 — 2026-10-01
+
+### Fixed
+
+- **`complete` fits in an agent's tool call and can't strand the run** (#29).
+  - The harvester's judgment and its proposals are persisted first, in one
+    `run.json` write, after local checks only.
+  - Delivery runs in a detached worker that owns `worker.lock`, logs to
+    `delivery.log` in the run directory, and records `run.delivery` (state,
+    pid, step, error).
+  - `oats okf complete` answers within 30 s: with the final receipt, or with
+    `status: delivering` and the progress.
+  - A run has at most one delivery worker. A killed `complete` or worker
+    loses nothing: a rerun resumes, and never pushes or opens a PR twice.
+  - A `worker.lock` whose owner pid is dead is reclaimed automatically; live
+    holders are never stolen from.
+  - The `E_LOCKED` error for a base lock held by a dead process names the lock
+    and the `oats okf unlock` command.
+  - Captured completions still deliver inline.
+- **No false `E_BASELINE` when a Git base's head moves outside its root** (#30).
+  - The baseline is checked when delivery starts. It compares the root's tree,
+    then the root's digest.
+  - A read-only base accepts the new head and records it (`acceptedHead`).
+  - A written base is committed onto the new head (`receipt.parent`).
+  - Only changed root bytes fail with `E_BASELINE`. The judgment stays
+    persisted, and recovery is `retry --rejudge`.
+- **Staging a Git base fetches its root's blobs in one batch** (#27).
+  - The batch fetch replaces one promisor fetch per file, and reads run with
+    `GIT_NO_LAZY_FETCH`.
+  - Delivery's `write-tree --missing-ok` no longer downloads every blob outside
+    the root.
+  - Local-path bases are cloned with `--no-local`, so they stage as partial
+    clones too.
+- **`harvest-status` reports `unknown`, with the reason, when it cannot read
+  the soul's opt-out** (#28). Capture still treats an unreadable opt-out as off.
+- `okf-harvest harvest-status` reports the background delivery (in progress,
+  failed or stopped) and never says `retire` for a judged run that is not
+  delivered.
+
+**Upgrading from 4.0.x:** `oats sync` (or `oats update oats.okf`). A run judged
+by 4.0.5 completes with 4.0.6 unchanged.
+
 ## 4.0.5 — 2026-09-29
 
 - Readiness checks Git bases from the consult cache in `stateDir` instead of cloning/fetching every base into scratch. A warm cache validates within the kernel readiness cap.

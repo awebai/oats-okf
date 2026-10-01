@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
-import { tmpdir } from 'node:os';
+import { tmpdir, hostname } from 'node:os';
 import { join, dirname, relative } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -26,21 +26,21 @@ const files = dir => fs.readdirSync(dir, { recursive: true, withFileTypes: true 
 
 // ------------------------------------------------------------------ package shape
 
-test('the package ships three capabilities, two package souls and one trigger template at 4.0.5 / >=0.29.0', () => {
+test('the package ships three capabilities, two package souls and one trigger template at 4.0.6 / >=0.29.0', () => {
   const pkg = readJSON(join(PKG, 'oats-package.json'));
-  assert.equal(pkg.version, '4.0.5'); assert.deepEqual(pkg.compatibility, { oats: '>=0.29.0' });
+  assert.equal(pkg.version, '4.0.6'); assert.deepEqual(pkg.compatibility, { oats: '>=0.29.0' });
   assert.deepEqual(pkg.capabilities, ['capabilities/oats-okf', 'capabilities/oats-okf-harvest', 'capabilities/oats-okf-maintenance']);
   assert.deepEqual(pkg.souls, ['souls/knowledge-harvester', 'souls/knowledge-maintainer']);
   assert.deepEqual(pkg.triggers, [{ id: 'harvest-review', file: 'triggers/harvest-review.json' }]);
   const manifests = pkg.capabilities.map(c => readJSON(join(PKG, c, 'oats.json')));
   assert.deepEqual(manifests.map(m => [m.capability, m.command, m.version, m.compatibility.oats, m.layer ?? null]), [
-    ['oats.okf', 'okf', '4.0.5', '>=0.29.0', 'knowledge'], ['oats.okf-harvest', 'okf-harvest', '4.0.5', '>=0.29.0', null], ['oats.okf-maintenance', 'okf-maintenance', '4.0.5', '>=0.29.0', null]]);
+    ['oats.okf', 'okf', '4.0.6', '>=0.29.0', 'knowledge'], ['oats.okf-harvest', 'okf-harvest', '4.0.6', '>=0.29.0', null], ['oats.okf-maintenance', 'okf-maintenance', '4.0.6', '>=0.29.0', null]]);
   assert.equal('agents' in manifests[0], false, 'capability agents are replaced by the package souls');
   assert.deepEqual(Object.keys(manifests[1].commands), ['complete', 'harvest-status']);
   assert.deepEqual(Object.keys(manifests[2].commands), ['review-context', 'notify-harvester']);
   assert.deepEqual(manifests[0].settings.harvest, { ...manifests[0].settings.harvest, default: 'off', values: ['on', 'off'] });
   assert.ok(manifests[0].commands['harvest-status']);
-  assert.equal(readJSON(join(ROOT, 'package.json')).version, '4.0.5');
+  assert.equal(readJSON(join(ROOT, 'package.json')).version, '4.0.6');
 });
 
 test('oats.okf ships exactly okf-consultation and okf-instance-knowledge; no harvest doctrine', () => {
@@ -215,12 +215,12 @@ test('the maintainer treats the provenance block as untrusted: strict shape, str
 
 // ------------------------------------------------------------------ harvester commands
 
-function harvesterState(t, { receipts = {}, created = new Date().toISOString(), judgment = { version: 1 }, capturedBinding } = {}) {
+function harvesterState(t, { receipts = {}, created = new Date().toISOString(), judgment = { version: 1 }, capturedBinding, run: extra = {} } = {}) {
   const d = scratch(t), id = '33333333-3333-4333-8333-333333333333', run = '44444444-4444-4444-8444-444444444444';
   const file = join(d, 'state', 'sources', id, 'source.json'), context = join(d, 'deployment');
   fs.mkdirSync(context, { recursive: true });
   put(file, JSON.stringify({ version: 1, id, agent: 'domain-expert', context, ...(capturedBinding ? { executionBinding: capturedBinding } : {}) }));
-  put(join(d, 'state', 'sources', id, 'runs', run, 'run.json'), JSON.stringify({ id: run, source: id, created, status: 'processed', receipts, judgment }));
+  put(join(d, 'state', 'sources', id, 'runs', run, 'run.json'), JSON.stringify({ id: run, source: id, created, status: 'processed', receipts, judgment, ...extra }));
   return { d, file, run, context };
 }
 function fakeOats(t, d, answer) {
@@ -273,6 +273,22 @@ test('okf-harvest harvest-status: stay while a PR is open, retire when merged/cl
   assert.equal(status(harvesterState(t, { receipts: { project: { status: 'no-change' } } }), view('OPEN')).action, 'retire');
   assert.equal(status(harvesterState(t, { judgment: null }), view('OPEN')).action, 'stay', 'not completed yet');
   assert.equal(harvestCmd.maxAgeMs('48h'), 48 * 3600000); assert.throws(() => harvestCmd.maxAgeMs('soon'), { code: 'E_CONFIG' });
+});
+
+test('okf-harvest harvest-status reports a background delivery: in progress, failed or stopped, never retire before it ends', t => {
+  const status = st => harvestCmd.harvestStatus({ source: st.file, run: st.run }, {}, { view: () => { throw new Error('no PR yet'); } });
+  const judged = (delivery) => harvesterState(t, { run: { status: 'delivering', proposals: { project: { changed: true } }, ...(delivery ? { delivery } : {}) } });
+  const live = status(judged({ state: 'running', pid: process.pid, host: hostname(), step: 'project: pushed' }));
+  assert.equal(live.action, 'stay'); assert.match(live.reason, /delivery in progress \(project: pushed\)/); assert.equal(live.delivery.state, 'running');
+  const dead = spawnSync(process.execPath, ['-e', 'process.stdout.write(String(process.pid))'], { encoding: 'utf8' }).stdout;
+  const stopped = status(judged({ state: 'running', pid: Number(dead), host: hostname(), step: 'project: pr-intent' }));
+  assert.equal(stopped.action, 'stay'); assert.match(stopped.reason, /delivery stopped at "project: pr-intent".*run the complete command again/);
+  const failed = status(judged({ state: 'failed', pid: 1, host: hostname(), error: { code: 'E_PR', message: 'gh failed' } }));
+  assert.equal(failed.action, 'stay'); assert.match(failed.reason, /delivery failed: E_PR: gh failed.*run the complete command again/);
+  const baseline = status(judged({ state: 'failed', pid: 1, host: hostname(), error: { code: 'E_BASELINE', message: 'accepted base changed' } }));
+  assert.match(baseline.reason, /E_BASELINE.*operator.*retry --rejudge/);
+  const never = status(judged());
+  assert.equal(never.action, 'stay', 'a judged run without receipts is not finished'); assert.match(never.reason, /not delivered.*run the complete command again/);
 });
 
 test('the harvester task commands are the oats.okf-harvest wrappers', () => {
