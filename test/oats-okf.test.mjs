@@ -615,6 +615,15 @@ test('4.0.6 complete hands a slow delivery to ONE detached worker and returns a 
   const after=readRun(s,run.id);assert.equal(after.delivery.state,'done');assert.match(after.delivery.step,/project: delivered/);
   assert.ok(fs.existsSync(join(dirname(join(s.bindings.stateDir,'sources',s.id,'runs',run.id,'run.json')),'delivery.log')),'the worker writes to a log in the run directory');
 });
+test('4.0.6 the delivery worker outlives the complete call that started it',async t=>{
+  const f=fixture(t,{kind:'git'});note(f);const {s,run}=prepared(f);const j=judgment(f,s,run);put(join(f.dir,'gh-slow'),'1500');
+  const workerModule=new URL('../oats-package/capabilities/oats-okf/lib/worker.mjs',import.meta.url).href,sourceModule=new URL('../oats-package/capabilities/oats-okf/lib/sources.mjs',import.meta.url).href;
+  const code=`import {loadSource} from ${JSON.stringify(sourceModule)};import {completeInBackground} from ${JSON.stringify(workerModule)};const r=await completeInBackground(loadSource(${JSON.stringify(s.file)}),${JSON.stringify(run.id)},${JSON.stringify(j)},{receiptWithinMs:100});process.stdout.write(JSON.stringify(r));process.exit(0);`;
+  const child=spawnSync(process.execPath,['--input-type=module','-e',code],{env:process.env,encoding:'utf8'});assert.equal(child.status,0,child.stderr);
+  const answer=JSON.parse(child.stdout);assert.equal(answer.status,'delivering');t.after(()=>{try{process.kill(-answer.delivery.pid,'SIGKILL');}catch{}});
+  await until(()=>readRun(s,run.id).delivery?.state==='done');
+  assert.equal(readRun(s,run.id).receipts.project.status,'delivered');assert.equal(readJSON(join(f.dir,'pr.json')).length,1);
+});
 test('4.0.6 a complete killed after persisting its judgment leaves a resumable run and a reclaimable lock',async t=>{
   const f=fixture(t,{kind:'git'});note(f);const {s,run}=prepared(f);const j=judgment(f,s,run);
   const workerModule=new URL('../oats-package/capabilities/oats-okf/lib/worker.mjs',import.meta.url).href,sourceModule=new URL('../oats-package/capabilities/oats-okf/lib/sources.mjs',import.meta.url).href;
