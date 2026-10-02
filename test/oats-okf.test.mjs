@@ -2207,3 +2207,43 @@ test('4.1.1 a one-shot whose receipt names another manifest is refused, naming t
   const file=join(dirname(r.source),'once.json'),receipt=readJSON(file);save(file,{...receipt,manifestHash:'0'.repeat(64)});
   assert.throws(()=>harvestOnce({home:f.home,records:o.file,noLaunch:true}),e=>e.code==='E_RECORDS' && e.message.includes(s.id) && /in custody/.test(e.message) && /rerun with the manifest it was started from/.test(e.message) && !/sha256 mismatch/.test(e.message));
 });
+// ------------------------------------------------------------------ 4.1.1 complete on an amended, open PR (#36)
+/** A delivered Git run whose publication branch the maintainer moved while
+ *  its PR is open: `amend` commits on top of the delivered commit; `rewrite`
+ *  replaces the branch with a commit that does not contain it. */
+function amendedOpen(t,{rewrite=false}={}) {
+  const f=fixture(t,{kind:'git'});note(f);const {s,run}=prepared(f);complete(s,run.id,judgment(f,s,run));
+  const r=readRun(s,run.id).receipts.project;assert.equal(r.status,'delivered');
+  const cid=['-c','user.name=Maintainer','-c','user.email=maintainer@example.invalid'];
+  if(rewrite) git(f.repo,['checkout','-q','-B',r.branch,r.parent]);else git(f.repo,['checkout','-q',r.branch]);
+  fs.appendFileSync(join(f.repo,'knowledge/expert/decision.md'),'Wording amended in review.\n');
+  git(f.repo,['add','.']);git(f.repo,[...cid,'commit','-qm','okf-review amendment']);const head=git(f.repo,['rev-parse','HEAD']);git(f.repo,['checkout','-q','main']);
+  const pr=readJSON(join(f.dir,'pr.json'));pr[0].headRefOid=head;save(join(f.dir,'pr.json'),pr);
+  return {f,s,run,r,head};
+}
+const prCreates=f=>fs.readFileSync(join(f.dir,'gh-calls.jsonl'),'utf8').split('\n').filter(Boolean).map(l=>JSON.parse(l)).filter(a=>a[0]==='pr' && a[1]==='create').length;
+test('4.1.1 complete on an open PR the maintainer amended on top of the delivered commit reports delivered, names the amended head and pushes nothing',t=>{
+  const {f,s,run,r,head}=amendedOpen(t);
+  for(const attempt of ['first','rerun']) {
+    const done=complete(s,run.id);const receipt=done.receipts.project;
+    assert.equal(receipt.status,'delivered',attempt);assert.equal(receipt.commit,r.commit,`${attempt}: the delivered commit stays on the receipt`);
+    assert.equal(receipt.pr.headRefOid,head,`${attempt}: the receipt's PR names the amended head`);assert.equal(receipt.pr.state,'OPEN');
+    assert.equal(done.next,`PR ${receipt.pr.url} is open at ${head}, which contains the delivered commit ${r.commit}; it settles when it merges`,attempt);
+    assert.equal(git(f.repo,['rev-parse',`refs/heads/${r.branch}`]),head,`${attempt}: nothing was pushed`);assert.equal(prCreates(f),1,`${attempt}: no other PR`);
+    assert.equal(readRun(s,run.id).status,'processed',attempt);
+  }
+  const cli=f.cli('complete',['--source',s.file,'--run',run.id]);assert.equal(cli.status,0,cli.stdout+cli.stderr);
+  assert.equal(cli.out.result.receipts.project.pr.headRefOid,head);assert.match(cli.out.result.next,new RegExp(`open at ${head}, which contains the delivered commit ${r.commit}`));
+});
+test('4.1.1 complete on a rewritten publication branch (its tip lacks the delivered commit) is still refused with E_PR',t=>{
+  const {f,s,run,r,head}=amendedOpen(t,{rewrite:true});
+  assert.throws(()=>complete(s,run.id),e=>e.code==='E_PR' && /unexpected commit; never force push/.test(e.message));
+  assert.equal(git(f.repo,['rev-parse',`refs/heads/${r.branch}`]),head,'never force-pushed');assert.equal(prCreates(f),1);
+});
+test('4.1.1 an amended open PR is still reconciled after the accepted branch changed inside the root, never E_BASELINE',t=>{
+  const {f,s,run,r,head}=amendedOpen(t);
+  fs.appendFileSync(join(f.repo,'knowledge/peer/index.md'),'* Peer change accepted meanwhile.\n');
+  git(f.repo,['add','.']);git(f.repo,['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','peer change']);
+  const receipt=complete(s,run.id).receipts.project;
+  assert.equal(receipt.status,'delivered');assert.equal(receipt.pr.headRefOid,head);assert.equal(git(f.repo,['rev-parse',`refs/heads/${r.branch}`]),head);
+});
