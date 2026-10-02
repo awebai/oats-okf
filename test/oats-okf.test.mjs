@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawnSync, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { syncBuiltinESMExports } from 'node:module';
 import { inventory, noEffectsPreload } from './helpers/no-effects.mjs';
@@ -2134,4 +2134,76 @@ test('4.1.0 a relative manifest path stays in the home',t=>{
   const climbing={...manifest,notes:[{path:'../../archive/old.md',sha256:manifest.notes[2].sha256}]};
   assert.throws(()=>harvestOnce({home:f.home,records:o.write(climbing),noLaunch:true}),e=>['E_PATH','E_RECORDS'].includes(e.code));
   assert.deepEqual(o.sources(),[]);
+});
+// ------------------------------------------------------------------ 4.1.1 one-shot fixes (#39, #40)
+const ONCE_MODULE=new URL('../oats-package/capabilities/oats-okf/lib/once.mjs',import.meta.url).href;
+/** A real process running harvest --once on `records`. `onInput` runs (as
+ *  source text) when the process first stores an input: the window between
+ *  its overlap check and its install. It prints {ok,result} or {ok,code}. */
+function onceChild(f,records,onInput='') {
+  const code=`import fs from 'node:fs';import {syncBuiltinESMExports} from 'node:module';const {harvestOnce}=await import(${JSON.stringify(ONCE_MODULE)});
+const rename=fs.renameSync;let first=true;fs.renameSync=(a,b)=>{if(first && /\\/inputs\\/[0-9a-f]{64}\\.json$/.test(b)) {first=false;${onInput}}return rename(a,b);};syncBuiltinESMExports();
+try {console.log(JSON.stringify({ok:true,result:harvestOnce({home:${JSON.stringify(f.home)},records:${JSON.stringify(records)},noLaunch:true})}));}
+catch(e) {console.log(JSON.stringify({ok:false,code:e.code,message:e.message}));}`;
+  return spawn(process.execPath,['--input-type=module','-e',code],{env:process.env,stdio:['ignore','pipe','pipe']});
+}
+const finished=child=>new Promise(done=>{let out='',err='';child.stdout.on('data',d=>out+=d);child.stderr.on('data',d=>err+=d);child.on('close',(status,signal)=>done({status,signal,out,err}));});
+const onceLocks=f=>fs.existsSync(f.bindings.stateDir)?fs.readdirSync(f.bindings.stateDir).filter(n=>/^once-.*\.lock$/.test(n)):[];
+test('4.1.1 two one-shots of a seat with overlapping manifests started together: exactly one installs, the other gets E_ONCE_OVERLAP',async t=>{
+  const o=onceFixture(t);const {f,manifest}=o;
+  const first=o.write();const second=join(f.dir,'manifest-2.json');
+  put(join(f.home,'notes','extra.md'),'extra\n');
+  save(second,{...manifest,notes:[manifest.notes[1],{path:'notes/extra.md',sha256:sha256('extra\n')}]});
+  // Each process pauses after its overlap check, before its install.
+  const pause='Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,1500);';
+  const results=await Promise.all([onceChild(f,first,pause),onceChild(f,second,pause)].map(finished));
+  const answers=results.map(r=>{assert.equal(r.status,0,r.err);return JSON.parse(r.out);});
+  assert.deepEqual(answers.map(a=>a.ok).sort(),[false,true],JSON.stringify(answers));
+  const refused=answers.find(a=>!a.ok);assert.equal(refused.code,'E_ONCE_OVERLAP',refused.message);
+  assert.equal(o.sources().length,1,'only one one-shot is installed');
+  assert.deepEqual(onceLocks(f),[],'the lock is released');
+});
+test('4.1.1 a one-shot lock whose owner died is reclaimed by the rerun',async t=>{
+  const o=onceFixture(t);const {f}=o;
+  const killed=await finished(onceChild(f,o.file,'process.kill(process.pid,"SIGKILL");'));assert.equal(killed.signal,'SIGKILL',killed.err);
+  const [lock]=onceLocks(f);assert.ok(lock,'the killed process held the seat\'s one-shot lock');
+  assert.equal(readJSON(join(f.bindings.stateDir,lock,'owner.json')).pid>0,true);
+  const r=harvestOnce({home:f.home,records:o.file,noLaunch:true});
+  assert.equal(r.status,'ready');assert.equal(r.inputs.total,3);assert.deepEqual(onceLocks(f),[],'reclaimed and released');
+});
+/** Every file under `dir` whose bytes contain `marker`. */
+function filesWith(dir,marker) {
+  return fs.readdirSync(dir,{recursive:true,withFileTypes:true}).filter(d=>d.isFile() && fs.readFileSync(join(d.parentPath,d.name)).includes(marker)).map(d=>join(d.parentPath,d.name));
+}
+test('4.1.1 a rerun of a draining one-shot continues from custody: notes edited since never enter it',t=>{
+  const o=onceFixture(t,{notes:8,body:' '+'x'.repeat(60000)});const {f,manifest}=o;
+  const first=harvestOnce({home:f.home,records:o.file,noLaunch:true});assert.ok(first.inputs.remaining>0);
+  const s=loadSource(first.source);let run=readRun(s,first.run);complete(s,run.id,judgment(f,s,run));
+  const marker='EDITED-AFTER-THE-ONE-SHOT-TOOK-IT';
+  for(const n of manifest.notes) fs.appendFileSync(n.path.startsWith('/')?n.path:join(f.home,n.path),`\n${marker}\n`);
+  for(let next=harvestOnce({home:f.home,records:o.file,noLaunch:true});next.status!=='already-delivered';next=harvestOnce({home:f.home,records:o.file,noLaunch:true})) {
+    assert.equal(next.status,'ready');run=readRun(s,next.run);
+    for(const id of run.inputs) assert.doesNotMatch(input(s,id).text,new RegExp(marker));
+    assert.deepEqual(filesWith(run.worker.home,marker),[],'the run\'s worker sees no edited bytes');
+    complete(s,run.id,judgment(f,s,run));
+  }
+  assert.deepEqual(filesWith(dirname(s.file),marker),[],'custody holds no edited bytes');
+  assert.equal(loadStatus(s).processed.length,first.inputs.total);
+});
+test('4.1.1 a different manifest listing a held note by its old sha256 is refused as that one-shot\'s, never as a sha256 mismatch',t=>{
+  const o=onceFixture(t);const {f,manifest}=o;
+  const r=harvestOnce({home:f.home,records:o.file,noLaunch:true});const s=loadSource(r.source);
+  fs.appendFileSync(join(f.home,manifest.notes[0].path),'\nTidied by the operator.\n');
+  const other=join(f.dir,'manifest-2.json');save(other,{...manifest,notes:manifest.notes.slice(0,2)});
+  assert.throws(()=>harvestOnce({home:f.home,records:other,noLaunch:true}),e=>{
+    assert.equal(e.code,'E_ONCE_OVERLAP',e.message);assert.doesNotMatch(e.message,/sha256 mismatch/);
+    assert.ok(e.message.includes(s.id),'names the one-shot');assert.match(e.message,/notes\/n0\.md/);assert.match(e.message,/in custody/);
+    assert.ok(e.message.includes(`its own manifest unchanged (sha256 ${s.once.manifestHash})`),'says what to do');return true;});
+  assert.equal(o.sources().length,1,'nothing else is stored');
+});
+test('4.1.1 a one-shot whose receipt names another manifest is refused, naming the one-shot and its custody',t=>{
+  const o=onceFixture(t);const {f}=o;
+  const r=harvestOnce({home:f.home,records:o.file,noLaunch:true});const s=loadSource(r.source);
+  const file=join(dirname(r.source),'once.json'),receipt=readJSON(file);save(file,{...receipt,manifestHash:'0'.repeat(64)});
+  assert.throws(()=>harvestOnce({home:f.home,records:o.file,noLaunch:true}),e=>e.code==='E_RECORDS' && e.message.includes(s.id) && /in custody/.test(e.message) && /rerun with the manifest it was started from/.test(e.message) && !/sha256 mismatch/.test(e.message));
 });
