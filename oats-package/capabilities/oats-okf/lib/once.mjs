@@ -164,21 +164,21 @@ export function harvestOnce({ home, records: manifestFile, overrideOptOut = fals
   const { manifest, manifestHash } = loadManifest(manifestFile);
   const id = onceId(seat.instance, seat.decl.owner, manifestHash), stateDir = seat.bindings.stateDir;
   const source = withLock(seatLock(stateDir, seat.instance, seat.decl.owner), () => {
-    const created = sourceFor(id, seat);
+    const planned = sourceFor(id, seat);
     // The receipt is written last: a one-shot without it was interrupted while
     // installing, and is installed again from the re-verified manifest. One
     // with it continues from custody (its inputs are verified on read), never
     // from the listed notes, which may have changed since.
-    if (fs.existsSync(receiptPath(created))) {
-      const recorded = readJSON(receiptPath(created)).manifestHash;
-      if (recorded !== manifestHash) fail('E_RECORDS', `one-shot ${id} was started from manifest ${recorded}, not this one (${manifestHash}); its inputs are in custody (receipt ${receiptPath(created)}); rerun with the manifest it was started from, unchanged, to continue it`);
-      return loadSource(created.file);
+    if (fs.existsSync(receiptPath(planned))) {
+      const recorded = readJSON(receiptPath(planned)).manifestHash;
+      if (recorded !== manifestHash) fail('E_RECORDS', `one-shot ${id} was started from manifest ${recorded}, not this one (${manifestHash}); its inputs are in custody (receipt ${receiptPath(planned)}); rerun with the manifest it was started from, unchanged, to continue it`);
+      return loadSource(planned.file);
     }
-    const notes = readManifest(manifest, home, seat.instance, entries => refuseHeld(stateDir, created, entries));
+    const notes = readManifest(manifest, home, seat.instance, entries => refuseHeld(stateDir, planned, entries));
     const payloads = notes.map(n => ({ version: 1, kind: 'note', name: n.name, contentHash: hash(n.text), text: n.text }));
     const ids = payloads.map(p => hash(p));
-    refuseOverlap(stateDir, created, ids);
-    const source = { ...created, once: { manifestHash, entries: notes.length } };
+    refuseOverlap(stateDir, planned, ids);
+    const source = { ...planned, once: { manifestHash, entries: notes.length } };
     for (const payload of payloads) save(join(dirname(source.file), 'inputs', `${hash(payload)}.json`), payload);
     installSource(source, { marker: false, status: { auto: false, captured: { notes: [], threads: {}, inputs: ids } } });
     save(receiptPath(source), { version: 1, manifestHash, verifiedAt: new Date().toISOString(),

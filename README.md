@@ -1,6 +1,18 @@
 # oats.okf 4 — external knowledge, consulted remotely, independent judgment
 
-The official OKF knowledge capability: **4.1.0**, requiring **OATS >=0.29.0**.
+The official OKF knowledge capability: **4.1.1**, requiring **OATS >=0.29.0**.
+
+## 4.1.1 — fixes to complete and harvest --once
+
+- `oats okf complete --run <id>` reports `delivered` when the maintainer has
+  amended an open PR on top of the delivered commit. It no longer fails with
+  `E_PR`.
+- Two `harvest --once` calls for one seat can no longer both install
+  overlapping notes.
+- A rerun of a draining one-shot continues from custody, even when a listed
+  note was edited since.
+
+See [CHANGELOG.md](CHANGELOG.md).
 
 ## 4.1.0 — a one-shot reviewed harvest from an explicit record set
 
@@ -39,9 +51,15 @@ oats okf harvest --once --home /abs/instance-home --records /abs/manifest.json -
   `once.json` (entry names and hashes, runs). The id is derived from the seat,
   owner and manifest, so a rerun with the same manifest continues it: it runs
   the next bounded run (each run says how many inputs remain), or answers
-  `already-delivered`. A different manifest repeating notes that another
-  one-shot of the seat holds (harvested or still draining) is refused
-  (`E_ONCE_OVERLAP`): rerun that one-shot's manifest to continue it.
+  `already-delivered`. Since 4.1.1, a rerun continues from custody: the
+  manifest must hash to the one in the receipt, and the listed notes are not
+  read again, so a note edited since never enters the one-shot. A different
+  manifest repeating notes that another one-shot of the seat holds
+  (harvested or still draining) is refused (`E_ONCE_OVERLAP`): rerun that
+  one-shot's manifest to continue it. The check compares the receipt's
+  names and hashes before any note is read, and then the input ids. The
+  checks and the install run under one seat lock
+  (`<stateDir>/once-<hash>.lock`).
 - **Switches:** the host's harvest switch does not apply (an explicit
   operator action). A soul's opt-out, or an opt-out that cannot be read, is
   refused unless `--override-opt-out`, which the receipt and the PR record.
@@ -271,7 +289,7 @@ compatibility is declared by the manifests and this guide.
 
 ## Configuration and ownership
 
-A workspace declares the package (`packages: { oats.okf: v4.1.0 }`) and selects
+A workspace declares the package (`packages: { oats.okf: v4.1.1 }`) and selects
 it as the knowledge capability (`defaults: { knowledge: { oats.okf: { from:
 package } } }`, or per soul). Each deployment points it at its bindings file
 in its own `oats-local.yaml`:
@@ -948,8 +966,12 @@ to reconcile merge-visible acceptance. A merged PR is settled by its merge, befo
 any baseline check: the receipt becomes `accepted`, with the `mergeCommit`.
 
 The maintainer may amend the PR branch before merging it (the knowledge-review
-skill's `amend+merge`). Its head is then not the delivered commit. Acceptance
-then requires an `okf-review` verdict comment that:
+skill's `amend+merge`). Its head is then not the delivered commit. While the
+PR is open, `complete` reports it `delivered` as long as the branch's tip
+descends from the delivered commit, by Git ancestry. The receipt's `pr`
+then shows the amended head, and the answer's `next` line names it. Nothing
+is pushed. A branch rewritten without the delivered commit is refused with
+`E_PR`, and is never force-pushed. Once merged, acceptance requires an `okf-review` verdict comment that:
 - comes from a repository member, collaborator or owner, or from the account
   that merged the PR;
 - has verdict `merge` or `amend+merge`;
