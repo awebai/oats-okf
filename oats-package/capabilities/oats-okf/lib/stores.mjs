@@ -7,8 +7,12 @@ import { metadata, noGit, gitTimeoutMs } from './config.mjs';
 const validator = fileURLToPath(new URL('./okf-validate.mjs', import.meta.url));
 // Never let local replace refs reinterpret frozen OIDs, including inside Git's
 // transport subprocesses. Override even an explicitly supplied command env.
-export const gitEnv = (env = cleanEnv()) => ({...env,GIT_NO_REPLACE_OBJECTS:'1'});
-export const git = (cwd,args,opts={}) => exec('git',['--no-replace-objects','-c','core.hooksPath=/dev/null','-c','protocol.ext.allow=never','-C',cwd,...args],{cwd,...opts,env:gitEnv(opts.env)});
+// History is read from the commit objects alone: a checkout's replace refs,
+// grafts (info/grafts) or commit-graph file could otherwise rewrite parents,
+// and so ancestry, without changing a single object. The graft file is a path
+// that cannot exist: an existing one, even empty, makes Git print a warning.
+export const gitEnv = (env = cleanEnv()) => ({...env,GIT_NO_REPLACE_OBJECTS:'1',GIT_GRAFT_FILE:'/dev/null/no-grafts'});
+export const git = (cwd,args,opts={}) => exec('git',['--no-replace-objects','-c','core.hooksPath=/dev/null','-c','protocol.ext.allow=never','-c','core.commitGraph=false','-C',cwd,...args],{cwd,...opts,env:gitEnv(opts.env)});
 function baseError(code,message,base,alias,step,reason) {throw Object.assign(new Error(redactUrls(message)),{code,base:alias,repository:displayRepo(base.repository),step,reason});}
 function baseRemedy(alias) {return `fix the binding for base alias "${alias}" in the bindings file, or remove the base from the bindings`;}
 function classifyGitFailure(error) {

@@ -16,6 +16,10 @@
     head. Nothing is pushed, and rerunning `complete` changes nothing.
   - A tip that does not contain the delivered commit is still refused with
     `E_PR`. Nothing is ever force-pushed. A merged PR is settled as in 4.0.7.
+  - Git history is read from the commit objects alone. A checkout's grafts
+    (`info/grafts`) or commit-graph file can no longer change a commit's
+    parents, so they cannot fake this ancestry, or the merge ancestry 4.0.7
+    checks. Replace refs were already ignored.
 - **`harvest --once`: one-shots of a seat no longer race** (#39). The
   overlap checks and the install run under one seat lock,
   `<stateDir>/once-<hash>.lock`. Of two one-shots with overlapping manifests

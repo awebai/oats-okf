@@ -2247,3 +2247,30 @@ test('4.1.1 an amended open PR is still reconciled after the accepted branch cha
   const receipt=complete(s,run.id).receipts.project;
   assert.equal(receipt.status,'delivered');assert.equal(receipt.pr.headRefOid,head);assert.equal(git(f.repo,['rev-parse',`refs/heads/${r.branch}`]),head);
 });
+test('4.1.1 a graft in the worker\'s checkout cannot make a rewritten publication branch pass as amended',t=>{
+  const {f,s,run,r,head}=amendedOpen(t,{rewrite:true});
+  const checkout=readRun(s,run.id).stages.project.checkout;
+  git(checkout,['fetch','-q','origin',`refs/heads/${r.branch}`]);put(join(checkout,'.git/info/grafts'),`${head} ${r.commit}\n`);
+  assert.equal(spawnSync('git',['-C',checkout,'merge-base','--is-ancestor',r.commit,head]).status,0,'the graft does fool plain Git');
+  assert.throws(()=>complete(s,run.id),e=>e.code==='E_PR' && /unexpected commit; never force push/.test(e.message));
+  assert.equal(git(f.repo,['rev-parse',`refs/heads/${r.branch}`]),head,'never force-pushed');
+});
+/** Rewrite `child`'s first parent to `parent` in the checkout's commit-graph
+ *  file (with a valid checksum), leaving every object as it is. */
+function forgeCommitGraph(checkout,child,parent) {
+  execFileSync('git',['-C',checkout,'commit-graph','write','--stdin-commits'],{input:`${child}\n${parent}\n`});
+  const file=join(checkout,'.git/objects/info/commit-graph');fs.chmodSync(file,0o600);const d=fs.readFileSync(file);
+  const chunk=id=>{for(let i=0;i<d[6];i++) if(d.toString('latin1',8+12*i,12+12*i)===id) return Number(d.readBigUInt64BE(12+12*i));};
+  const oidl=chunk('OIDL'),cdat=chunk('CDAT'),n=d.readUInt32BE(chunk('OIDF')+255*4);
+  const oids=Array.from({length:n},(_,i)=>d.toString('hex',oidl+20*i,oidl+20*i+20));
+  d.writeUInt32BE(oids.indexOf(parent),cdat+36*oids.indexOf(child)+20);
+  createHash('sha1').update(d.subarray(0,d.length-20)).digest().copy(d,d.length-20);fs.writeFileSync(file,d);
+}
+test('4.1.1 a forged commit-graph in the worker\'s checkout cannot make a rewritten publication branch pass as amended',t=>{
+  const {f,s,run,r,head}=amendedOpen(t,{rewrite:true});
+  const checkout=readRun(s,run.id).stages.project.checkout;
+  git(checkout,['fetch','-q','origin',`refs/heads/${r.branch}`]);forgeCommitGraph(checkout,head,r.commit);
+  assert.equal(spawnSync('git',['-C',checkout,'merge-base','--is-ancestor',r.commit,head]).status,0,'the graph does fool plain Git');
+  assert.throws(()=>complete(s,run.id),e=>e.code==='E_PR' && /unexpected commit; never force push/.test(e.message));
+  assert.equal(git(f.repo,['rev-parse',`refs/heads/${r.branch}`]),head,'never force-pushed');
+});
