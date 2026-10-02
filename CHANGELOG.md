@@ -1,5 +1,39 @@
 # Changelog
 
+## 4.1.1 — 2026-10-01
+
+### Fixed
+
+- **`complete` on an amended PR that is still open** (#36). After the
+  knowledge-maintainer pushed an amendment on top of the delivered commit,
+  `oats okf complete --run <id>` failed with `E_PR: publication branch has
+  unexpected commit; never force push`. Now:
+  - The run is reported `delivered` when the known PR is open at the
+    branch's tip and that tip descends from the delivered commit. Ancestry
+    is checked by Git on the fetched branch, never from commit messages.
+  - `receipt.pr` is the PR as observed, with its amended head; `receipt.commit`
+    stays the delivered commit. The answer's `next` line names the amended
+    head. Nothing is pushed, and rerunning `complete` changes nothing.
+  - A tip that does not contain the delivered commit is still refused with
+    `E_PR`. Nothing is ever force-pushed. A merged PR is settled as in 4.0.7.
+  - Git history is read from the commit objects alone. A checkout's grafts
+    (`info/grafts`) or commit-graph file can no longer change a commit's
+    parents, so they cannot fake this ancestry, or the merge ancestry 4.0.7
+    checks. Replace refs were already ignored.
+- **`harvest --once`: one-shots of a seat no longer race** (#39). The
+  overlap checks and the install run under one seat lock,
+  `<stateDir>/once-<hash>.lock`. Of two one-shots with overlapping manifests
+  started together, one installs and the other gets `E_ONCE_OVERLAP`. A
+  lock left by a dead process is reclaimed.
+- **`harvest --once`: a note edited between runs no longer strands a
+  draining one-shot** (#40). A rerun with the same manifest continues from
+  custody and no longer reads the listed notes, so edited bytes never enter
+  the one-shot. Its receipt must record this manifest's hash. Another
+  manifest listing a note a one-shot holds, at the sha256 its receipt
+  records, is refused with `E_ONCE_OVERLAP` before any note is read. The
+  message names that one-shot and says how to continue it; it is never a
+  `sha256 mismatch`.
+
 ## 4.1.0 — 2026-10-01
 
 ### Added

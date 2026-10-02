@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawnSync, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { syncBuiltinESMExports } from 'node:module';
 import { inventory, noEffectsPreload } from './helpers/no-effects.mjs';
@@ -153,7 +153,7 @@ test('exported payload version, floor, required hooks and complete command inven
   assert.equal(fs.existsSync(join(CAP,'agents')),false,'the harvester is the package soul oats.okf/knowledge-harvester, not a capability agent');
   assert.ok(fs.statSync(join(ROOT,'oats-package/souls/knowledge-harvester/AGENTS.md')).isFile(),'the harvester soul keeps its one canonical instruction file');
   const m=readJSON(join(CAP,'oats.json')),distribution=readJSON(join(ROOT,'oats-package/oats-package.json'));
-  for(const manifest of [readJSON(join(ROOT,'package.json')),distribution,m])assert.equal(manifest.version,'4.1.0');
+  for(const manifest of [readJSON(join(ROOT,'package.json')),distribution,m])assert.equal(manifest.version,'4.1.1');
   for(const manifest of [distribution,m])assert.equal(manifest.compatibility.oats,'>=0.29.0');
   assert.equal(m.hooks.spawn.required,true);
   for(const c of ['harvest','inspect','setup','run-source','complete','retry','migrate','read','refresh','init','bases','index','cat','ls','links','search','harvest-status']) assert.ok(m.commands[c]);
@@ -2134,4 +2134,143 @@ test('4.1.0 a relative manifest path stays in the home',t=>{
   const climbing={...manifest,notes:[{path:'../../archive/old.md',sha256:manifest.notes[2].sha256}]};
   assert.throws(()=>harvestOnce({home:f.home,records:o.write(climbing),noLaunch:true}),e=>['E_PATH','E_RECORDS'].includes(e.code));
   assert.deepEqual(o.sources(),[]);
+});
+// ------------------------------------------------------------------ 4.1.1 one-shot fixes (#39, #40)
+const ONCE_MODULE=new URL('../oats-package/capabilities/oats-okf/lib/once.mjs',import.meta.url).href;
+/** A real process running harvest --once on `records`. `onInput` runs (as
+ *  source text) when the process first stores an input: the window between
+ *  its overlap check and its install. It prints {ok,result} or {ok,code}. */
+function onceChild(f,records,onInput='') {
+  const code=`import fs from 'node:fs';import {syncBuiltinESMExports} from 'node:module';const {harvestOnce}=await import(${JSON.stringify(ONCE_MODULE)});
+const rename=fs.renameSync;let first=true;fs.renameSync=(a,b)=>{if(first && /\\/inputs\\/[0-9a-f]{64}\\.json$/.test(b)) {first=false;${onInput}}return rename(a,b);};syncBuiltinESMExports();
+try {console.log(JSON.stringify({ok:true,result:harvestOnce({home:${JSON.stringify(f.home)},records:${JSON.stringify(records)},noLaunch:true})}));}
+catch(e) {console.log(JSON.stringify({ok:false,code:e.code,message:e.message}));}`;
+  return spawn(process.execPath,['--input-type=module','-e',code],{env:process.env,stdio:['ignore','pipe','pipe']});
+}
+const finished=child=>new Promise(done=>{let out='',err='';child.stdout.on('data',d=>out+=d);child.stderr.on('data',d=>err+=d);child.on('close',(status,signal)=>done({status,signal,out,err}));});
+const onceLocks=f=>fs.existsSync(f.bindings.stateDir)?fs.readdirSync(f.bindings.stateDir).filter(n=>/^once-.*\.lock$/.test(n)):[];
+test('4.1.1 two one-shots of a seat with overlapping manifests started together: exactly one installs, the other gets E_ONCE_OVERLAP',async t=>{
+  const o=onceFixture(t);const {f,manifest}=o;
+  const first=o.write();const second=join(f.dir,'manifest-2.json');
+  put(join(f.home,'notes','extra.md'),'extra\n');
+  save(second,{...manifest,notes:[manifest.notes[1],{path:'notes/extra.md',sha256:sha256('extra\n')}]});
+  // Each process pauses after its overlap check, before its install.
+  const pause='Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,1500);';
+  const results=await Promise.all([onceChild(f,first,pause),onceChild(f,second,pause)].map(finished));
+  const answers=results.map(r=>{assert.equal(r.status,0,r.err);return JSON.parse(r.out);});
+  assert.deepEqual(answers.map(a=>a.ok).sort(),[false,true],JSON.stringify(answers));
+  const refused=answers.find(a=>!a.ok);assert.equal(refused.code,'E_ONCE_OVERLAP',refused.message);
+  assert.equal(o.sources().length,1,'only one one-shot is installed');
+  assert.deepEqual(onceLocks(f),[],'the lock is released');
+});
+test('4.1.1 a one-shot lock whose owner died is reclaimed by the rerun',async t=>{
+  const o=onceFixture(t);const {f}=o;
+  const killed=await finished(onceChild(f,o.file,'process.kill(process.pid,"SIGKILL");'));assert.equal(killed.signal,'SIGKILL',killed.err);
+  const [lock]=onceLocks(f);assert.ok(lock,'the killed process held the seat\'s one-shot lock');
+  assert.equal(readJSON(join(f.bindings.stateDir,lock,'owner.json')).pid>0,true);
+  const r=harvestOnce({home:f.home,records:o.file,noLaunch:true});
+  assert.equal(r.status,'ready');assert.equal(r.inputs.total,3);assert.deepEqual(onceLocks(f),[],'reclaimed and released');
+});
+/** Every file under `dir` whose bytes contain `marker`. */
+function filesWith(dir,marker) {
+  return fs.readdirSync(dir,{recursive:true,withFileTypes:true}).filter(d=>d.isFile() && fs.readFileSync(join(d.parentPath,d.name)).includes(marker)).map(d=>join(d.parentPath,d.name));
+}
+test('4.1.1 a rerun of a draining one-shot continues from custody: notes edited since never enter it',t=>{
+  const o=onceFixture(t,{notes:8,body:' '+'x'.repeat(60000)});const {f,manifest}=o;
+  const first=harvestOnce({home:f.home,records:o.file,noLaunch:true});assert.ok(first.inputs.remaining>0);
+  const s=loadSource(first.source);let run=readRun(s,first.run);complete(s,run.id,judgment(f,s,run));
+  const marker='EDITED-AFTER-THE-ONE-SHOT-TOOK-IT';
+  for(const n of manifest.notes) fs.appendFileSync(n.path.startsWith('/')?n.path:join(f.home,n.path),`\n${marker}\n`);
+  for(let next=harvestOnce({home:f.home,records:o.file,noLaunch:true});next.status!=='already-delivered';next=harvestOnce({home:f.home,records:o.file,noLaunch:true})) {
+    assert.equal(next.status,'ready');run=readRun(s,next.run);
+    for(const id of run.inputs) assert.doesNotMatch(input(s,id).text,new RegExp(marker));
+    assert.deepEqual(filesWith(run.worker.home,marker),[],'the run\'s worker sees no edited bytes');
+    complete(s,run.id,judgment(f,s,run));
+  }
+  assert.deepEqual(filesWith(dirname(s.file),marker),[],'custody holds no edited bytes');
+  assert.equal(loadStatus(s).processed.length,first.inputs.total);
+});
+test('4.1.1 a different manifest listing a held note by its old sha256 is refused as that one-shot\'s, never as a sha256 mismatch',t=>{
+  const o=onceFixture(t);const {f,manifest}=o;
+  const r=harvestOnce({home:f.home,records:o.file,noLaunch:true});const s=loadSource(r.source);
+  fs.appendFileSync(join(f.home,manifest.notes[0].path),'\nTidied by the operator.\n');
+  const other=join(f.dir,'manifest-2.json');save(other,{...manifest,notes:manifest.notes.slice(0,2)});
+  assert.throws(()=>harvestOnce({home:f.home,records:other,noLaunch:true}),e=>{
+    assert.equal(e.code,'E_ONCE_OVERLAP',e.message);assert.doesNotMatch(e.message,/sha256 mismatch/);
+    assert.ok(e.message.includes(s.id),'names the one-shot');assert.match(e.message,/notes\/n0\.md/);assert.match(e.message,/in custody/);
+    assert.ok(e.message.includes(`its own manifest unchanged (sha256 ${s.once.manifestHash})`),'says what to do');return true;});
+  assert.equal(o.sources().length,1,'nothing else is stored');
+});
+test('4.1.1 a one-shot whose receipt names another manifest is refused, naming the one-shot and its custody',t=>{
+  const o=onceFixture(t);const {f}=o;
+  const r=harvestOnce({home:f.home,records:o.file,noLaunch:true});const s=loadSource(r.source);
+  const file=join(dirname(r.source),'once.json'),receipt=readJSON(file);save(file,{...receipt,manifestHash:'0'.repeat(64)});
+  assert.throws(()=>harvestOnce({home:f.home,records:o.file,noLaunch:true}),e=>e.code==='E_RECORDS' && e.message.includes(s.id) && /in custody/.test(e.message) && /rerun with the manifest it was started from/.test(e.message) && !/sha256 mismatch/.test(e.message));
+});
+// ------------------------------------------------------------------ 4.1.1 complete on an amended, open PR (#36)
+/** A delivered Git run whose publication branch the maintainer moved while
+ *  its PR is open: `amend` commits on top of the delivered commit; `rewrite`
+ *  replaces the branch with a commit that does not contain it. */
+function amendedOpen(t,{rewrite=false}={}) {
+  const f=fixture(t,{kind:'git'});note(f);const {s,run}=prepared(f);complete(s,run.id,judgment(f,s,run));
+  const r=readRun(s,run.id).receipts.project;assert.equal(r.status,'delivered');
+  const cid=['-c','user.name=Maintainer','-c','user.email=maintainer@example.invalid'];
+  if(rewrite) git(f.repo,['checkout','-q','-B',r.branch,r.parent]);else git(f.repo,['checkout','-q',r.branch]);
+  fs.appendFileSync(join(f.repo,'knowledge/expert/decision.md'),'Wording amended in review.\n');
+  git(f.repo,['add','.']);git(f.repo,[...cid,'commit','-qm','okf-review amendment']);const head=git(f.repo,['rev-parse','HEAD']);git(f.repo,['checkout','-q','main']);
+  const pr=readJSON(join(f.dir,'pr.json'));pr[0].headRefOid=head;save(join(f.dir,'pr.json'),pr);
+  return {f,s,run,r,head};
+}
+const prCreates=f=>fs.readFileSync(join(f.dir,'gh-calls.jsonl'),'utf8').split('\n').filter(Boolean).map(l=>JSON.parse(l)).filter(a=>a[0]==='pr' && a[1]==='create').length;
+test('4.1.1 complete on an open PR the maintainer amended on top of the delivered commit reports delivered, names the amended head and pushes nothing',t=>{
+  const {f,s,run,r,head}=amendedOpen(t);
+  for(const attempt of ['first','rerun']) {
+    const done=complete(s,run.id);const receipt=done.receipts.project;
+    assert.equal(receipt.status,'delivered',attempt);assert.equal(receipt.commit,r.commit,`${attempt}: the delivered commit stays on the receipt`);
+    assert.equal(receipt.pr.headRefOid,head,`${attempt}: the receipt's PR names the amended head`);assert.equal(receipt.pr.state,'OPEN');
+    assert.equal(done.next,`PR ${receipt.pr.url} is open at ${head}, which contains the delivered commit ${r.commit}; it settles when it merges`,attempt);
+    assert.equal(git(f.repo,['rev-parse',`refs/heads/${r.branch}`]),head,`${attempt}: nothing was pushed`);assert.equal(prCreates(f),1,`${attempt}: no other PR`);
+    assert.equal(readRun(s,run.id).status,'processed',attempt);
+  }
+  const cli=f.cli('complete',['--source',s.file,'--run',run.id]);assert.equal(cli.status,0,cli.stdout+cli.stderr);
+  assert.equal(cli.out.result.receipts.project.pr.headRefOid,head);assert.match(cli.out.result.next,new RegExp(`open at ${head}, which contains the delivered commit ${r.commit}`));
+});
+test('4.1.1 complete on a rewritten publication branch (its tip lacks the delivered commit) is still refused with E_PR',t=>{
+  const {f,s,run,r,head}=amendedOpen(t,{rewrite:true});
+  assert.throws(()=>complete(s,run.id),e=>e.code==='E_PR' && /unexpected commit; never force push/.test(e.message));
+  assert.equal(git(f.repo,['rev-parse',`refs/heads/${r.branch}`]),head,'never force-pushed');assert.equal(prCreates(f),1);
+});
+test('4.1.1 an amended open PR is still reconciled after the accepted branch changed inside the root, never E_BASELINE',t=>{
+  const {f,s,run,r,head}=amendedOpen(t);
+  fs.appendFileSync(join(f.repo,'knowledge/peer/index.md'),'* Peer change accepted meanwhile.\n');
+  git(f.repo,['add','.']);git(f.repo,['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','peer change']);
+  const receipt=complete(s,run.id).receipts.project;
+  assert.equal(receipt.status,'delivered');assert.equal(receipt.pr.headRefOid,head);assert.equal(git(f.repo,['rev-parse',`refs/heads/${r.branch}`]),head);
+});
+test('4.1.1 a graft in the worker\'s checkout cannot make a rewritten publication branch pass as amended',t=>{
+  const {f,s,run,r,head}=amendedOpen(t,{rewrite:true});
+  const checkout=readRun(s,run.id).stages.project.checkout;
+  git(checkout,['fetch','-q','origin',`refs/heads/${r.branch}`]);put(join(checkout,'.git/info/grafts'),`${head} ${r.commit}\n`);
+  assert.equal(spawnSync('git',['-C',checkout,'merge-base','--is-ancestor',r.commit,head]).status,0,'the graft does fool plain Git');
+  assert.throws(()=>complete(s,run.id),e=>e.code==='E_PR' && /unexpected commit; never force push/.test(e.message));
+  assert.equal(git(f.repo,['rev-parse',`refs/heads/${r.branch}`]),head,'never force-pushed');
+});
+/** Rewrite `child`'s first parent to `parent` in the checkout's commit-graph
+ *  file (with a valid checksum), leaving every object as it is. */
+function forgeCommitGraph(checkout,child,parent) {
+  execFileSync('git',['-C',checkout,'commit-graph','write','--stdin-commits'],{input:`${child}\n${parent}\n`});
+  const file=join(checkout,'.git/objects/info/commit-graph');fs.chmodSync(file,0o600);const d=fs.readFileSync(file);
+  const chunk=id=>{for(let i=0;i<d[6];i++) if(d.toString('latin1',8+12*i,12+12*i)===id) return Number(d.readBigUInt64BE(12+12*i));};
+  const oidl=chunk('OIDL'),cdat=chunk('CDAT'),n=d.readUInt32BE(chunk('OIDF')+255*4);
+  const oids=Array.from({length:n},(_,i)=>d.toString('hex',oidl+20*i,oidl+20*i+20));
+  d.writeUInt32BE(oids.indexOf(parent),cdat+36*oids.indexOf(child)+20);
+  createHash('sha1').update(d.subarray(0,d.length-20)).digest().copy(d,d.length-20);fs.writeFileSync(file,d);
+}
+test('4.1.1 a forged commit-graph in the worker\'s checkout cannot make a rewritten publication branch pass as amended',t=>{
+  const {f,s,run,r,head}=amendedOpen(t,{rewrite:true});
+  const checkout=readRun(s,run.id).stages.project.checkout;
+  git(checkout,['fetch','-q','origin',`refs/heads/${r.branch}`]);forgeCommitGraph(checkout,head,r.commit);
+  assert.equal(spawnSync('git',['-C',checkout,'merge-base','--is-ancestor',r.commit,head]).status,0,'the graph does fool plain Git');
+  assert.throws(()=>complete(s,run.id),e=>e.code==='E_PR' && /unexpected commit; never force push/.test(e.message));
+  assert.equal(git(f.repo,['rev-parse',`refs/heads/${r.branch}`]),head,'never force-pushed');
 });
