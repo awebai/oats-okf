@@ -53,7 +53,7 @@ export function harvesterCommands(source,id) {
   return {complete:['oats','okf-harvest','complete',...tail,'--judgment','<absolute-judgment.json>'].map(quote).join(' '),
     status:['oats','okf-harvest','harvest-status',...tail].map(quote).join(' ')};
 }
-export function runSource(source,{noLaunch=false,manual=false,capturedInvocation,nativeRequest}={}) {
+export function runSource(source,{noLaunch=false,manual=false,capturedInvocation,nativeRequest,runFields={}}={}) {
   const plan=capturedSource(source)?qualifyCapturedWorker(source,{context:capturedInvocation,nativeRequest}):null;
   if(!plan) requireQualifiedHelper(source);
   return withWorkerLock(source,()=>{
@@ -92,7 +92,7 @@ export function runSource(source,{noLaunch=false,manual=false,capturedInvocation
     for(const id of ids) {const n=Buffer.byteLength(JSON.stringify(input(source,id)));if(selected.length && bytes+n>192000) break;selected.push(id);bytes+=n;}
     if(!source.decl.owns.length) fail('E_OWNER','source has evidence but owns no destination; retained for explicit ownership routing');
     const id=randomUUID();
-    const run={version:1,id,source:source.id,created:new Date().toISOString(),inputs:selected,status:'spawn-intent',stages:{},receipts:{},noLaunch,...(plan?{capturedWorker:plan}: {})};
+    const run={version:1,id,source:source.id,created:new Date().toISOString(),inputs:selected,status:'spawn-intent',stages:{},receipts:{},noLaunch,...(plan?{capturedWorker:plan}: {}),...runFields};
     if(previous) {
       run.recoveryOf=previous.id;run.recoveryGuards=previous.recoveryGuards || [];
       save(join(dirname(runPath(source,id)),'previous.json'),previous);
@@ -450,7 +450,6 @@ function harvesterAlias(run) {
     return typeof alias==='string' && alias.trim()?alias:null;
   } catch {return null;}
 }
-const readOnceEntries=source=>readJSON(join(dirname(source.file),'once.json')).entries.length;
 /** The okf-harvest provenance block (plan C3) for a run's PR body. */
 export function provenance(source,run) {
   const identity=source.sourceIdentity;
@@ -462,7 +461,7 @@ export function provenance(source,run) {
     tasks:{provider:source.tasksProvider ?? null,refs:[...new Set(run.judgment?.tasks?.refs || [])]},
     harvester:{instance:run.worker?.instance || 'unknown',alias:run.worker?harvesterAlias(run):null},
     // okf 4.1.0: a one-shot harvest from an operator's manifest (never paths).
-    ...(source.once?{once:{manifest:source.once.manifestHash,entries:readOnceEntries(source),override:source.once.override}}:{})};
+    ...(source.once?{once:{manifest:source.once.manifestHash,entries:source.once.entries,override:run.once?.override ?? false}}:{})};
 }
 export const HARVEST_LABEL='okf-harvest';
 export function harvestPr(source,run) {

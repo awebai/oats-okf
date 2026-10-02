@@ -2089,8 +2089,10 @@ test('4.1.0 a soul opt-out (or an unreadable one) is refused unless overridden, 
   put(join(f.soul,'soul.yaml'),'name: source\nknowledge: {harvest: {nested: off}}\n');
   assert.throws(()=>harvestOnce({home:f.home,records:o.file,noLaunch:true}),e=>e.code==='E_HARVEST_OFF' && /could not be read/.test(e.message));
   assert.deepEqual(o.sources(),[]);
-  const r=harvestOnce({home:f.home,records:o.file,noLaunch:true,overrideOptOut:true});const s=loadSource(r.source);assert.equal(s.once.override,true);
-  const run=readRun(s,r.run);complete(s,run.id,judgment(f,s,run));
+  const r=harvestOnce({home:f.home,records:o.file,noLaunch:true,overrideOptOut:true});const s=loadSource(r.source);assert.equal(r.once.override,true);
+  const run=readRun(s,r.run);assert.equal(run.once.override,true,'the override is the run\'s');
+  assert.deepEqual(readJSON(join(dirname(r.source),'once.json')).runs,[{run:run.id,override:true}]);
+  complete(s,run.id,judgment(f,s,run));
   assert.equal(JSON.parse(/```okf-harvest\n([\s\S]*?)\n```/.exec(readJSON(join(f.dir,'pr-1-created.json')).body)[1]).once.override,true);
 });
 test('4.1.0 harvest --once is the operator\'s: refused from inside the target seat or for another soul',t=>{
@@ -2105,4 +2107,28 @@ test('4.1.0 a one-shot writes only the nodes its soul owns; other nodes stay rea
   const r=harvestOnce({home:f.home,records:o.file,noLaunch:true});const s=loadSource(r.source);const run=readRun(s,r.run);
   assert.throws(()=>complete(s,run.id,judgment(f,s,run,{node:'peer'})),e=>['E_JUDGMENT','E_OWNER'].includes(e.code));
   assert.equal(fs.existsSync(join(f.dir,'pr.json')),false,'nothing was published');
+});
+test('4.1.0 a one-shot whose first call died before its receipt is finished by the rerun, never reported delivered',t=>{
+  const o=onceFixture(t);const {f}=o;
+  // The state a call killed between custody and receipt leaves: a source with no inputs and no once.json.
+  const workerModule=new URL('../oats-package/capabilities/oats-okf/lib/once.mjs',import.meta.url).href;
+  const code=`import fs from 'node:fs';import {syncBuiltinESMExports} from 'node:module';const {harvestOnce}=await import(${JSON.stringify(workerModule)});
+const save=fs.renameSync;fs.renameSync=(a,b)=>{if(/\\/inputs\\/[0-9a-f]{64}\\.json$/.test(b)) process.kill(process.pid,'SIGKILL');return save(a,b);};syncBuiltinESMExports();
+harvestOnce({home:${JSON.stringify(f.home)},records:${JSON.stringify(o.file)},noLaunch:true});`;
+  const child=spawnSync(process.execPath,['--input-type=module','-e',code],{env:process.env,encoding:'utf8'});assert.equal(child.signal,'SIGKILL',child.stderr);
+  const r=harvestOnce({home:f.home,records:o.file,noLaunch:true});
+  assert.equal(r.status,'ready');assert.equal(r.inputs.total,3);assert.ok(fs.existsSync(join(dirname(r.source),'once.json')));
+});
+test('4.1.0 a manifest repeating notes another one-shot still holds (not yet processed) is refused',t=>{
+  const o=onceFixture(t,{notes:8,body:' '+'x'.repeat(60000)});const {f,manifest}=o;
+  const first=harvestOnce({home:f.home,records:o.file,noLaunch:true});assert.ok(first.inputs.remaining>0);
+  put(join(f.home,'notes','forgotten.md'),'forgotten\n');
+  const more={...manifest,notes:[...manifest.notes,{path:'notes/forgotten.md',sha256:sha256('forgotten\n')}]};
+  assert.throws(()=>harvestOnce({home:f.home,records:o.write(more),noLaunch:true}),e=>e.code==='E_ONCE_OVERLAP' && e.message.includes(loadSource(first.source).id));
+});
+test('4.1.0 a relative manifest path stays in the home',t=>{
+  const o=onceFixture(t);const {f,manifest}=o;
+  const climbing={...manifest,notes:[{path:'../../archive/old.md',sha256:manifest.notes[2].sha256}]};
+  assert.throws(()=>harvestOnce({home:f.home,records:o.write(climbing),noLaunch:true}),e=>['E_PATH','E_RECORDS'].includes(e.code));
+  assert.deepEqual(o.sources(),[]);
 });

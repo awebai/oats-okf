@@ -29,7 +29,7 @@ also accept --home PATH | --source FILE. PATH is /node/x.md from the base root,
 relative to --from's directory, or bare node/x.md from the root.
 oats okf setup --source FILE [--enable | --disable] [--install-host] [--json]
 oats okf setup --harvest on|off [--json]      (writes oats-local.yaml settings.oats.okf.harvest)
-oats okf harvest-status [--soul NAME] [--json]  (the effective harvest switch, why, and the registered sources)
+oats okf harvest-status [--home PATH] [--soul NAME] [--json]  (the effective harvest switch, why, and the registered sources)
 oats okf init --base ALIAS --nodes FILE [--output PATH | --confirm] [--json]
 oats okf migrate --legacy PATH --base ALIAS --node NODE --output PATH [--json]
 oats okf migrate --deliver FILE | --cutover FILE --soul-dir PATH [--json]

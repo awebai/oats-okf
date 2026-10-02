@@ -2,11 +2,11 @@
 import { fs, join, dirname, resolve, readJSON, atomic, fail } from './io.mjs';
 import { settings, loadBindings } from './config.mjs';
 import { harvestSwitch } from './harvest-switch.mjs';
-import { markerPath, harvestOffRecord } from './sources.mjs';
+import { markerPath, harvestOffRecord, inputCounts } from './sources.mjs';
 
 const SOURCE_LIMIT = 500;
 /** The registered sources in the bound state directory, optionally for one soul. */
-function registeredSources(soul) {
+function registeredSources(soul, seat) {
   let bindings;
   try { bindings = loadBindings(); } catch (e) { return { error: `${e.code || 'E_CONFIG'}: ${e.message}` }; }
   const dir = join(bindings.stateDir, 'sources');
@@ -18,18 +18,18 @@ function registeredSources(soul) {
     try { source = readJSON(join(dir, id, 'source.json')); status = readJSON(join(dir, id, 'status.json')); } catch { continue; }
     if (soul && source.agent !== soul) continue;
     // okf 4.1.0: a one-shot harvest is not a registered source; it is listed apart.
-    if (source.once) { once.push(onceRow(id, dir, source, status)); continue; }
+    if (source.once) { if (!seat || source.home === seat) once.push(onceRow(id, dir, source, status)); continue; }
     rows.push({ id, soul: source.agent, instance: source.instance, created: source.created, retired: status.retired === true, auto: status.auto === true, activeRun: status.activeRun || null, schedule: status.schedule?.id || null, file: join(dir, id, 'source.json') });
   }
   return { stateDir: bindings.stateDir, sources: rows, once };
 }
 /** A one-shot harvest's state, from its receipt and status. */
 function onceRow(id, dir, source, status) {
-  const total = status.captured.inputs.length, processed = status.captured.inputs.filter((i) => status.processed.includes(i)).length;
-  let runs = []; try { runs = readJSON(join(dir, id, 'once.json')).runs; } catch { /* a one-shot that failed before its receipt */ }
+  const { total, processed } = inputCounts(status);
+  let runs = []; try { runs = readJSON(join(dir, id, 'once.json')).runs; } catch { /* an install interrupted before its receipt */ }
   const prs = Object.values(status.delivered || {}).map((r) => r.pr?.url).filter(Boolean);
   const state = status.activeRun ? 'running' : processed < total ? 'partial' : prs.length ? 'delivered' : 'processed';
-  return { id, instance: source.instance, soul: source.agent, manifest: source.once.manifestHash, override: source.once.override, inputs: { total, processed }, runs, prs, state, file: join(dir, id, 'source.json') };
+  return { id, instance: source.instance, soul: source.agent, manifest: source.once.manifestHash, inputs: { total, processed }, runs, prs, state, file: join(dir, id, 'source.json') };
 }
 export function harvestStatus({ home, flags = {} }) {
   const sw = harvestSwitch({ settings: settings(), soulDir: process.env.OATS_SOUL });
@@ -43,7 +43,7 @@ export function harvestStatus({ home, flags = {} }) {
   const unknown = sw.effective === 'off' && deployment.value === 'on' && soulRow.readable === false;
   const harvest = unknown ? 'unknown' : sw.effective;
   const reason = unknown ? `the soul's opt-out could not be read (${soulRow.why}); capture treats it as off` : sw.reason;
-  return { harvest, reason, rows: sw.rows, warnings: sw.warnings, soul, instance, ...registeredSources(soul),
+  return { harvest, reason, rows: sw.rows, warnings: sw.warnings, soul, instance, ...registeredSources(soul, flags.home ? fs.realpathSync(resolve(flags.home)) : null),
     note: 'harvest applies from the next spawn: switching it on never captures earlier sessions, and switching it off stops run-source capture for registered sources. `oats schedule disable okf-<source>` is the per-source emergency brake.' };
 }
 

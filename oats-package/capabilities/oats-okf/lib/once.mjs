@@ -3,15 +3,13 @@
 // nothing (no home pointer, no schedule, no capture); its custody is a source
 // descriptor marked `once`, so the normal judgment, publication and review
 // path (and the okf-harvest wrappers, which accept only sources/<id>/) apply.
-import { createHash } from 'node:crypto';
 import { fs, join, dirname, resolve, safePath, readJSON, save, hash, fail, within, relPath } from './io.mjs';
-import { describeSeat, sourceFor, installSource, loadSource, loadStatus, updateStatus, input } from './sources.mjs';
+import { describeSeat, sourceFor, installSource, loadSource, loadStatus, input, inputCounts } from './sources.mjs';
 import { soulHarvest } from './harvest-switch.mjs';
 import { runSource, readRun } from './worker.mjs';
 
 const MANIFEST_KEYS = ['version', 'instance', 'roots', 'notes', 'sessions'];
 const MAX_ENTRIES = 2000, MAX_FILE = 16 * 1024 * 1024, MAX_TOTAL = 256 * 1024 * 1024;
-const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 const records = message => fail('E_RECORDS', message);
 
 /** Read a file the manifest names: a regular, single-link file reached
@@ -19,7 +17,7 @@ const records = message => fail('E_RECORDS', message);
  *  only those bytes are hashed and used. → {name, bytes} */
 function readEntry(path, roots) {
   const target = resolve(path);
-  const root = roots.find(r => within(r.dir, target) && target !== r.dir);
+  const root = roots.find(r => within(r, target) && target !== r);
   if (!root) fail('E_PATH', `${path} is outside the home and the manifest's roots`);
   try { safePath(target); } catch (e) { if (e.code === 'E_PATH') fail('E_PATH', `${path}: symlink not allowed (${e.message})`); throw e; }
   let stat;
@@ -30,7 +28,7 @@ function readEntry(path, roots) {
   const fd = fs.openSync(target, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
   let bytes; try { bytes = fs.readFileSync(fd); } finally { fs.closeSync(fd); }
   // Named relative to its root: the receipt and provenance never carry paths.
-  return { name: relPath(target.slice(root.dir.length + 1)), bytes };
+  return { name: relPath(target.slice(root.length + 1)), bytes };
 }
 
 /** Validate a manifest and read every entry it names, all before anything is
@@ -52,12 +50,12 @@ export function readManifest(file, home, instance) {
   if (!Array.isArray(manifest.notes) || !manifest.notes.length) records('manifest needs a non-empty notes list');
   if (manifest.notes.length > MAX_ENTRIES) records(`at most ${MAX_ENTRIES} entries`);
   if (manifest.roots !== undefined && !Array.isArray(manifest.roots)) records('roots must be a list of absolute directories');
-  const roots = [{ dir: fs.realpathSync(home), home: true }];
+  const roots = [fs.realpathSync(home)];
   for (const root of manifest.roots || []) {
     if (typeof root !== 'string' || !root.startsWith('/')) records('every root must be an absolute directory');
     try { safePath(root); } catch (e) { if (e.code === 'E_PATH') fail('E_PATH', `root ${root}: symlink not allowed`); throw e; }
     if (!fs.lstatSync(root, { throwIfNoEntry: false })?.isDirectory()) fail('E_PATH', `root ${root} is not a directory`);
-    roots.push({ dir: resolve(root), home: false });
+    roots.push(resolve(root));
   }
   const seen = new Set(), notes = []; let total = 0;
   for (const entry of manifest.notes) {
@@ -65,11 +63,13 @@ export function readManifest(file, home, instance) {
     if (typeof entry.path !== 'string' || !entry.path) records('a note entry needs a path');
     if (typeof entry.sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(entry.sha256)) records(`${entry.path}: sha256 must be 64 lowercase hex`);
     if (!entry.path.endsWith('.md')) records(`${entry.path}: notes are .md files`);
+    // A relative path is in the home: no `..`, no climbing into a listed root.
+    if (!entry.path.startsWith('/')) relPath(entry.path);
     const path = entry.path.startsWith('/') ? entry.path : join(home, entry.path);
     if (seen.has(resolve(path))) records(`${entry.path}: duplicate entry`);
     seen.add(resolve(path));
     const { name, bytes } = readEntry(path, roots);
-    if (sha256(bytes) !== entry.sha256) records(`sha256 mismatch for ${entry.path} (manifest ${entry.sha256}, file ${sha256(bytes)})`);
+    if (hash(bytes) !== entry.sha256) records(`sha256 mismatch for ${entry.path} (manifest ${entry.sha256}, file ${hash(bytes)})`);
     if ((total += bytes.length) > MAX_TOTAL) records(`entries exceed ${MAX_TOTAL} bytes in total`);
     notes.push({ name, sha256: entry.sha256, text: bytes.toString('utf8') });
   }
@@ -83,14 +83,16 @@ function onceId(instance, owner, manifestHash) {
 }
 const receiptPath = source => join(dirname(source.file), 'once.json');
 
-/** The soul's own opt-out, refused unless the operator overrides it. */
+/** The soul's own opt-out, refused unless the operator overrides it.
+ *  → whether an override was needed (and so applies to this run). */
 function checkOptOut(soulDir, override) {
   const soul = soulHarvest(soulDir);
   if (soul.value === 'off' || !soul.readable) {
-    if (override) return;
+    if (override) return true;
     const why = soul.value === 'off' ? 'the soul opts out of harvest (knowledge: { harvest: off })' : `the soul's opt-out could not be read (${soul.why})`;
     fail('E_HARVEST_OFF', `${why}; nothing was harvested. To harvest this seat anyway, rerun with --override-opt-out: the override is recorded in the PR's provenance and in the receipt.`);
   }
+  return false;
 }
 
 /** Refuse inputs another one-shot of the same seat already processed. */
@@ -100,16 +102,17 @@ function refuseOverlap(stateDir, self, ids) {
     if (id === self.id) continue;
     let other; try { other = readJSON(join(dir, id, 'source.json')); } catch { continue; }
     if (!other.once || other.instance !== self.instance || other.owner !== self.owner) continue;
-    const processed = new Set(readJSON(join(dir, id, 'status.json')).processed);
-    const repeated = ids.filter(i => processed.has(i));
-    if (repeated.length) fail('E_ONCE_OVERLAP', `${repeated.length} of these notes were already harvested by one-shot ${id} (receipt ${join(dir, id, 'once.json')}); list only notes it did not harvest`);
+    // What the other one-shot holds, harvested or still to harvest: a note is
+    // harvested by one one-shot only.
+    let held; try { held = new Set(readJSON(join(dir, id, 'status.json')).captured.inputs); } catch { continue; }
+    const repeated = ids.filter(i => held.has(i));
+    if (repeated.length) fail('E_ONCE_OVERLAP', `${repeated.length} of these notes belong to one-shot ${id} (receipt ${join(dir, id, 'once.json')}), harvested or still draining; list only notes it does not hold, or rerun its own manifest to continue it`);
   }
 }
 
 function progress(source) {
-  const status = loadStatus(source), total = status.captured.inputs.length;
-  const processed = status.captured.inputs.filter(i => status.processed.includes(i)).length;
-  return { total, processed, remaining: total - processed, status };
+  const status = loadStatus(source);
+  return { ...inputCounts(status), status };
 }
 
 /** One step of a one-shot harvest: create it on the first call, then run its
@@ -120,29 +123,32 @@ export function harvestOnce({ home, records: manifestFile, overrideOptOut = fals
   const caller = env.OATS_INSTANCE_HOME;
   if (caller && fs.existsSync(caller) && fs.realpathSync(caller) === home) fail('E_INVOCATION', 'a seat does not harvest itself on demand: run harvest --once from the deployment, as the operator');
   const seat = describeSeat(home, { fromHome: true });
-  const soulName = String(seat.meta.workspace?.soul?.id || '').split('#')[1] || seat.agent;
+  const soulName = seat.meta.workspace?.soul?.name || String(seat.meta.workspace?.soul?.id || '').split('#')[1] || seat.agent;
   const named = /^name:\s*(\S+)\s*$/m.exec(fs.existsSync(join(seat.soul, 'soul.yaml')) ? fs.readFileSync(join(seat.soul, 'soul.yaml'), 'utf8') : '')?.[1]?.replace(/^['"]|['"]$/g, '');
   if (named !== soulName) fail('E_INVOCATION', `the soul given (${named || 'unnamed'}) is not this seat's soul (${soulName}); pass --soul ${soulName}`);
-  checkOptOut(seat.soul, overrideOptOut);
+  const override = checkOptOut(seat.soul, overrideOptOut);
   const { manifestHash, notes } = readManifest(manifestFile, home, seat.instance);
   const id = onceId(seat.instance, seat.decl.owner, manifestHash);
-  let source = sourceFor(id, seat, { once: { manifestHash, override: !!overrideOptOut } });
-  if (fs.existsSync(source.file)) source = loadSource(source.file);
+  let source = sourceFor(id, seat, { once: { manifestHash, entries: notes.length } });
+  // The receipt is written last: a one-shot without it was interrupted while
+  // installing, and is installed again from the re-verified manifest.
+  if (fs.existsSync(receiptPath(source))) source = loadSource(source.file);
   else {
     const payloads = notes.map(n => ({ version: 1, kind: 'note', name: n.name, contentHash: hash(n.text), text: n.text }));
-    refuseOverlap(seat.bindings.stateDir, source, payloads.map(p => hash(p)));
-    installSource(source, { marker: false, status: { auto: false } });
+    const ids = payloads.map(p => hash(p));
+    refuseOverlap(seat.bindings.stateDir, source, ids);
     for (const payload of payloads) save(join(dirname(source.file), 'inputs', `${hash(payload)}.json`), payload);
-    updateStatus(source, status => { status.captured.inputs = payloads.map(p => hash(p)); });
-    save(receiptPath(source), { version: 1, manifestHash, override: !!overrideOptOut, verifiedAt: new Date().toISOString(),
-      entries: notes.map(n => ({ kind: 'note', name: n.name, sha256: n.sha256 })), inputs: payloads.map(p => hash(p)), runs: [] });
+    installSource(source, { marker: false, status: { auto: false, captured: { notes: [], threads: {}, inputs: ids } } });
+    save(receiptPath(source), { version: 1, manifestHash, verifiedAt: new Date().toISOString(),
+      entries: notes.map(n => ({ kind: 'note', name: n.name, sha256: n.sha256 })), inputs: ids, runs: [] });
   }
   for (const i of loadStatus(source).captured.inputs) input(source, i); // re-verify durable evidence
   const before = progress(source);
   if (!before.remaining && !before.status.activeRun) return answer(source, { status: 'already-delivered' });
-  const result = runSource(source, { manual: true, noLaunch });
+  // An opt-out override is the run's: a soul may opt out between two runs.
+  const result = runSource(source, { manual: true, noLaunch, runFields: { once: { override } } });
   const receipt = readJSON(receiptPath(source));
-  if (result.run && !receipt.runs.includes(result.run)) { receipt.runs.push(result.run); save(receiptPath(source), receipt); }
+  if (result.run && !receipt.runs.some(r => r.run === result.run)) { receipt.runs.push({ run: result.run, override: readRun(source, result.run).once?.override ?? false }); save(receiptPath(source), receipt); }
   return answer(source, result);
 }
 
@@ -153,5 +159,5 @@ function answer(source, result) {
   const next = result.status === 'already-delivered'
     ? 'every listed note was harvested; nothing to do'
     : pending > 0 ? `${pending} inputs remain; rerun the same command to continue once this run is processed` : 'this run holds the last inputs';
-  return { ...result, source: source.file, once: source.once, inputs: { total, processed, remaining: pending }, delivered: status.delivered, next };
+  return { ...result, source: source.file, once: { ...source.once, override: run?.once?.override ?? false }, inputs: { total, processed, remaining: pending }, delivered: status.delivered, next };
 }

@@ -322,6 +322,11 @@ function enqueue(source,status,payload) {
   if(!status.captured.inputs.includes(id)) status.captured.inputs.push(id);
   return id;
 }
+/** How many of a source's captured inputs its runs have processed. */
+export function inputCounts(status) {
+  const total=status.captured.inputs.length,processed=status.captured.inputs.filter(i=>status.processed.includes(i)).length;
+  return {total,processed,remaining:total-processed};
+}
 export function input(source,id) {
   if(!/^[0-9a-f]{64}$/.test(id)) fail('E_INPUT','bad input identity');
   const value=readJSON(join(dirname(source.file),'inputs',`${id}.json`));
