@@ -17,8 +17,8 @@
   - Nothing is registered: no home pointer, schedule or capture. Custody is a
     `once` source with a receipt (`once.json`). Reruns with the same manifest
     continue it run by run (each says how many inputs remain) or answer
-    `already-delivered`; repeating harvested notes in another manifest is
-    refused (`E_ONCE_OVERLAP`).
+    `already-delivered`. Another manifest repeating notes a one-shot of the
+    seat holds (harvested or still draining) is refused (`E_ONCE_OVERLAP`).
   - The host switch does not apply; a soul's opt-out (or an unreadable one)
     is refused unless `--override-opt-out`, which is recorded in the PR.
   - A seat cannot run it on itself. Session records are refused

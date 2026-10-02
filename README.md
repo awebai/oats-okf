@@ -39,8 +39,9 @@ oats okf harvest --once --home /abs/instance-home --records /abs/manifest.json -
   `once.json` (entry names and hashes, runs). The id is derived from the seat,
   owner and manifest, so a rerun with the same manifest continues it: it runs
   the next bounded run (each run says how many inputs remain), or answers
-  `already-delivered`. A different manifest repeating notes another one-shot
-  of the seat already harvested is refused (`E_ONCE_OVERLAP`).
+  `already-delivered`. A different manifest repeating notes that another
+  one-shot of the seat holds (harvested or still draining) is refused
+  (`E_ONCE_OVERLAP`): rerun that one-shot's manifest to continue it.
 - **Switches:** the host's harvest switch does not apply (an explicit
   operator action). A soul's opt-out, or an opt-out that cannot be read, is
   refused unless `--override-opt-out`, which the receipt and the PR record.

@@ -2064,6 +2064,9 @@ test('4.1.0 harvest --once harvests the listed notes through the normal review p
   assert.equal(readJSON(join(f.dir,'pr.json')).length,1,'a rerun never opens another PR');
   const st=f.cli('harvest-status',['--home',f.home]);assert.equal(st.status,0,st.stdout+st.stderr);assert.equal(st.out.result.instance.registered,false);
   assert.deepEqual(st.out.result.sources,[],'one-shots are not registered sources');assert.equal(st.out.result.once.length,1);assert.equal(st.out.result.once[0].state,'delivered');
+  fs.renameSync(f.home,join(f.dir,'retired-home'));
+  const gone=spawnSync(process.execPath,[CLI,'harvest-status','--home',f.home,'--json'],{cwd:f.dir,env:process.env,encoding:'utf8'});assert.equal(gone.status,0,gone.stdout+gone.stderr);
+  assert.equal(JSON.parse(gone.stdout).result.once.length,1,'a retired seat\'s one-shots still list');
 });
 test('4.1.0 a large set drains in several runs; each says how many inputs remain',t=>{
   const o=onceFixture(t,{notes:8,body:' '+'x'.repeat(60000)});const {f}=o;

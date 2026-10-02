@@ -43,7 +43,7 @@ export function harvestStatus({ home, flags = {} }) {
   const unknown = sw.effective === 'off' && deployment.value === 'on' && soulRow.readable === false;
   const harvest = unknown ? 'unknown' : sw.effective;
   const reason = unknown ? `the soul's opt-out could not be read (${soulRow.why}); capture treats it as off` : sw.reason;
-  return { harvest, reason, rows: sw.rows, warnings: sw.warnings, soul, instance, ...registeredSources(soul, flags.home ? fs.realpathSync(resolve(flags.home)) : null),
+  return { harvest, reason, rows: sw.rows, warnings: sw.warnings, soul, instance, ...registeredSources(soul, flags.home ? resolve(flags.home) : null), // a retired seat's home may be gone; its one-shots still list
     note: 'harvest applies from the next spawn: switching it on never captures earlier sessions, and switching it off stops run-source capture for registered sources. `oats schedule disable okf-<source>` is the per-source emergency brake.' };
 }
 
