@@ -1,5 +1,30 @@
 # Changelog
 
+## 4.1.0 — 2026-10-01
+
+### Added
+
+- **`oats okf harvest --once`: a one-shot reviewed harvest of one seat from an
+  explicit record set** (#37). For seats that moved (classic to v2) or were
+  spawned with harvest off. The operator runs it from the deployment with
+  `--home <seat> --records <manifest> --soul <its soul>`.
+  - Inputs are only the manifest's notes, each sha256-verified against the
+    bytes used, contained in the home or a listed root, with no symlinks,
+    hardlinks, directories or globbing. A bad entry refuses everything before
+    anything is stored.
+  - The normal harvester judgment, PR and knowledge-maintainer review; the PR
+    provenance records `once: {manifest, entries, override}`.
+  - Nothing is registered: no home pointer, schedule or capture. Custody is a
+    `once` source with a receipt (`once.json`). Reruns with the same manifest
+    continue it run by run (each says how many inputs remain) or answer
+    `already-delivered`. Another manifest repeating notes a one-shot of the
+    seat holds (harvested or still draining) is refused (`E_ONCE_OVERLAP`).
+  - The host switch does not apply; a soul's opt-out (or an unreadable one)
+    is refused unless `--override-opt-out`, which is recorded in the PR.
+  - A seat cannot run it on itself. Session records are refused
+    (`E_UNSUPPORTED`) until the kernel offers `oats capture --file`.
+  - `harvest-status --home <seat>` lists one-shots apart from sources.
+
 ## 4.0.7 — 2026-10-01
 
 ### Fixed
