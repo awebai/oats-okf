@@ -180,7 +180,7 @@ export function harvestOnce({ home, records: manifestFile, overrideOptOut = fals
     refuseOverlap(stateDir, planned, ids);
     const source = { ...planned, once: { manifestHash, entries: notes.length } };
     for (const payload of payloads) save(join(dirname(source.file), 'inputs', `${hash(payload)}.json`), payload);
-    installSource(source, { marker: false, status: { auto: false, captured: { notes: [], threads: {}, inputs: ids } } });
+    installSource(source, { marker: false, status: { captured: { notes: [], threads: {}, inputs: ids } } });
     save(receiptPath(source), { version: 1, manifestHash, verifiedAt: new Date().toISOString(),
       entries: notes.map(n => ({ kind: 'note', name: n.name, sha256: n.sha256 })), inputs: ids, runs: [] });
     return source;

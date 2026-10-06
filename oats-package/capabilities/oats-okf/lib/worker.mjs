@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { fs, join, dirname, safePath, readJSON, save, atomic, tree, materialize, digest, hash, withLock, withDeadline, oats, command, fail, relPath, quote, pidAlive, redactUrls } from './io.mjs';
 import { loadSource, loadStatus, saveStatus, updateStatus, capture, input, markerPath, homeSource, sourceSwitch } from './sources.mjs';
 import {capturedSource,qualifyCapturedWorker,assertCapturedRun,capturedScaffold,retainCapturedWorkerCustody,assertCapturedWorkerHome,capturedStart} from './captured-worker.mjs';
-import { metadata, splitRef } from './config.mjs';
+import { metadata, splitRef, SCHEDULE_REMOVED } from './config.mjs';
 import { stageBase, validateBase, allowedChanges, verifyGitScope, gitPublish, confirmGitBaseline, directoryPublish, journalPath, baseLock, recoveryStage, reconcileDirectoryIntent, gitRecoveryState } from './stores.mjs';
 export const runPath=(source,id)=>join(dirname(source.file),'runs',id,'run.json');
 export function readRun(source,id) {
@@ -92,7 +92,9 @@ export function runSource(source,{noLaunch=false,manual=false,consent=false,capt
       if(existing.status==='ready' && !noLaunch) {existing.noLaunch=false;existing.capturedWorker.dispatchAuthorization=plan.sourceIntent;persist(source,existing);startWorker(source,existing);}
       return {status:existing.status,run:existing.id,instance:existing.worker?.instance,home:existing.worker?.home,modelCompletion:'not-observed',launch:existing.launch??null};
     }
-    if(!manual && !status.auto) return {status:'disabled',source:source.file};
+    // okf 4.2.0: no scheduler job runs a source any more; only an explicit
+    // (manual) start does.
+    if(!manual) fail('E_HARVEST_SCHEDULE_REMOVED',`run-source without --manual is the removed scheduled harvest; nothing was captured. ${SCHEDULE_REMOVED}`);
     // okf 4.2.0: an operator's start (run-source --manual, retry) re-reads
     // consent HERE, under the worker lock and before any capture or worker:
     // a free slot seen earlier (a completion may have just freed it)
@@ -107,10 +109,7 @@ export function runSource(source,{noLaunch=false,manual=false,consent=false,capt
       try {sourceAvailable=fs.existsSync(markerPath(source.home)) && homeSource(source.home).id===source.id;} catch {sourceAvailable=false;}
       if(!sourceAvailable) {
         status=updateStatus(source,current=>{current.sourceUnavailable=true;current.finalCaptureUncertified=true;});
-        if(!manual && !status.launchObserved) return {status:'skipped',reason:'source unavailable and launch never observed; evidence retained'};
       } else {
-        const meta=fs.existsSync(join(source.home,'instance.json'))?readJSON(join(source.home,'instance.json')):{};
-        if(!manual && meta.launched!==true) return {status:'skipped',reason:'source not launched (no automatic model session)'};
         capture(source);status=loadStatus(source);
       }
     }
@@ -136,10 +135,13 @@ function nextRun(source,status,ids) {
   checkRecoveryGuards(source,previous);
   return {ids:previous.inputs,previous};
 }
-/** Below this much of an invocation's budget, no run is started: spawning,
- *  staging and launching would not finish, and an interrupted start is a
- *  recovery for the operator instead of a deferral. */
-const MIN_START_MS=30000;
+/** The native spawn's own timeout, and its admission: within an invocation
+ *  deadline a run is started (its spawn-intent recorded) only while all of it
+ *  is left, plus the moment the records written before the spawn take. A
+ *  spawn is never cut short into an uncertain one with no home to adopt;
+ *  with less left the start is deferred before any effect. */
+const SPAWN_TIMEOUT_MS=90000,PRE_SPAWN_MS=1000;
+const spawnAdmitted=deadline=>deadline===undefined || deadline-Date.now()>=SPAWN_TIMEOUT_MS+PRE_SPAWN_MS;
 /** At most this much of an invocation's budget goes to capture. */
 const CAPTURE_SHARE_MS=85000;
 /** At most this much of a checkpoint's budget goes to settling earlier PRs. */
@@ -154,13 +156,13 @@ function startRun(source,{ids,noLaunch=false,plan=null,previous=null,runFields={
   const selected=[];let bytes=0;
   for(const id of ids) {const n=Buffer.byteLength(JSON.stringify(input(source,id)));if(selected.length && bytes+n>192000) break;selected.push(id);bytes+=n;}
   if(!source.decl.owns.length) fail('E_OWNER','source has evidence but owns no destination; retained for explicit ownership routing');
-  const deferred={status:'deferred',reason:'too little of this invocation\'s time budget is left to start a harvester; nothing was started and the input stays in custody'};
-  if(deadline!==undefined && deadline-Date.now()<MIN_START_MS) return deferred;
-  // Asked before the run exists: nothing blocking stands between the
-  // spawn-intent record and the spawn, so the budget checked here is the
-  // spawn's.
-  const harness=plan?null:harnessFlag(source,deadline);
-  if(deadline!==undefined && deadline-Date.now()<MIN_START_MS) return deferred;
+  const deferred={status:'deferred',reason:`a harvester's spawn needs ${SPAWN_TIMEOUT_MS/1000} s of this invocation's time budget, and less is left; nothing was started and the input stays in custody`};
+  if(!spawnAdmitted(deadline)) return deferred;
+  // Asked before the run exists, within what the spawn does not need (short
+  // of it, every supported kernel accepts --runtime): nothing blocking stands
+  // between the spawn-intent record and the spawn.
+  const harness=plan?null:harnessFlag(source,deadline===undefined?undefined:deadline-SPAWN_TIMEOUT_MS-PRE_SPAWN_MS);
+  if(!spawnAdmitted(deadline)) return deferred;
   const id=randomUUID();
   const run={version:1,id,source:source.id,created:new Date().toISOString(),inputs:selected,status:'spawn-intent',stages:{},receipts:{},noLaunch,...(plan?{capturedWorker:plan}: {}),...runFields};
   if(previous) {
@@ -236,7 +238,7 @@ function spawnWorker(source,run,{parent=false,deadline,harness}={}) {
   // team, where the maintainer reaches it; a deployment that wants it in
   // another team opts in locally, as for any soul.
   try {
-    run.worker=oats(args,source.context,{timeout:budget(deadline,90000)});
+    run.worker=oats(args,source.context,{timeout:budget(deadline,SPAWN_TIMEOUT_MS)});
     if(!run.worker.instance || !run.worker.home) fail('E_RUNTIME','spawn receipt lacks worker identity');
     run.status='scaffolded';persist(source,run);
     prepareWorker(source,run);
@@ -840,7 +842,7 @@ function blockedRejudgment(source,status,e) {
  *  unprocessed and no run is active. Caller holds the worker lock. Never
  *  captures, never claims drained while any boundary input is unprocessed,
  *  and honours the harvest switch as it is now, and a no-launch hold. */
-export function continueDrain(source,{deadline}={}) {
+export function continueDrain(source,{deadline,consent}={}) {
   try {
     const status=loadStatus(source),drain=status.drain;
     if(!drain?.boundary?.length || status.activeRun) return null;
@@ -851,7 +853,7 @@ export function continueDrain(source,{deadline}={}) {
         if((current.drain?.boundary || []).some(id=>!current.processed.includes(id))) return; // a newer request arrived
         drained=true;current.lastDrain={inputs:current.drain.boundary.length,by:current.drain.by,requestedAt:current.drain.requestedAt,drainedAt:new Date().toISOString()};delete current.drain;
       });
-      return drained?{status:'drained'}:continueDrain(source,{deadline});
+      return drained?{status:'drained'}:continueDrain(source,{deadline,consent});
     }
     const resume=operatorCommand(source,['run-source','--source',source.file,'--manual']);
     if(capturedSource(source)) return {status:'held',remaining:remaining.length,reason:'a captured source drains only through its admitted knowledge:harvest operation'};
@@ -859,7 +861,9 @@ export function continueDrain(source,{deadline}={}) {
     // and the hold stays, also through retirement, until an explicit launch.
     const hold=drain.paused?.kind==='no-launch'?drain.paused:null;
     if(hold) return {status:'held',remaining:remaining.length,reason:`${hold.reason}; the drain waits, its input in custody, for an explicit launch`,next:operatorCommand(source,['retry','--source',source.file,'--launch'])};
-    const sw=sourceSwitch(source);
+    // The retire hook's first batch passes the switch it read; every other
+    // continuation reads the deployment's switch now.
+    const sw=consent ?? sourceSwitch(source,{deadline});
     if(sw.effective!=='on') {
       pauseDrain(source,'harvest-off',sw.reason);
       return {status:'harvest-off',remaining:remaining.length,reason:`${sw.reason}; the drain is paused and its input stays in custody`,prerequisite:DRAIN_PREREQUISITE,next:`once the deployment switches harvest on for soul ${source.agent}: ${resume}`};
@@ -965,13 +969,16 @@ function settleDelivered(source,{deadline}={}) {
 export function checkpointHarvest(source,{noLaunch=false,deadline}={}) {
   requireQualifiedHelper(source);
   return withDeadline(deadline,()=>tryWorkerLock(source,()=>{
-    const settled=settleDelivered(source,{deadline:deadline===undefined?undefined:Math.min(deadline,Date.now()+SETTLE_SHARE_MS)}),answer=fields=>({...fields,source:source.file,settled});
     let status=loadStatus(source);
-    if(status.activeRun) return answer(activeRunState(source,readRun(source,status.activeRun)));
+    // An active run is reported first: its harvester's completion needs this
+    // lock, and must never wait behind the settlement of history.
+    if(status.activeRun) return {...activeRunState(source,readRun(source,status.activeRun)),source:source.file,settled:[],settlement:'not attempted while a run is active; the next idle checkpoint settles earlier PRs'};
+    const settled=settleDelivered(source,{deadline:deadline===undefined?undefined:Math.min(deadline,Date.now()+SETTLE_SHARE_MS)}),answer=fields=>({...fields,source:source.file,settled});
+    status=loadStatus(source);
     if(status.retired) return answer({status:'retired',reason:'this source is retired: its final input is in custody; harvest-status lists what is outstanding'});
     let captured;
     try {captured=capture(source,{deadline:deadline===undefined?undefined:Math.min(deadline,Date.now()+CAPTURE_SHARE_MS)});}
-    catch(e) {if(e.code==='E_LOCKED') return answer({status:'already-running',run:null,preparing:true,reason:'another oats okf process is capturing this source; nothing was started'});throw e;}
+    catch(e) {if(e.captureBusy) return answer({status:'already-running',run:null,preparing:true,reason:'another oats okf process is capturing this source; nothing was started'});throw e;}
     status=loadStatus(source);
     const pending=unprocessed(status);
     if(!pending.length) return answer({status:'empty',capture:captured});
@@ -994,7 +1001,7 @@ export function checkpointHarvest(source,{noLaunch=false,deadline}={}) {
       if(active) e.message=`${e.message}; run ${active} is retained: ${JSON.stringify(recoveryCommands(source,readRun(source,active)))}`;
       throw e;
     }
-    if(started.status==='deferred') return answer({...started,capture:captured});
+    if(started.status==='deferred') return answer({...started,capture:captured,...(started.run?{}:{next:operatorCommand(source,['run-source','--source',source.file,'--manual'])})});
     const run=readRun(source,started.run),rest=pending.length-run.inputs.length;
     return answer({status:'started',run:run.id,instance:started.instance,home:started.home,launched:run.status==='running',capture:captured,inputs:{run:run.inputs.length,pending:pending.length},
       ...(run.recoveryOf?{recoveryOf:run.recoveryOf}:{}),...(rest>0 && !noLaunch?{drain:{remaining:rest,prerequisite:DRAIN_PREREQUISITE}}:{})});
@@ -1006,7 +1013,7 @@ export function checkpointHarvest(source,{noLaunch=false,deadline}={}) {
  *  launched once too little of it is left. Never throws: custody is
  *  certified, so a failed handoff is reported with its resume command and the
  *  home may go. */
-export function retireDrain(source,{launched=true,deadline}={}) {
+export function retireDrain(source,{launched=true,deadline,consent}={}) {
   const resume=()=>operatorCommand(source,['run-source','--source',source.file,'--manual']);
   try {
     requireQualifiedHelper(source);
@@ -1014,15 +1021,25 @@ export function retireDrain(source,{launched=true,deadline}={}) {
     if(!pending.length && !status.activeRun) return {status:'empty'};
     if(!launched && pending.length) return {status:'not-launched',remaining:pending.length,reason:'this source never launched a model session, so its retirement launches no harvester; its input stays in custody',next:resume()};
     if(pending.length) recordDrain(source,pending,'retire');
-    const waitMs=deadline===undefined?0:Math.max(0,Math.min(20000,deadline-Date.now()-MIN_START_MS));
-    return withDeadline(deadline,()=>tryWorkerLock(source,()=>{
-      const current=loadStatus(source);
-      if(current.activeRun) {
-        const state=activeRunState(source,readRun(source,current.activeRun));
-        return {...state,...(pending.length?{remaining:unprocessed(current).length,handoff:`the final input is recorded in this source's drain: run ${current.activeRun} hands it on when it completes`,prerequisite:DRAIN_PREREQUISITE}: {})};
-      }
-      return continueDrain(source,{deadline}) ?? {status:'empty'};
+    const waitMs=deadline===undefined?0:Math.max(0,Math.min(20000,deadline-Date.now()-SPAWN_TIMEOUT_MS-PRE_SPAWN_MS));
+    // Only a confirmed active run hands the final input on (its completion
+    // continues the recorded drain).
+    const handoff=current=>{
+      const state=activeRunState(source,readRun(source,current.activeRun));
+      return {...state,...(pending.length?{remaining:unprocessed(current).length,handoff:`the final input is recorded in this source's drain: run ${current.activeRun} hands it on when it completes`,prerequisite:DRAIN_PREREQUISITE}: {})};
+    };
+    let entered=false;
+    const result=withDeadline(deadline,()=>tryWorkerLock(source,()=>{
+      entered=true;const current=loadStatus(source);
+      return current.activeRun?handoff(current):continueDrain(source,{deadline,consent}) ?? {status:'empty'};
     },{waitMs}));
+    if(entered) return result;
+    // The worker lock is busy. With no active run, its holder is a
+    // settlement, or a completion already past its handoff: nothing will hand
+    // this final input on, so it is reported deferred with its command.
+    const current=loadStatus(source);
+    if(current.activeRun) return handoff(current);
+    return {status:'deferred',busy:true,remaining:unprocessed(current).length,reason:`${result.reason}. No run is active to hand the final input on: it is in custody with its drain recorded, and nothing continues it automatically`,next:resume()};
   } catch(e) {
     return {status:'failed',error:{code:e.code || 'E_OKF',message:redactUrls(e.message)},retained:true,next:resume()};
   }

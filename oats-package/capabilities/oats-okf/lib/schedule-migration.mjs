@@ -7,7 +7,7 @@
 // running or has unresolved effects stays disabled and is reported. The
 // original definition and every confirmed effect are kept as evidence in the
 // source's own state. The shared host timer is never touched.
-import { fs, join, dirname, readJSON, save, hash, oats } from './io.mjs';
+import { fs, join, dirname, readJSON, save, hash, oats, quote } from './io.mjs';
 import { loadBindings } from './config.mjs';
 import { loadSource, loadStatus, updateStatus, legacyScheduleId, legacyScheduleArgv } from './sources.mjs';
 
@@ -33,7 +33,7 @@ function ownershipMismatch(source, job, actual) {
   if (e && actual.execution && (actual.execution.deployment !== e.deployment || actual.execution.resolution?.id !== e.resolution.id)) differs.push('execution');
   return differs;
 }
-const inspect = (source, job) => `oats schedule show ${job} --dir ${source.context}`;
+const inspect = (source, job) => `oats schedule show ${quote(job)} --dir ${quote(source.context)}`;
 function markRemoved(source, job, how) {
   updateStatus(source, (status) => { status.schedule = { ...(status.schedule || {}), id: job, removed: true, removedAt: new Date().toISOString(), removedBy: how }; });
 }
@@ -79,7 +79,7 @@ export function removeSchedules() {
     const file = join(dir, id, 'source.json');
     let source;
     try { source = loadSource(file); loadStatus(source); }
-    catch (e) { if (fs.existsSync(join(dir, id))) rows.push({ source: id, status: 'failed', code: 'E_SCHEDULE_MIGRATION_PENDING', error: `source unreadable: ${e.code || 'E_SOURCE'}: ${e.message}`, next: `inspect ${file}; its job (okf-${id}), if any, was not touched` }); continue; }
+    catch (e) { if (fs.existsSync(join(dir, id))) rows.push({ source: id, status: 'failed', code: 'E_SCHEDULE_MIGRATION_PENDING', error: `source unreadable: ${e.code || 'E_SOURCE'}: ${e.message}`, next: `inspect ${quote(file)}; its job (okf-${id}), if any, was not touched` }); continue; }
     if (source.once) continue; // a one-shot never had a job
     rows.push({ source: id, soul: source.agent, instance: source.instance, ...removeOne(source) });
   }

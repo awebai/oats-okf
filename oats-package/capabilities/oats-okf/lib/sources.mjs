@@ -1,13 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { fs, join, dirname, resolve, safePath, readJSON, save, atomic, hash, withLock, oats, fail, tree, overlaps, identifier } from './io.mjs';
+import { basename } from 'node:path';
+import { fs, join, dirname, resolve, safePath, readJSON, save, atomic, hash, withLock, oats, fail, tree, overlaps, identifier, cleanEnv, quote, redactUrls } from './io.mjs';
 import { loadBindings, declaration, bindingFingerprint, settings, validateBindings, resolveNodes } from './config.mjs';
 import { acceptedResolution, short } from './consult.mjs';
 import { loadInvocationKnowledgeBinding, readPrivateInvocationJson, sourceRuntimeFromKnowledgeBinding } from './binding-wire.mjs';
 import { sameJson } from './portable-binding.mjs';
 import { qualifiedSoulIdentity } from './source-contract.mjs';
-import { harvestSwitch, instanceRecordPath } from './harvest-switch.mjs';
+import { harvestSwitch, instanceRecordPath, parseOrigins } from './harvest-switch.mjs';
 import { validateBase } from './stores.mjs';
 
 const primeBasesScript=fileURLToPath(new URL('./prime-bases.mjs',import.meta.url));
@@ -221,7 +222,7 @@ export function registerCaptured(home,receipt) {
   const file=join(dir,'source.json');fs.mkdirSync(dir,{recursive:true,mode:0o700});
   try {
     source.acceptedView=acceptedResolution(bindings,source.decl);source.acceptedNodes=acceptedNodes(source.acceptedView);
-    save(file,source);save(join(dir,'status.json'),{version:1,captured:{notes:[],threads:{},inputs:[]},processed:[],delivered:{},accepted:{},retired:false,auto:true,activeRun:null});
+    save(file,source);save(join(dir,'status.json'),{version:1,captured:{notes:[],threads:{},inputs:[]},processed:[],delivered:{},accepted:{},retired:false,activeRun:null});
     save(markerPath(home),{version:1,id,source:file});
   } catch(error) {
     if(!fs.existsSync(markerPath(home))) fs.rmSync(dir,{recursive:true,force:true});
@@ -289,7 +290,7 @@ export function installSource(source,{marker,status={}}) {
     pinOwner(join(source.bindings.stateDir,'owners.json'),source.decl.owner,{id:source.soulId,soulName:source.agent,path:source.soulDir});
     descriptor.acceptedNodes=acceptedNodes(descriptor.acceptedView);
     save(file,descriptor);
-    save(join(dir,'status.json'),{version:1,captured:{notes:[],threads:{},inputs:[]},processed:[],delivered:{},accepted:{},retired:false,auto:true,activeRun:null,...status});
+    save(join(dir,'status.json'),{version:1,captured:{notes:[],threads:{},inputs:[]},processed:[],delivered:{},accepted:{},retired:false,activeRun:null,...status});
     if(marker) save(markerPath(source.home),{version:1,id:source.id,source:file});
   } catch(e) {
     // Until the pointer is durable no capture or schedule can reference these
@@ -334,12 +335,57 @@ export function input(source,id) {
   const value=readJSON(join(dirname(source.file),'inputs',`${id}.json`));
   if(hash(value)!==id) fail('E_INPUT','durable evidence hash mismatch');return value;
 }
-/** okf 4.0.1 #6: the switch for an already registered source, re-read now: the
- *  deployment setting AND the soul's opt-out (the current OATS_SOUL the kernel
- *  hands run-source/retire, else the soul directory recorded at registration). */
-export function sourceSwitch(source) {
+/** The most this process waits for the deployment's current switch. */
+const CONSENT_READ_MS = 20000;
+/** The kernel dispatches an instance home's commands and hooks with the
+ *  settings captured at its spawn (OATS_INSTANCE_HOME or OATS_HOME, else the
+ *  home enclosing the working directory, as the kernel finds it). */
+function homeInvocation() {
+  const named = process.env.OATS_INSTANCE_HOME || process.env.OATS_HOME;
+  if (named) return resolve(named);
+  for (let d = resolve(process.cwd()); ; d = dirname(d)) {
+    if (basename(dirname(d)) === 'instances') { try { if (readJSON(join(d, 'instance.json')).instance === basename(d)) return d; } catch { /* not a home */ } }
+    if (dirname(d) === d) return null;
+  }
+}
+/** okf 4.0.1 #6, 4.2.0: the switch for an already registered source, as the
+ *  deployment holds it NOW, AND the soul's absolute opt-out (the current
+ *  OATS_SOUL, else the soul directory recorded at registration).
+ *  A deployment-scoped invocation (an operator's, the harvester's completion:
+ *  no instance home) has the deployment's current settings. An instance home's
+ *  settings are what its spawn captured, which is not the deployment's
+ *  current consent: from a home the switch is read from the deployment, by
+ *  the provider's own deployment-scoped view (`oats okf harvest-status --soul
+ *  S` from the source's deployment, without the home's identity or
+ *  settings). Only a first batch (a checkpoint, the retire hook) taken in the
+ *  source's own home keeps an explicit spawn override for that source, which
+ *  the kernel's origins name (kind spawn); a host value captured at spawn is
+ *  no override. A read that fails or runs out of time is
+ *  E_HARVEST_CONSENT_UNKNOWN: nothing was captured or started. */
+export function sourceSwitch(source, { firstBatch = false, deadline } = {}) {
   const current = process.env.OATS_SOUL && fs.existsSync(process.env.OATS_SOUL) ? process.env.OATS_SOUL : null;
-  return harvestSwitch({ settings: settings(), soulDir: current || source.soulDir || undefined });
+  const soulDir = current || source.soulDir || undefined;
+  const home = homeInvocation();
+  if (!home) return harvestSwitch({ settings: settings(), soulDir });
+  const real = p => { try { return fs.realpathSync(p); } catch { return resolve(p); } };
+  const override = firstBatch && real(home) === real(source.home) && parseOrigins()['/harvest']?.kind === 'spawn';
+  if (override) return { ...harvestSwitch({ settings: settings(), soulDir }), consent: 'spawn-override' };
+  // The soul's opt-out is absolute: no deployment read can switch it back on.
+  const soul = harvestSwitch({ settings: { harvest: 'on' }, origins: {}, soulDir });
+  if (soul.effective !== 'on') return soul;
+  const q = v => /^[\w@%+=:,./-]+$/.test(String(v)) ? String(v) : quote(v);
+  const view = `cd ${q(source.context)} && oats okf harvest-status --soul ${q(source.agent)} --json`;
+  let live;
+  try {
+    const timeout = deadline === undefined ? CONSENT_READ_MS : Math.min(CONSENT_READ_MS, deadline - Date.now());
+    if (timeout <= 0) fail('E_DEADLINE', 'this invocation\'s time budget is spent');
+    live = oats(['okf', 'harvest-status', '--soul', source.agent, '--json'], source.context, { timeout, env: { ...cleanEnv(), PWD: source.context } });
+    if (!['on', 'off', 'unknown'].includes(live?.harvest) || typeof live.reason !== 'string') fail('E_RUNTIME', 'the deployment\'s harvest-status answered no switch');
+  } catch (e) {
+    fail('E_HARVEST_CONSENT_UNKNOWN', `the deployment's current harvest switch for soul ${source.agent} could not be read (${e.code || 'E_OKF'}: ${redactUrls(e.message)}); a home's own settings are its spawn's, not the deployment's consent, so nothing was captured or started. Check it: ${view}`);
+  }
+  return live.harvest === 'on' ? { effective: 'on', reason: 'the deployment switches harvest on now and the soul does not opt out', consent: 'deployment', rows: live.rows, warnings: live.warnings || [] }
+    : { effective: 'off', reason: `the deployment's current switch is off for soul ${source.agent}: ${live.reason}`, consent: 'deployment', rows: live.rows, warnings: live.warnings || [] };
 }
 /** Retire a registered source whose harvest is now off: no final capture and
  *  no new drain; the inputs already in custody stay. */
@@ -355,7 +401,15 @@ export function retireHarvestOff(source, sw) {
  *  E_LOCKED at once (another capture is in progress): the caller defers, and
  *  a final capture is then simply not certified. */
 export function capture(source,{final=false,deadlineMs=85000,deadline=Date.now()+deadlineMs}={}) {
+  // A busy capture lock is marked captureBusy; an E_LOCKED from inside the
+  // capture (its status writes) is not another capture.
+  let entered=false;
+  try {return captureLocked(source,{final,deadline},()=>{entered=true;});}
+  catch(e) {if(!entered && e.code==='E_LOCKED') e.captureBusy=true;throw e;}
+}
+function captureLocked(source,{final,deadline},enter) {
   return withLock(join(dirname(source.file),'capture.lock'),()=>{
+    enter();
     const status=loadStatus(source);
     if(status.retired) return {status:'complete',complete:true,retired:true};
     if(!fs.existsSync(markerPath(source.home))) fail('E_SOURCE','source home gone without final capture; existing evidence is retained');
@@ -427,7 +481,8 @@ export function capture(source,{final=false,deadlineMs=85000,deadline=Date.now()
       status.lastCapture={status:report.status,complete:report.complete===true,ignored:report.ignored||0,at:new Date().toISOString()};
       if(report.complete!==true) fail('E_CAPTURE',`capture ${report.status || 'uncertified'}: retain source and retry`);
       // The retire hook hands the final input to a drain (worker.mjs
-      // requestDrain); capture itself only certifies custody.
+      // retireDrain, which records it with recordDrain); capture itself only
+      // certifies custody.
       if(final) {status.retired=true;status.retiredAt=new Date().toISOString();}
       saveCapture(source,status);return {...status.lastCapture,inputs:status.captured.inputs.length};
     } catch(e) {

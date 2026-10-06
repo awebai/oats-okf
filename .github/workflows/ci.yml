@@ -31,7 +31,7 @@ jobs:
       - name: Report default coverage limits (not a consumer probe)
         run: |
           echo "npm test covers the exported v2 payload, schema parity/mutations and disposable Git/directory custody."
-          echo "SKIPPED by default: public CLI scaffold and native capture/scheduler probes (3 opt-in tests)."
+          echo "SKIPPED by default: public CLI scaffold, native capture/scheduler and real home-dispatch probes (5 opt-in tests)."
           echo "NOT COVERED: OKF acquire/lock/restore/trust, remote GitHub PRs or fresh real-model learning."
           echo "Use workflow_dispatch with an exact published consumer_version for the optional public CLI job; see SCHEMA-STATUS.md."
 

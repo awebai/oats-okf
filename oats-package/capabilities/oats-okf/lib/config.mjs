@@ -30,7 +30,7 @@ export function noGit(path) {
 }
 /** okf 4.2.0: harvest runs at checkpoints, not on schedules. The refusal a
  *  live bindings document with the old cron/tz fields answers. */
-export const SCHEDULE_REMOVED = 'oats.okf 4.2 harvests at checkpoints, not on schedules. Remove cron/tz from the bindings file; then run oats okf setup --remove-schedules --soul <source soul> from the deployment.';
+export const SCHEDULE_REMOVED = 'oats.okf 4.2 harvests at checkpoints, not on schedules. Remove cron/tz from the bindings file; then run oats okf setup --remove-schedules --soul <source soul> from the deployment, once per state namespace (each bindings file\'s stateDir); --soul only selects the capability.';
 /** A bindings document. A live one (the bindings file, a portable payload)
  *  refuses cron/tz. A source descriptor frozen by okf <= 4.1 recorded them
  *  (always: the defaults were written out): `frozen` reads them as inert

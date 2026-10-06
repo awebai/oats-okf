@@ -90,8 +90,15 @@ Three tests skip by default, with explicit Node test skip output:
 3. The native scheduler test checks registration idempotence and disabled-job
    preservation without installing a host timer.
 
+4. The real home-dispatch tests (`test/real-home-dispatch.test.mjs`, okf
+   4.2.0) spawn sources in a disposable v2 workspace of file:// repositories
+   with this package pinned by commit, switch only the deployment's harvest
+   setting, and check that the existing homes' checkpoint and retire hook
+   capture and start nothing; an explicit spawn override and a soul opt-out
+   are the controls. No model is launched.
+
 Native tests use `OATS_OKF_NATIVE_CLI`, falling back to
-`OATS_OKF_CONSUMER_CLI`. All three run with:
+`OATS_OKF_CONSUMER_CLI`. All of them run with:
 
 ```sh
 OATS_OKF_CONSUMER_CLI=/absolute/oats/bin/oats.mjs npm test

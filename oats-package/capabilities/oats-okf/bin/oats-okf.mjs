@@ -168,17 +168,22 @@ else {
         if(['STATE.md','log.md','notes','.okf-harvest-record.json','.okf-harvest-record.next.json'].some(p=>fs.existsSync(join(home,p)))) fail('E_MIGRATION','unregistered/legacy source has memory; explicitly migrate/register before retirement');
         result={meta:{retired:true,reason:'nothing-to-delete'}};
       } else {
-        const s=src(),sw=sourceSwitch(s);
-        // okf 4.0.1 #6: harvest switched off since spawn (deployment or soul) → no final capture.
+        // ONE budget for the hook (the kernel allows it 120 s): the switch,
+        // the final capture, then the drain handoff with what is left.
+        const deadline=Date.now()+RETIRE_BUDGET_MS;
+        // okf 4.0.1 #6, 4.2.0: the deployment's switch NOW (not this home's
+        // spawn-time settings), or an explicit spawn override for this source:
+        // off since spawn (deployment or soul) → no final capture. Unreadable
+        // refuses the retirement (E_HARVEST_CONSENT_UNKNOWN), nothing captured.
+        const s=src(),sw=sourceSwitch(s,{firstBatch:true,deadline});
         if(sw.effective!=='on') result={meta:retireHarvestOff(s,sw),brief:`Harvest is now off (${sw.reason}): no final capture was taken; earlier inputs stay in custody.`};
         else {
-          // ONE budget for the hook (the kernel allows it 120 s): the final
-          // capture, then the drain handoff with what is left. Only a
-          // certified capture lets the home go; the handoff's own failure is
-          // reported with its resume command and never un-certifies custody.
-          const deadline=Date.now()+RETIRE_BUDGET_MS;
+          // Only a certified capture lets the home go; the handoff's own
+          // failure is reported with its resume command and never
+          // un-certifies custody. The handoff's first batch acts on the
+          // switch read above.
           const r=capture(s,{final:true,deadline:Math.min(deadline,Date.now()+CAPTURE_BUDGET_MS)});
-          const drain=retireDrain(s,{launched:loadStatus(s).launchObserved===true,deadline});
+          const drain=retireDrain(s,{launched:loadStatus(s).launchObserved===true,deadline,consent:sw});
           result={meta:{retired:r.complete===true,source:s.file,capture:r,drain},brief:`Final input is in durable custody. Drain: ${drain.status}${drain.next?` (resume: ${typeof drain.next==='string'?drain.next:JSON.stringify(drain.next)})`:''}. Delivery remains asynchronous.`};
         }
       }
@@ -202,10 +207,11 @@ else {
         if(s.skipped) result={status:'skipped',reason:'service'};
         else {
           // okf 4.2.0: the switch is re-read at every checkpoint, also for a
-          // source registered while it was on (deployment or soul opt-out).
-          const sw=sourceSwitch(s);
+          // source registered while it was on (deployment or soul opt-out),
+          // from the deployment as it is now, within the checkpoint's budget.
+          const deadline=Date.now()+RETIRE_BUDGET_MS,sw=sourceSwitch(s,{firstBatch:true,deadline});
           if(sw.effective!=='on') fail('E_HARVEST_OFF',`harvest is off for this instance: ${sw.reason}. Nothing was captured.`);
-          result=checkpointHarvest(s,{noLaunch:!!flags['no-launch'],deadline:Date.now()+RETIRE_BUDGET_MS});
+          result=checkpointHarvest(s,{noLaunch:!!flags['no-launch'],deadline});
         }
       }
     } else if(event==='run-source') {

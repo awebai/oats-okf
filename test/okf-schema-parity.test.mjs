@@ -85,7 +85,7 @@ test('R1 configuration runtime and shipped schemas agree on accepted keys and ma
   // valid or not, with the migration code (frozen descriptors read them inertly).
   for(const extra of [{cron:'*/15 * * * *'},{tz:'UTC'},{cron:'*/15 * * * *',tz:'UTC'},{cron:''},{tz:null}]) {
     expect('bindings',{...bindings(directory),...extra},false,`live ${Object.keys(extra).join('+')}`);
-    assert.throws(()=>validateBindings({...bindings(directory),...extra},join(dir,'bindings.json')),{code:'E_HARVEST_SCHEDULE_REMOVED',message:/Remove cron\/tz from the bindings file; then run oats okf setup --remove-schedules --soul <source soul> from the deployment/});
+    assert.throws(()=>validateBindings({...bindings(directory),...extra},join(dir,'bindings.json')),{code:'E_HARVEST_SCHEDULE_REMOVED',message:/Remove cron\/tz from the bindings file; then run oats okf setup --remove-schedules --soul <source soul> from the deployment, once per state namespace \(each bindings file's stateDir\); --soul only selects the capability/});
   }
   assert.doesNotThrow(()=>validateBindings({...bindings(directory),cron:'*/15 * * * *',tz:'UTC'},join(dir,'bindings.json'),{frozen:true}),'a frozen pre-4.2 descriptor still reads');
   for(const key of ['cron','tz']) for(const value of [null,0,false,[],{},'','  ']) assert.throws(()=>validateBindings({...bindings(directory),[key]:value},join(dir,'bindings.json'),{frozen:true}),{code:'E_CONFIG'},`frozen invalid ${key}`);

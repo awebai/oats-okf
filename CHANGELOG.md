@@ -16,11 +16,26 @@ Checkpoint harvest (#49); the harvester retires after delivery (#47). #46 and
 - **`oats okf harvest`** re-reads the switch and the soul opt-out
   (`E_HARVEST_OFF`), takes the source's worker lock (a live holder:
   `already-running`, with the run id or `preparing`; a dead one is
-  reclaimed), settles earlier delivered PRs through `complete`'s checks
-  (`settled`: accepted, rejected once and never rejudged, open, or
-  unsettled with its command), reports an active run (`already-running`,
-  `deferred`, or `needs-recovery` with exact commands), then captures and
-  requests a finite drain (`started`, or `empty`). Its answer replaces the
+  reclaimed), reports an active run (`already-running`, `deferred`, or
+  `needs-recovery` with exact commands) without settling history, so the
+  run's completion never waits behind a GitHub call; with no run active it
+  settles earlier delivered PRs through `complete`'s checks (`settled`:
+  accepted, rejected once and never rejudged, open, or unsettled with its
+  command), then captures and requests a finite drain (`started`, or
+  `empty`). Only a busy capture lock is reported as another capture
+  (`preparing`); a lock met inside the capture is an error.
+- **The switch is the deployment's now.** A home's settings are its spawn's
+  snapshot (the kernel dispatches its commands and hooks with them), so from
+  a home every switch read (checkpoint, retire, retry, drain continuation,
+  run-source) asks the deployment through `oats okf harvest-status --soul
+  <soul> --json` run from the source's deployment, without the home's
+  identity or settings, within the invocation's budget. A read that fails or
+  times out is `E_HARVEST_CONSENT_UNKNOWN`: nothing captured or started, a
+  retirement refused. The soul's opt-out stays absolute. An explicit spawn
+  override for the source (origin `spawn`) admits its own first batch (a
+  checkpoint, its retirement); a host value captured at spawn does not.
+  Homes copied from earlier versions keep their copied modules: a pin does
+  not retrofit them (see the cutover). Its answer replaces the
   run's status.
 - **Review settlement is per destination.** A run already processed settles
   each destination on its own, through the same identity and ancestry
@@ -34,7 +49,11 @@ Checkpoint harvest (#49); the harvester retires after delivery (#47). #46 and
   outcomes.
 - **One deadline** bounds a checkpoint and a retire hook (110 s): every
   `git`, `gh` and `oats` call gets at most what is left and none starts
-  once it is spent, and every lock wait ends with it (`E_DEADLINE`); settlement takes at most 30 s and capture 85 s. A worker
+  once it is spent, and every lock wait ends with it (`E_DEADLINE`); settlement takes at most 30 s and capture 85 s. A
+  harvester is started only with its spawn's full 90 s timeout (and a
+  second for the records before it) left: otherwise it is `deferred` before
+  any effect, no run active, the drain kept, with `run-source --manual` to
+  resume. A worker
   is never launched past it: with under 15 s left, or staging stopped by
   it, the confirmed worker stays (`deferred`, `phase: ready` or
   `scaffolded`, `launched: false`, `next: retry --source FILE --launch`),
@@ -61,7 +80,9 @@ Checkpoint harvest (#49); the harvester retires after delivery (#47). #46 and
 - **Retirement** takes the final capture and then the same drain within one
   110 s budget, reported in `meta.drain` apart from the certified capture:
   started, already-running (the active run's completion hands on the final
-  tail, also after the source home is gone), empty, not-launched (a source
+  tail, also after the source home is gone), empty, deferred and busy (the
+  worker lock held with no run active: no handoff is promised; the exact
+  `run-source --manual` resumes), not-launched (a source
   that never launched a model launches no harvester), or needs-recovery /
   deferred / failed with the exact resume command. Harvest off: no final
   capture and no drain, as before. A captured source's drain stays held.
