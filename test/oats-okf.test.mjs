@@ -15,7 +15,7 @@ const CLI=join(CAP,'bin/oats-okf.mjs');
 const mod=p=>import(new URL(`../oats-package/capabilities/oats-okf/lib/${p}.mjs`,import.meta.url));
 const {loadBindings,metadata,validateBindings,validateDeclaration}=await mod('config');
 const {tree,save,readJSON,atomic,digest,withLock,baseLock:unused,quote,command,hash}=await mod('io');
-const {register,registerCaptured,capture,input,loadStatus,loadSource,saveStatus,scheduleSource,settleRetiredSchedule,pinOwner}=await mod('sources');
+const {register,registerCaptured,capture,input,loadStatus,loadSource,saveStatus,pinOwner,legacyScheduleArgv}=await mod('sources');
 const {cat:consultCat,acceptedResolution}=await mod('consult');
 /** An okf 3.0.0 consult read of one accepted file (no local view). */
 const readAccepted=(s,path='/expert/index.md',alias=Object.keys(s.bindings.bases)[0])=>consultCat(s,{base:alias},[path]).result;
@@ -52,8 +52,10 @@ else if(a[0]==='--deployment') {
   process.stdout.write(r.stdout);process.stderr.write(r.stderr);process.exit(r.status ?? 94);
 }
 else if(a[0]==='spawn' && a.includes('--preview')) {const p=join(root,'preview.json');out(fs.existsSync(p)?JSON.parse(fs.readFileSync(p,'utf8')):{modules:[{name:'oats.okf-harvest',layer:null},{name:'oats.fixture-chat',layer:'messaging'}]});}
-else if(a[0]==='spawn') {if(a[1]!=='oats.okf/knowledge-harvester') {console.error('fixture spawns only the harvester package soul');process.exit(95);}if(a.includes('--purpose') || !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(val('--name')) || val('--name').length>64) {console.error('fixture: exact --name slug of at most 64 characters');process.exit(96);}const instance=val('--name'),home=join(root,'workers',instance);fs.mkdirSync(join(home,'work'),{recursive:true});fs.writeFileSync(join(home,'instance.json'),JSON.stringify({instance,agent:'oats-okf--knowledge-harvester',work:'directory',kind:'persistent',launched:false}));fs.copyFileSync(val('--task-file'),join(home,'TASK.md'));out({instance,home,work:'directory',launched:false});}
+else if(a[0]==='spawn' && fs.existsSync(join(root,'spawn-fail'))) {console.error('fixture: spawn effect unconfirmed');process.exit(97);}
+else if(a[0]==='spawn') {if(fs.existsSync(join(root,'spawn-slow'))) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,Number(fs.readFileSync(join(root,'spawn-slow'),'utf8')));if(a[1]!=='oats.okf/knowledge-harvester') {console.error('fixture spawns only the harvester package soul');process.exit(95);}if(a.includes('--purpose') || !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(val('--name')) || val('--name').length>64) {console.error('fixture: exact --name slug of at most 64 characters');process.exit(96);}const instance=val('--name'),home=join(root,'workers',instance);fs.mkdirSync(join(home,'work'),{recursive:true});fs.writeFileSync(join(home,'instance.json'),JSON.stringify({instance,agent:'oats-okf--knowledge-harvester',work:'directory',kind:'persistent',launched:false}));fs.copyFileSync(val('--task-file'),join(home,'TASK.md'));out({instance,home,work:'directory',launched:false});}
 else if(a[0]==='version' && fs.existsSync(join(root,'version.json'))) console.log(fs.readFileSync(join(root,'version.json'),'utf8'));
+else if(a[0]==='session' && a[1]==='start' && fs.existsSync(join(root,'sessions-inert'))) out({home:val('--home'),started:'inert fixture: no model'});
 else if(a[0]==='session') {console.error('NO MODEL SESSIONS IN FIXTURES');process.exit(91);}
 else if(a[0]==='schedule') {
   if(a.includes('install')) {console.error('NO HOST TIMERS IN FIXTURES');process.exit(92);}
@@ -64,7 +66,7 @@ else if(a[0]==='schedule') {
   if(a[1]==='add') {if(jobs[a[2]]) error('E_SCHEDULE_EXISTS','already exists');jobs[a[2]]=JSON.parse(fs.readFileSync(val('--file'),'utf8'));persist();out({schedule:jobs[a[2]]});}
   else if(a[1]==='show') {if(!jobs[a[2]]) error('E_SCHEDULE_UNKNOWN','missing');out({schedule:jobs[a[2]]});}
   else if(['enable','disable'].includes(a[1])) {if(!jobs[a[2]]) error('E_SCHEDULE_UNKNOWN','missing');jobs[a[2]].enabled=a[1]==='enable';persist();out({schedule:jobs[a[2]]});}
-  else if(a[1]==='remove') {if(!jobs[a[2]]) error('E_SCHEDULE_UNKNOWN','missing');if(fs.existsSync(join(root,'schedule-running-'+a[2]))) error('E_SCHEDULE_RUNNING','running');delete jobs[a[2]];persist();out({removed:a[2]});}
+  else if(a[1]==='remove') {if(a.includes('--force')) error('E_FIXTURE','never forced');if(!jobs[a[2]]) error('E_SCHEDULE_UNKNOWN','missing');if(fs.existsSync(join(root,'schedule-running-'+a[2]))) error('E_SCHEDULE_RUNNING','running');delete jobs[a[2]];persist();if(fs.existsSync(join(root,'schedule-remove-flaky'))) {console.error('timed out after the effect');process.exit(124);}out({removed:a[2]});}
   else if(a[1]==='list') out({schedules:Object.values(jobs),scheduler:{installed:false,active:false}});
   else error('E_FIXTURE','unknown schedule call');
 }
@@ -153,7 +155,7 @@ test('exported payload version, floor, required hooks and complete command inven
   assert.equal(fs.existsSync(join(CAP,'agents')),false,'the harvester is the package soul oats.okf/knowledge-harvester, not a capability agent');
   assert.ok(fs.statSync(join(ROOT,'oats-package/souls/knowledge-harvester/AGENTS.md')).isFile(),'the harvester soul keeps its one canonical instruction file');
   const m=readJSON(join(CAP,'oats.json')),distribution=readJSON(join(ROOT,'oats-package/oats-package.json'));
-  for(const manifest of [readJSON(join(ROOT,'package.json')),distribution,m])assert.equal(manifest.version,'4.1.1');
+  for(const manifest of [readJSON(join(ROOT,'package.json')),distribution,m])assert.equal(manifest.version,'4.2.0');
   for(const manifest of [distribution,m])assert.equal(manifest.compatibility.oats,'>=0.29.0');
   assert.equal(m.hooks.spawn.required,true);
   for(const c of ['harvest','inspect','setup','run-source','complete','retry','migrate','read','refresh','init','bases','index','cat','ls','links','search','harvest-status']) assert.ok(m.commands[c]);
@@ -173,9 +175,10 @@ test('help is side-effect free, including malformed settings and every declared 
   const f=fixture(t);for(const cmd of Object.keys(readJSON(join(CAP,'oats.json')).commands)) {const r=f.cli(cmd,['--help'],{OATS_SETTINGS:'!'});assert.equal(r.status,0,r.stderr);assert.match(r.stdout,/oats okf/);}assert.equal(fs.existsSync(f.calls),false);
 });
 test('directory init, cross-node views, role evidence allowlist and inactive scheduler',t=>{
-  const f=fixture(t);const s=f.source();assertNoLocalCopy(f.home);assert.match(readAccepted(s,'/peer/index.md').text,/# peer/);assert.equal(s.owner,'owner-1');assert.equal(s.launchRecipe,undefined);assert.equal(s.settings,undefined);scheduleSource(s);
-  const calls=fs.readFileSync(f.calls,'utf8').trim().split('\n').map(JSON.parse);assert.equal(calls[0].a[0],'schedule');assert.equal(calls[0].identity,null);
-  const spec=readJSON(join(dirname(s.file),'schedule.json'));assert.equal(spec.cwd,f.context);assert.ok(spec.argv.includes('--soul'));assert.equal(spec.argv.includes(f.home),false);
+  const f=fixture(t);const s=f.source();assertNoLocalCopy(f.home);assert.match(readAccepted(s,'/peer/index.md').text,/# peer/);assert.equal(s.owner,'owner-1');assert.equal(s.launchRecipe,undefined);assert.equal(s.settings,undefined);
+  // okf 4.2.0: registration creates no scheduler job and records no schedule.
+  assert.equal(fs.existsSync(f.calls),false,'registration made no CLI call');assert.equal(fs.existsSync(join(dirname(s.file),'schedule.json')),false);assert.equal(loadStatus(s).schedule,undefined);
+  assert.equal(s.bindings.cron,undefined);assert.equal(s.bindings.tz,undefined);
   assert.equal(f.cli('inspect').out.result.scheduler.active,false);
 });
 test('notes AND complete bounded record backlog are durable before final home deletion',t=>{
@@ -208,7 +211,9 @@ test('harvest worker spawn without a messaging capability spawns without join an
   const task=fs.readFileSync(join(run.worker.home,'TASK.md'),'utf8');
   assert.match(task,/Load the knowledge-harvest skill first/);assert.match(task,/the notes AND every transcript window; cite the turn ids/);
   assert.match(task,/'oats' 'okf-harvest' 'complete' '--source'/);assert.match(task,/'oats' 'okf-harvest' 'harvest-status'/);
-  assert.match(task,/stay alive until your PR is merged or closed/);assert.match(task,/status delivering.*run the completion command again/);assert.doesNotMatch(task,/okf team/);assert.match(task,/Never close the PR yourself/);
+  // okf 4.2.0 (#47): the harvester hands over and retires once delivered; it never waits for the review.
+  assert.match(task,/Once every destination is delivered, run the status command: when it says retire, hand over in your final reply/);assert.doesNotMatch(task,/stay alive|until your PR is merged/i);
+  assert.match(task,/status delivering.*run the completion command again/);assert.match(task,/On failure keep your home and report it; do not retire/);assert.doesNotMatch(task,/okf team/);assert.match(task,/Never close the PR yourself/);
   assert.doesNotMatch(task,/memory-harvest|retire normally/);
 });
 for(const [features,flag] of [[['schedule','harness'],'--harness'],[['schedule'],'--runtime'],[null,'--runtime']]) test(`harvest worker spawn passes ${flag} when oats version features are ${JSON.stringify(features)}`,t=>{
@@ -303,10 +308,18 @@ test('2.1.5 owner rename refusal names the old and new souls and both remedies',
   });
 });
 test('no-launch sources and service workers never trigger scheduled model launches or recursive capture',t=>{
-  const f=fixture(t);const s=f.source();note(f);save(join(f.home,'instance.json'),{instance:'source-one',agent:'source',repo:f.context,work:'directory',launched:false});const before=fs.readFileSync(f.calls,'utf8');assert.equal(runSource(s).status,'skipped');assert.equal(fs.readFileSync(f.calls,'utf8'),before);
+  const f=fixture(t);const s=f.source();note(f);save(join(f.home,'instance.json'),{instance:'source-one',agent:'source',repo:f.context,work:'directory',launched:false});
+  const calls=()=>fs.existsSync(f.calls)?fs.readFileSync(f.calls,'utf8'):'';
+  // okf 4.2.0: a legacy job firing run-source (no --manual) is inert and says why.
+  const fired=f.cli('run-source',['--source',s.file]);assert.equal(fired.status,1);assert.equal(fired.out.error.code,'E_HARVEST_SCHEDULE_REMOVED');assert.equal(calls(),'');assert.deepEqual(loadStatus(s).captured.inputs,[]);
+  assert.equal(runSource(s).status,'skipped');assert.equal(calls(),'');
   const serviceHome=join(f.dir,'service-home');fs.mkdirSync(serviceHome);
-  const service=f.cli('spawn',[],{OATS_KIND:'capability',OATS_SETTINGS:'{}',OATS_HOME:serviceHome,OATS_INSTANCE_HOME:serviceHome});assert.equal(service.out.meta.memory,'none');assert.equal(fs.readFileSync(f.calls,'utf8'),before);
-  capture(s,{final:true});assert.equal(loadStatus(s).auto,false);assert.equal(runSource(s).status,'disabled');
+  const service=f.cli('spawn',[],{OATS_KIND:'capability',OATS_SETTINGS:'{}',OATS_HOME:serviceHome,OATS_INSTANCE_HOME:serviceHome});assert.equal(service.out.meta.memory,'none');assert.equal(calls(),'');
+  // Retiring a never-launched source (a no-launch spawn's compensation) certifies custody and launches no model.
+  const retired=f.cli('retire');assert.equal(retired.status,0,retired.stdout);assert.equal(retired.out.meta.retired,true);
+  assert.equal(retired.out.meta.drain.status,'not-launched');assert.match(retired.out.meta.drain.next,/run-source --source .* --manual/);
+  const made=calls().trim().split('\n').map(JSON.parse);assert.equal(made.some(({a})=>['spawn','session'].includes(a[0])),false,'no harvester, no model');
+  assert.equal(loadStatus(s).captured.inputs.length,1);assert.equal(loadStatus(s).activeRun,null);assert.equal(loadStatus(s).drain,undefined);
 });
 test('inspect authority distinguishes legacy, invalid, disabled and specified without exposing opaque binding',()=>{
   assert.deepEqual(capturedAuthority({}),{schemaVersion:1,registration:'legacy',capture:'unknown',migrationRequired:true,responsibleHuman:{status:'unknown'}});
@@ -382,7 +395,7 @@ test('c77 absent SourceReceipt1 permits only qualified already-registered replay
   assert.deepEqual(inventory(f.dir),before,'no reconstruction from an old descriptor or current soul/config');
 });
 
-test('captured registration freezes qualified identity, binding and v2 schedule without live source fallback',t=>{
+test('captured registration freezes qualified identity and binding, creates no schedule, without live source fallback',t=>{
   const f=fixture(t),receipt=capturedReceipt(f),snapshot=join(f.dir,'invocation-binding.json'),wrong=structuredClone(receipt.binding),priorBinding=process.env.OATS_BINDING_FILE;
   t.after(()=>{if(priorBinding===undefined) delete process.env.OATS_BINDING_FILE;else process.env.OATS_BINDING_FILE=priorBinding;});
   wrong.payload.execution.model='different/model';save(snapshot,wrong);process.env.OATS_BINDING_FILE=snapshot;
@@ -393,27 +406,25 @@ test('captured registration freezes qualified identity, binding and v2 schedule 
   const contextFile=executionEnv.OATS_INVOCATION_CONTEXT_FILE,context=readJSON(contextFile);save(contextFile,{...context,intent:null});
   const beforeRejectedReplay=inventory(f.dir),unadmitted=f.cli('spawn',[],{OATS_BINDING_FILE:snapshot,OATS_SOURCE_RECEIPT_FILE:receiptFile,...executionEnv});
   assert.equal(unadmitted.status,1);assert.match(unadmitted.stdout,/requires an admitted instance intent/);assert.deepEqual(inventory(f.dir),beforeRejectedReplay,'present unadmitted context cannot downgrade to registered replay');save(contextFile,context);
-  const s=loadSource(lifecycle.out.meta.source),schedules=readJSON(join(f.dir,'schedules.json')),spec=schedules[`okf-${s.id}`];
-  const normalized={...spec,execution:{responsibleHuman:null,deployment:receipt.executionBinding.deployment,resolution:receipt.executionBinding.resolution}};delete normalized.responsibleHuman;schedules[`okf-${s.id}`]=normalized;save(join(f.dir,'schedules.json'),schedules);
-  const again=registerCaptured(f.home,receipt);assert.equal(again.id,s.id,'scheduler-normalized explicit null remains idempotent');assert.equal(s.registration.kind,'captured');assert.deepEqual(s.providerBinding,receipt.binding);assert.deepEqual(s.executionBinding,receipt.executionBinding);assert.equal(s.responsibleHuman,null);
+  const s=loadSource(lifecycle.out.meta.source);
+  assert.equal(fs.existsSync(join(f.dir,'schedules.json')),false,'okf 4.2.0: no scheduler job');assert.equal(fs.existsSync(join(dirname(s.file),'schedule.json')),false);
+  const again=registerCaptured(f.home,receipt);assert.equal(again.id,s.id,'captured registration remains idempotent');assert.equal(s.registration.kind,'captured');assert.deepEqual(s.providerBinding,receipt.binding);assert.deepEqual(s.executionBinding,receipt.executionBinding);assert.equal(s.responsibleHuman,null);
   const owner=readJSON(join(f.bindings.stateDir,'owners.json'))['owner-1'];assert.equal(owner.kind,'captured-qualified-soul');assert.deepEqual(owner.identity,receipt.sourceIdentity);
-  assert.equal(spec.definitionVersion,2);assert.equal(spec.recurrencePolicy,'capture');assert.equal(spec.responsibleHuman,null);assert.equal(spec.cwd,f.context);
-  assert.ok(spec.argv.includes('--deployment'));assert.ok(spec.argv.includes('--resolution'));assert.ok(spec.argv.includes('--json'));assert.equal(spec.argv.includes('--soul'),false);
-  assert.equal(spec.argv[spec.argv.indexOf('--resolution')+1],receipt.executionBinding.resolution.id);
+  // The legacy job shape --remove-schedules proves ownership by (okf <= 4.1 registered it).
+  const argv=legacyScheduleArgv(s);assert.ok(argv.includes('--deployment'));assert.equal(argv[argv.indexOf('--resolution')+1],receipt.executionBinding.resolution.id);assert.equal(argv.includes('--soul'),false);
   save(snapshot,receipt.binding);const capturedEnv={OATS_BINDING_FILE:snapshot,OATS_SETTINGS:JSON.stringify({'bindings-file':join(f.dir,'poison.json'),'state-dir':join(f.dir,'poison-state')})},alias=f.base.id;
   const inspected=f.cli('inspect',[],capturedEnv);assert.equal(inspected.status,0);assert.deepEqual(inspected.out.result.authority,{schemaVersion:1,registration:'captured',capture:'recorded',migrationRequired:false,sourceIdentity:receipt.sourceIdentity,executionBinding:receipt.executionBinding,responsibleHuman:{status:'disabled'}});
   for(const [key,value] of [['source',s.file],['owns',s.decl.owns],['reads',s.decl.reads],['bases',s.bindings.bases],['acceptedView',s.acceptedView],['status',loadStatus(s)]]) assert.deepEqual(inspected.out.result[key],value,`existing inspect field ${key} is unchanged`);
   assert.equal(f.cli('read',['--base',alias],capturedEnv).out.error.code,'E_REMOVED');assert.equal(f.cli('index',[],capturedEnv).status,0);assert.equal(f.cli('cat',['--base',alias,'/expert/index.md'],capturedEnv).status,0);assert.equal(f.cli('refresh',[],capturedEnv).out.error.code,'E_REMOVED');
-  const schedulesBefore=fs.readFileSync(join(f.dir,'schedules.json'));const unsupported=f.cli('setup',['--source',s.file],capturedEnv);assert.equal(unsupported.status,1);assert.equal(unsupported.out.error.code,'E_MIGRATION');assert.deepEqual(fs.readFileSync(join(f.dir,'schedules.json')),schedulesBefore);
+  for(const args of [['--source',s.file],['--remove-schedules']]) {const unsupported=f.cli('setup',args,capturedEnv);assert.equal(unsupported.status,1);assert.equal(unsupported.out.error.code,'E_MIGRATION');}assert.equal(fs.existsSync(join(f.dir,'schedules.json')),false);
   save(join(f.home,'instance.json'),{instance:'source-one',agent:'source',kind:'capability',launched:true});assert.equal(f.cli('spawn',[],capturedEnv).out.meta.memory,'okf-v2','captured marker outranks poisoned live service kind');
   note(f);const retired=f.cli('retire',[],capturedEnv);assert.equal(retired.status,0,retired.stdout);assert.equal(retired.out.meta.retired,true,'captured retire uses the exact registered source');
+  assert.equal(retired.out.meta.drain.status,'held','a captured source drains only through its admitted operation');assert.equal(loadStatus(s).activeRun,null);
   fs.rmSync(f.home,{recursive:true});fs.rmSync(f.soul,{recursive:true});fs.rmSync(f.bindingFile);process.env.OATS_SETTINGS=JSON.stringify({'bindings-file':join(f.dir,'poison.json'),'state-dir':join(f.dir,'poison-state')});
   const frozen=loadSource(s.file);assert.equal(frozen.id,s.id);assert.equal(fs.existsSync(join(f.dir,'poison-state')),false);assert.deepEqual(inspectSource(frozen).authority,inspected.out.result.authority,'source deletion and poisoned config do not alter captured authority');
   const before=tree(f.bindings.stateDir),beforeCalls=fs.readFileSync(f.calls);
   assert.throws(()=>runSource(frozen,{manual:true,noLaunch:true}),{code:'E_CAPTURED_HELPER'});
   assert.deepEqual(tree(f.bindings.stateDir),before);assert.deepEqual(fs.readFileSync(f.calls),beforeCalls,'captured source cannot reach legacy worker spawn');
-  schedules[`okf-${s.id}`]={...spec,argv:['oats','poison'],attempt:{executionId:'retained-attempt'}};save(join(f.dir,'schedules.json'),schedules);
-  assert.throws(()=>scheduleSource(s),/definition differs/);assert.deepEqual(readJSON(join(f.dir,'schedules.json'))[`okf-${s.id}`].attempt,{executionId:'retained-attempt'});
 });
 test('public captured harvest refuses before registration replay or scheduling effects',t=>{
   const f=fixture(t),receipt=capturedReceipt(f),s=registerCaptured(f.home,receipt),snapshot=join(f.dir,'binding-snapshot.json');save(snapshot,receipt.binding);
@@ -423,7 +434,7 @@ test('public captured harvest refuses before registration replay or scheduling e
   status.activeRun=id;saveStatus(s,status);
   // These pending repairs used to run before the knowingly unsupported worker.
   for(const path of ['STATE.md','log.md','notes']) fs.rmSync(join(f.home,path),{recursive:true,force:true});
-  fs.rmSync(join(dirname(s.file),'schedule.json'));save(join(f.dir,'schedules.json'),{});
+  save(join(f.dir,'schedules.json'),{});
   const preload=noEffectsPreload(f.dir),before=inventory(f.dir);
   for(const env of [{OATS_BINDING_FILE:snapshot},{}]) for(const args of [[],['--no-launch']]) {
     const result=spawnSync(process.execPath,['--import',preload,CLI,'harvest','--home',f.home,...args,'--json'],{cwd:f.context,env:{...process.env,...env},encoding:'utf8',timeout:30000});
@@ -454,10 +465,10 @@ test('public captured harvest with unregistered or missing source refuses withou
 
 test('public legacy harvest still registers and replays its existing worker',t=>{
   const f=fixture(t);note(f);
-  const first=f.cli('harvest',['--no-launch']);assert.equal(first.status,0,first.stdout+first.stderr);assert.equal(first.out.result.status,'ready');
-  const second=f.cli('harvest',['--no-launch']);assert.equal(second.status,0,second.stdout+second.stderr);assert.equal(second.out.result.run,first.out.result.run);
+  const first=f.cli('harvest',['--no-launch']);assert.equal(first.status,0,first.stdout+first.stderr);assert.equal(first.out.result.status,'started');assert.equal(first.out.result.launched,false);
+  const second=f.cli('harvest',['--no-launch']);assert.equal(second.status,0,second.stdout+second.stderr);assert.equal(second.out.result.status,'already-running');assert.equal(second.out.result.run,first.out.result.run);
   const calls=fs.readFileSync(f.calls,'utf8').trim().split('\n').map(JSON.parse);
-  assert.equal(calls.filter(({a})=>a[0]==='spawn' && !a.includes('--preview')).length,1,'fixture scaffold only, never a real model');assert.ok(calls.some(({a})=>a[0]==='schedule'));
+  assert.equal(calls.filter(({a})=>a[0]==='spawn' && !a.includes('--preview')).length,1,'fixture scaffold only, never a real model');assert.equal(calls.some(({a})=>a[0]==='schedule'),false,'okf 4.2.0: no scheduler call');
   assert.equal(calls.some(({a})=>a[0]==='session' || a.includes('install')),false);
 });
 
@@ -723,7 +734,7 @@ test('baseline exports the readable okf-consultation and okf-instance-knowledge 
   assert.ok(fs.statSync(join(CAP,'lib/okf-validate.mjs')).isFile());
 });
 test('baseline harvest operation dispatches its declared command without a hook event',t=>{
-  const f=fixture(t);f.source();note(f);const r=declaredRun(f,'harvest',['--no-launch'],true);assert.equal(r.schemaVersion,1);assert.equal(r.ok,true);assert.equal(r.result.status,'ready');assert.match(r.result.instance,/^okf-harvester-[0-9a-f-]{36}$/);assert.ok(r.result.instance.length<=64);
+  const f=fixture(t);f.source();note(f);const r=declaredRun(f,'harvest',['--no-launch'],true);assert.equal(r.schemaVersion,1);assert.equal(r.ok,true);assert.equal(r.result.status,'started');assert.equal(r.result.launched,false);assert.match(r.result.instance,/^okf-harvester-[0-9a-f-]{36}$/);assert.ok(r.result.instance.length<=64);
 });
 for(const operation of [false,true]) test(`baseline inspect ${operation?'operation':'command'} returns provider receipts through declared dispatch`,t=>{
   const f=fixture(t);const s=f.source();const status=loadStatus(s);status.diagnostic='large α receipt\n'.repeat(10000);saveStatus(s,status);
@@ -899,14 +910,15 @@ test('R1 near-limit legal compact input is not rejected merely for pretty-print 
   assert.equal(capture(s,{final:true}).complete,true);assert.deepEqual(capturedTurns(s),turns);
 });
 
-test('R1 registration schedules idempotently, recreates missing jobs and preserves explicit disable',t=>{
+test('4.2.0 registration, replayed spawn, checkpoint, retire and removed setup flags never add, show or change a job',t=>{
   const f=fixture(t),s=f.source();note(f);capture(s);
-  const before=loadStatus(s);assert.equal(f.source().id,s.id);assert.equal(loadStatus(s).schedule.status,'ready');
-  assert.equal(f.cli('setup',['--source',s.file,'--disable']).status,0);
-  assert.equal(f.source().id,s.id);assert.equal(readJSON(join(f.dir,'schedules.json'))[`okf-${s.id}`].enabled,false);
-  fs.rmSync(join(f.dir,'schedules.json'));f.source();assert.equal(readJSON(join(f.dir,'schedules.json'))[`okf-${s.id}`].enabled,false);
-  capture(s,{final:true});assert.equal(loadStatus(s).auto,false);assert.deepEqual(loadStatus(s).captured.inputs,before.captured.inputs);assert.deepEqual(loadStatus(s).processed,before.processed);
-  assert.ok(callsOf(f).every(c=>!c.a.includes('install')));
+  const before=loadStatus(s);assert.equal(f.source().id,s.id);assert.equal(loadStatus(s).schedule,undefined);
+  for(const flags of [['--source',s.file],['--source',s.file,'--enable'],['--source',s.file,'--disable'],['--install-host']]) {
+    const r=f.cli('setup',flags);assert.equal(r.status,1);assert.equal(r.out.error.code,'E_REMOVED');assert.match(r.out.error.message,/checkpoints[\s\S]*setup --harvest on\|off[\s\S]*setup --remove-schedules/);
+  }
+  assert.equal(f.cli('spawn').status,0);assert.equal(f.cli('harvest',['--no-launch']).status,0);assert.equal(f.cli('retire').status,0);
+  assert.deepEqual(loadStatus(s).captured.inputs,before.captured.inputs);
+  assert.equal(callsOf(f).some(c=>c.a[0]==='schedule'),false,'no scheduler call at all');assert.equal(fs.existsSync(join(f.dir,'schedules.json')),false);
 });
 test('2.1.3 a soul without okf.json refuses the spawn hook with E_CONFIG naming the remedy, never a raw ENOENT',t=>{
   const f=fixture(t);fs.rmSync(join(f.soul,'okf.json'));
@@ -916,50 +928,16 @@ test('2.1.3 a soul without okf.json refuses the spawn hook with E_CONFIG naming 
   assert.doesNotMatch(r.stdout+r.stderr,/ENOENT/);assert.equal(fs.existsSync(join(f.soul,'okf.json')),false,'no knowledge is created implicitly');
   assert.ok(!fs.existsSync(join(f.home,'.okf-source.json')),'no source registered');
 });
-test('2.1.4 retirement takes a drained source\'s okf-<id> job out of the scheduler (definition kept in schedule.json); a source with pending input keeps its job until the worker drains it; a running job stays disabled until it can be removed',t=>{
-  const f=fixture(t),s=f.source();const jobs=()=>readJSON(join(f.dir,'schedules.json'))[`okf-${s.id}`];
-  assert.equal(jobs().enabled,true);
-  // Nothing captured yet → retire drains immediately → job disabled, then removed; definition kept beside the source.
-  const r=f.cli('retire');assert.equal(r.status,0,r.stdout);assert.equal(r.out.meta.retired,true);
-  assert.equal(r.out.meta.schedule.status,'removed');assert.equal(jobs(),undefined,'dead job no longer listed by the kernel');
-  assert.ok(readJSON(join(dirname(s.file),'schedule.json')).argv.includes(s.file),'job definition retained as evidence with the source');
-  assert.equal(loadStatus(s).auto,false);assert.equal(loadStatus(s).schedule.settled,true);assert.equal(loadStatus(s).schedule.removed,true);
-  const calls=callsOf(f).filter(c=>c.a[0]==='schedule' && c.a[2]===`okf-${s.id}`).map(c=>c.a[1]);
-  assert.ok(calls.indexOf('disable')<calls.indexOf('remove'),'switched off before removal');
-  // Second retire is idempotent and does not call the scheduler again.
-  const before=callsOf(f).length;
-  const again=f.cli('retire');assert.equal(again.status,0,again.stdout);assert.equal(again.out.meta.schedule.status,'already-removed');
-  assert.ok(!callsOf(f).slice(before).some(c=>c.a[0]==='schedule' && ['disable','remove'].includes(c.a[1])),'no repeat scheduler calls');
-  // A source WITH unprocessed input keeps its job enabled after retire (the worker must still deliver).
-  const g=fixture(t),s2=g.source();note(g);capture(s2);
-  const r2=g.cli('retire');assert.equal(r2.status,0,r2.stdout);
-  assert.equal(readJSON(join(g.dir,'schedules.json'))[`okf-${s2.id}`].enabled,true,'pending input: job stays on');assert.equal(r2.out.meta.schedule.status,'kept');
-  assert.equal(loadStatus(s2).auto,true);
-  // A drained source whose job is still running: disabled now, removal deferred to the worker's next settle.
-  const h=fixture(t),s3=h.source();put(join(h.dir,`schedule-running-okf-${s3.id}`),'1');
-  const r3=h.cli('retire');assert.equal(r3.status,0,r3.stdout);assert.equal(r3.out.meta.schedule.status,'disabled-pending-removal');
-  assert.equal(readJSON(join(h.dir,'schedules.json'))[`okf-${s3.id}`].enabled,false);assert.equal(loadStatus(s3).schedule.settled,true);assert.equal(loadStatus(s3).schedule.removed,false);
-  fs.rmSync(join(h.dir,`schedule-running-okf-${s3.id}`));
-  assert.equal(settleRetiredSchedule(s3).status,'removed');assert.equal(readJSON(join(h.dir,'schedules.json'))[`okf-${s3.id}`],undefined);
-});
-test('R1 failed registration scheduling is reported and retry repairs the same source without losing evidence',t=>{
-  const f=fixture(t);put(join(f.dir,'schedule-fail'),'1');const result=f.cli('spawn');assert.equal(result.status,1);assert.match(result.out.warning,/scheduler unavailable/);
-  const marker=readJSON(join(f.home,'.okf-source.json')),s=loadSource(marker.source);assert.equal(loadStatus(s).schedule.status,'failed');note(f);capture(s);const before=loadStatus(s);
-  fs.rmSync(join(f.dir,'schedule-fail'));assert.equal(f.source().id,s.id);assert.equal(loadStatus(s).schedule.status,'ready');assert.deepEqual(loadStatus(s).captured,before.captured);
-  put(join(f.dir,'schedule-fail'),'1');const failed=f.cli('harvest',['--no-launch']);assert.equal(failed.status,1);assert.match(failed.out.error.message,/scheduler unavailable/);assert.equal(loadStatus(s).activeRun,null);assert.deepEqual(loadStatus(s).captured,before.captured);
-  assert.ok(!callsOf(f).some(c=>c.a[0]==='spawn'));
-});
-test('R1 schedule collision is not silently overwritten or treated as successful registration',t=>{
-  const f=fixture(t),s=f.source(),file=join(f.dir,'schedules.json'),jobs=readJSON(file);jobs[`okf-${s.id}`].argv=['oats','unexpected'];save(file,jobs);
-  assert.throws(()=>f.source(),/schedule definition differs/);assert.equal(loadStatus(s).schedule.status,'failed');assert.deepEqual(readJSON(file),jobs);
-});
-test('R1 harvest after legacy source migration creates one durable job that survives retirement',t=>{
+// okf 4.2.0: the okf <= 4.1 schedule lifecycle tests (2.1.4 retire-time job
+// removal, R1 registration scheduling failure and collision) are replaced by
+// the explicit `setup --remove-schedules` migration tests below.
+test('R1 harvest after legacy source migration registers one durable source (no job) that survives retirement',t=>{
   const f=fixture(t);note(f);put(join(f.home,'.okf-harvest-record.json'),'{}\n');assert.equal(f.cli('migrate',['--source-home',f.home]).status,0);
-  const h=f.cli('harvest',['--no-launch']);assert.equal(h.status,0,h.stdout);assert.equal(h.out.result.status,'ready');
-  const marker=readJSON(join(f.home,'.okf-source.json')),s=loadSource(marker.source);assert.equal(loadStatus(s).schedule.status,'ready');
-  const r=f.cli('retire');assert.equal(r.status,0,r.stdout);fs.rmSync(f.home,{recursive:true});
-  const jobs=readJSON(join(f.dir,'schedules.json'));assert.equal(Object.keys(jobs).length,1);assert.ok(jobs[`okf-${s.id}`].argv.includes(s.file));
-  assert.equal(loadStatus(s).captured.inputs.length,1);assert.equal(loadStatus(s).processed.length,0);assert.ok(callsOf(f).every(c=>!c.a.includes('install')));
+  const h=f.cli('harvest',['--no-launch']);assert.equal(h.status,0,h.stdout);assert.equal(h.out.result.status,'started');
+  const marker=readJSON(join(f.home,'.okf-source.json')),s=loadSource(marker.source);assert.equal(loadStatus(s).schedule,undefined);
+  const r=f.cli('retire');assert.equal(r.status,0,r.stdout);assert.equal(r.out.meta.drain.status,'already-running');fs.rmSync(f.home,{recursive:true});
+  assert.equal(fs.existsSync(join(f.dir,'schedules.json')),false);
+  assert.equal(loadStatus(s).captured.inputs.length,1);assert.equal(loadStatus(s).processed.length,0);assert.ok(callsOf(f).every(c=>c.a[0]!=='schedule'));
 });
 
 function aliasedFixture(t,alias) {
@@ -1031,7 +1009,7 @@ for(const alias of ['input.json','view.json','staging.json']) {
     fs.appendFileSync(join(f.base.path,'expert/log.md'),'\nLater accepted event.\n');
     const result=f.cli('spawn');assert.equal(result.status,0,result.stdout);assert.equal(result.out.meta.source,s.file);
     assert.deepEqual(loadSource(pointer.source).acceptedView,s.acceptedView);assertNoLocalCopy(f.home);
-    assert.deepEqual(loadStatus(s).captured,before.captured);assert.equal(loadStatus(s).schedule.status,'ready');
+    assert.deepEqual(loadStatus(s).captured,before.captured);assert.equal(loadStatus(s).schedule,undefined);
     assert.equal(f.source().id,s.id);assert.equal(fs.readdirSync(join(s.bindings.stateDir,'sources')).length,1);
   });
 }
@@ -1089,11 +1067,17 @@ test('R1 actual native capture/recall transports 60 large Claude records into du
   const run=readRun(s,runSource(loadSource(s.file),{manual:true,noLaunch:true}).run);const evidence=readJSON(join(run.worker.home,'work/input.json'));assert.ok(evidence.inputs[0].turns[0].text[0].text.startsWith('0:'));
   assert.equal(complete(s,run.id,judgment(f,s,run,{drop:true})).processed,true);assert.equal(loadStatus(s).processed.length,1);assert.equal(loadStatus(s).captured.inputs.length,60);
 });
-test('R1 actual native scheduler registration is idempotent and never installs a host timer',{skip:!nativeCLI},t=>{
-  const f=fixture(t),s=f.source();put(join(f.context,'oats-config.yaml'),'name: fixture\n');process.env.OATS_CLI_BIN=resolve(nativeCLI);
-  const first=scheduleSource(s),second=scheduleSource(s);assert.equal(first.schedule.id,second.schedule.id);assert.equal(second.schedule.argv.includes(s.file),true);
-  assert.equal(f.cli('setup',['--source',s.file,'--disable']).status,0);assert.equal(scheduleSource(s).schedule.enabled,false);
-  const state=f.cli('inspect',['--source',s.file]);assert.equal(state.status,0,state.stdout);assert.notEqual(state.out.result.scheduler.active,true);assert.notEqual(state.out.result.scheduler.installed,true);
+test('4.2.0 actual native scheduler: registration adds no job; --remove-schedules removes an authentic okf 4.1 job, keeps a foreign one, installs no host timer',{skip:!nativeCLI},t=>{
+  const f=fixture(t),s=f.source();put(join(f.context,'oats-local.yaml'),'schemaVersion: 2\nworkspace: local:okf-fixture\n');process.env.OATS_CLI_BIN=resolve(nativeCLI);
+  const native=args=>{const r=spawnSync(process.execPath,[resolve(nativeCLI),...args,'--dir',f.context,'--json'],{cwd:f.context,env:process.env,encoding:'utf8'});return JSON.parse(r.stdout);};
+  assert.deepEqual(native(['schedule','list']).result.schedules.filter(j=>j.id.startsWith('okf-')),[],'registration added no job');
+  // The exact definition okf 4.1 registered, through the real kernel.
+  const job=`okf-${s.id}`,old={id:job,kind:'command',enabled:true,cron:'*/15 * * * *',tz:'UTC',cwd:f.context,argv:legacyScheduleArgv(s)};
+  save(join(f.dir,'old-job.json'),old);assert.equal(native(['schedule','add',job,'--file',join(f.dir,'old-job.json')]).ok,true);
+  const g=seat(f,'seat-foreign');save(join(f.dir,'foreign.json'),{...old,id:`okf-${g.id}`,argv:['oats','status']});assert.equal(native(['schedule','add',`okf-${g.id}`,'--file',join(f.dir,'foreign.json')]).ok,true);
+  const r=deploymentCli(f,'setup',['--remove-schedules']);assert.equal(r.out.error.code,'E_SCHEDULE_OWNERSHIP',r.stdout);assert.deepEqual(r.out.error.result.removed,[job]);
+  const left=native(['schedule','list']).result;assert.deepEqual(left.schedules.map(j=>j.id),[`okf-${g.id}`]);assert.notEqual(left.scheduler.installed,true);
+  assert.equal(readJSON(join(dirname(s.file),'schedule-migration.json')).effects.at(-1).result,'confirmed');
 });
 
 // Custody R1: publication must confirm the delivered tree, not merely a valid
@@ -1948,7 +1932,7 @@ test('4.0.0 harvest-status and setup --harvest report and edit only the deployme
   assert.equal(fs.readFileSync(join(ws,'oats-local.yaml'),'utf8'),'# local\nsettings:\n  oats.okf:\n    harvest: on\n    bindings-file: b.json\n');
   f.cli('setup',['--harvest','off'],{OATS_WORKSPACE:ws});assert.match(fs.readFileSync(join(ws,'oats-local.yaml'),'utf8'),/ {4}harvest: off\n/);
   put(join(ws,'oats-local.yaml'),'settings: {oats.okf: {harvest: off}}\n');const flow=f.cli('setup',['--harvest','on'],{OATS_WORKSPACE:ws});assert.equal(flow.out.result.written,false);assert.match(flow.out.result.add,/harvest: on/);
-  assert.equal(f.cli('setup',['--harvest','yes'],{OATS_WORKSPACE:ws}).out.error.code,'E_USAGE');assert.equal(f.cli('setup',['--harvest','on','--enable'],{OATS_WORKSPACE:ws}).out.error.code,'E_USAGE');
+  assert.equal(f.cli('setup',['--harvest','yes'],{OATS_WORKSPACE:ws}).out.error.code,'E_USAGE');assert.equal(f.cli('setup',['--harvest','on','--enable'],{OATS_WORKSPACE:ws}).out.error.code,'E_REMOVED');assert.equal(f.cli('setup',['--harvest','on','--remove-schedules'],{OATS_WORKSPACE:ws}).out.error.code,'E_USAGE');
 });
 test('4.0.6 harvest-status reports unknown, with the reason, when the soul opt-out cannot be read',t=>{
   const f=fixture(t);f.source();
@@ -2001,7 +1985,7 @@ for (const [label, arrange, env, why] of [['the deployment switched off', () => 
   assert.equal(r.out.meta.retired, true); assert.equal(r.out.meta.reason, 'harvest-off'); assert.match(r.out.meta.switch, why);
   assert.equal(hasCalls(f).filter(c => c.a[0] !== 'schedule').length, before, 'no capture or recall');
   const st = loadStatus(s); assert.equal(st.retired, true); assert.equal(st.captured.inputs.length, 0); assert.match(st.harvestOff.reason, why);
-  assert.ok(hasCalls(f).some(c => c.a[0] === 'schedule' && c.a[1] === 'disable'), 'the schedule is settled as for any retire');
+  assert.equal(hasCalls(f).length, before, 'okf 4.2.0: no scheduler call, no drain, no spawn'); assert.equal(st.drain, undefined); assert.equal(st.activeRun, null);
 });
 test('4.0.1 registration records the soul directory for later switch re-reads', t => {
   const f = fixture(t); const s = f.source(); assert.equal(s.soulDir, fs.realpathSync(f.soul));
@@ -2273,4 +2257,274 @@ test('4.1.1 a forged commit-graph in the worker\'s checkout cannot make a rewrit
   assert.equal(spawnSync('git',['-C',checkout,'merge-base','--is-ancestor',r.commit,head]).status,0,'the graph does fool plain Git');
   assert.throws(()=>complete(s,run.id),e=>e.code==='E_PR' && /unexpected commit; never force push/.test(e.message));
   assert.equal(git(f.repo,['rev-parse',`refs/heads/${r.branch}`]),head,'never force-pushed');
+});
+
+// ---------------------------------------------------------------------------
+// okf 4.2.0: checkpoint harvest (#49). No scheduler job; the working agent runs
+// `oats okf harvest` at its checkpoints and retirement takes the final one.
+// Every assertion counts real CLI calls, durable ids and receipts.
+const {checkpointHarvest,retireDrain}=await mod('worker');
+const {hostname}=await import('node:os');
+const callsIn=f=>fs.existsSync(f.calls)?callsOf(f):[];
+const spawnsOf=f=>callsIn(f).filter(c=>c.a[0]==='spawn' && !c.a.includes('--preview'));
+const capturesOf=f=>callsIn(f).filter(c=>c.a[0]==='capture');
+/** The CLI as an operator runs it from the deployment (no instance home). */
+function deploymentCli(f,cmd,args=[],env={}) {
+  const base=Object.fromEntries(Object.entries(process.env).filter(([k])=>!['OATS_INSTANCE_HOME','OATS_HOME','OATS_INSTANCE','OATS_AGENT'].includes(k)));
+  const r=spawnSync(process.execPath,[CLI,cmd,...args,'--json'],{cwd:f.context,env:{...base,...env},encoding:'utf8',timeout:60000});
+  let out;try{out=JSON.parse(r.stdout);}catch{}return {...r,out};
+}
+const bigNote=(f,i)=>note(f,`big-${i}.md`,`Observation ${i}: `+'durable detail '.repeat(6700));
+/** A second (or later) registered seat of the same soul in the fixture's deployment. */
+function seat(f,name) {
+  const home=join(f.context,name);fs.mkdirSync(join(home,'work'),{recursive:true});
+  save(join(home,'instance.json'),{instance:name,agent:'source',repo:f.context,work:'directory',launched:true});
+  const prior=process.env.OATS_INSTANCE;process.env.OATS_INSTANCE=name;
+  try {return register(home);} finally {process.env.OATS_INSTANCE=prior;}
+}
+
+test('4.2.0 consent: own-home harvest re-reads the switch for a registered source; off, opted out or unreadable captures and launches nothing',t=>{
+  const f=fixture(t);const s=f.source();note(f);
+  const cases=[[()=>{},offSettings(f),/deployment does not switch harvest on/],[()=>soulOff(f),{},/soul opts out/],[()=>put(join(f.soul,'soul.yaml'),'name: source\nknowledge:\n\tharvest: on\n'),{},/could not be read/]];
+  for(const [arrange,env,why] of cases) {
+    arrange();const r=f.cli('harvest',[],env);assert.equal(r.status,1,r.stdout);assert.equal(r.out.error.code,'E_HARVEST_OFF');assert.match(r.out.error.message,why);
+    assert.equal(fs.existsSync(f.calls),false,'no capture, recall, spawn or session');assert.deepEqual(loadStatus(s).captured.inputs,[]);assert.equal(loadStatus(s).drain,undefined);
+    put(join(f.soul,'soul.yaml'),'name: source\nwork: directory\n');
+  }
+  const on=f.cli('harvest',['--no-launch']);assert.equal(on.status,0,on.stdout);assert.equal(on.out.result.status,'started');
+});
+test('4.2.0 instructions: only the harvest-on spawn brief tells the agent to run the checkpoint command; no hook output names a schedule',t=>{
+  const f=fixture(t);const on=f.cli('spawn');assert.equal(on.status,0,on.stdout);
+  assert.match(on.out.brief,/at a checkpoint \(after opening or handing over a PR, or finishing a task\) update STATE\.md, log\.md and notes\/, then run `oats okf harvest` from your instance home/);
+  assert.equal(on.out.meta.checkpoint,'oats okf harvest');assert.equal(on.out.meta.schedule,undefined);
+  const g=fixture(t);const off=g.cli('spawn',[],offSettings(g));assert.equal(off.status,0,off.stdout);assert.equal(off.out.meta.harvest,'off');
+  assert.doesNotMatch(off.out.brief,/(?<!do not )run `oats okf harvest`/,'no unconditional harvest instruction');assert.match(off.out.brief,/do not run `oats okf harvest`/);
+  const service=f.cli('spawn',[],{OATS_KIND:'capability',OATS_HOME:join(f.dir,'svc'),OATS_INSTANCE_HOME:join(f.dir,'svc')});assert.doesNotMatch(JSON.stringify(service.out),/oats okf harvest/);
+});
+test('4.2.0 two concurrent checkpoint processes start at most one worker; the loser reports the run or preparation, never a second spawn',async t=>{
+  const f=fixture(t);f.source();note(f);put(join(f.dir,'spawn-slow'),'1500');
+  const run=()=>new Promise(done=>{const c=spawn(process.execPath,[CLI,'harvest','--no-launch','--json'],{cwd:f.home,env:process.env});let out='';c.stdout.on('data',d=>out+=d);c.on('close',code=>done({code,out:JSON.parse(out)}));});
+  const answers=await Promise.all([run(),run()]);
+  for(const a of answers) assert.equal(a.code,0,JSON.stringify(a.out));
+  const won=answers.find(a=>a.out.result.status==='started'),lost=answers.find(a=>a.out.result.status==='already-running');
+  assert.ok(won && lost,JSON.stringify(answers.map(a=>a.out.result)));
+  assert.ok(lost.out.result.run===won.out.result.run || (lost.out.result.preparing===true && lost.out.result.run===null),'the loser names the run or says preparation is in progress');
+  assert.equal(spawnsOf(f).length,1,'exactly one worker identity');
+});
+test('4.2.0 a live worker lock before any run is preparation; a dead holder\'s lock is reclaimed; a foreign host\'s is not guessed at',t=>{
+  const f=fixture(t);const s=f.source();note(f);const lock=join(dirname(s.file),'worker.lock');
+  put(join(lock,'owner.json'),JSON.stringify({token:'live',pid:process.pid,host:hostname()}));
+  const busy=f.cli('harvest');assert.equal(busy.status,0,busy.stdout);assert.deepEqual([busy.out.result.status,busy.out.result.run,busy.out.result.preparing],['already-running',null,true]);
+  assert.match(busy.out.result.reason,/no model is known to be running/);assert.equal(fs.existsSync(f.calls),false,'nothing captured or spawned');
+  put(join(lock,'owner.json'),JSON.stringify({token:'other',pid:process.pid,host:'another-host'}));
+  const foreign=f.cli('harvest');assert.equal(foreign.status,1);assert.equal(foreign.out.error.code,'E_LOCKED');
+  const dead=spawnSync(process.execPath,['-e','process.exit(0)']).pid;put(join(lock,'owner.json'),JSON.stringify({token:'dead',pid:dead,host:hostname()}));
+  const reclaimed=f.cli('harvest',['--no-launch']);assert.equal(reclaimed.status,0,reclaimed.stdout);assert.equal(reclaimed.out.result.status,'started');assert.equal(spawnsOf(f).length,1);
+});
+test('4.2.0 nothing new is empty: identical notes and cursors capture nothing; a changed note is new evidence; an active run is never recaptured',t=>{
+  const f=fixture(t);const s=f.source();note(f);
+  const first=f.cli('harvest',['--no-launch']);assert.equal(first.out.result.status,'started');
+  const again=f.cli('harvest',['--no-launch']);assert.equal(again.out.result.status,'already-running');assert.equal(again.out.result.run,first.out.result.run);assert.equal(capturesOf(f).length,1,'an active run is not recaptured');
+  const run=readRun(s,first.out.result.run);complete(s,run.id,judgment(f,s,run,{drop:true}));
+  const empty=f.cli('harvest',['--no-launch']);assert.equal(empty.status,0,empty.stdout);assert.equal(empty.out.result.status,'empty');assert.deepEqual(empty.out.result.settled,[]);
+  assert.equal(spawnsOf(f).length,1);assert.equal(loadStatus(s).captured.inputs.length,1);
+  note(f,'decision.md','The rationale changed after review.');
+  const changed=f.cli('harvest',['--no-launch']);assert.equal(changed.out.result.status,'started');assert.equal(changed.out.result.inputs.run,1);
+  assert.equal(loadStatus(s).captured.inputs.length,2);assert.equal(spawnsOf(f).length,2);
+});
+test('4.2.0 finite drain: a checkpoint over more than 192 KB is drained run by run from its persisted boundary, without recapture; later notes wait',t=>{
+  const f=fixture(t);const s=f.source();put(join(f.dir,'sessions-inert'),'');for(const i of [0,1,2]) bigNote(f,i);
+  const c=f.cli('harvest');assert.equal(c.status,0,c.stdout);assert.equal(c.out.result.status,'started');assert.equal(c.out.result.launched,true);assert.deepEqual(c.out.result.inputs,{run:1,pending:3});
+  const boundary=loadStatus(s).drain.boundary;assert.equal(boundary.length,3);
+  let total=0;for(const id of boundary) total+=Buffer.byteLength(JSON.stringify(input(s,id)));assert.ok(total>192000,'more than one 192 KB batch');
+  note(f,'later.md','Written while the harvester runs.');
+  let run=readRun(s,c.out.result.run);const seen=[...run.inputs],workers=[run.worker.instance];
+  for(let k=1;k<3;k++) {
+    const r=complete(s,run.id,judgment(f,s,run,{drop:true}));assert.equal(r.drain.status,'started',JSON.stringify(r.drain));
+    run=readRun(s,r.drain.run);seen.push(...run.inputs);workers.push(run.worker.instance);assert.equal(run.status,'running');
+  }
+  const last=complete(s,run.id,judgment(f,s,run,{drop:true}));assert.equal(last.drain.status,'drained');
+  assert.deepEqual([...seen].sort(),[...boundary].sort(),'every boundary input handed on exactly once');assert.equal(new Set(workers).size,3);
+  assert.equal(capturesOf(f).length,1,'the drain never recaptures the source');assert.equal(spawnsOf(f).length,3);
+  assert.equal(callsOf(f).filter(c=>c.a[0]==='session').length,3);
+  const st=loadStatus(s);assert.equal(st.drain,undefined);assert.equal(st.lastDrain.inputs,3);assert.equal(st.captured.inputs.length,3,'the later note awaits a later checkpoint');assert.equal(st.activeRun,null);
+  const next=f.cli('harvest');assert.equal(next.out.result.status,'started');assert.deepEqual(next.out.result.inputs,{run:1,pending:1});
+});
+test('4.2.0 --no-launch requests no drain: its run\'s completion launches nothing later',t=>{
+  const f=fixture(t);const s=f.source();put(join(f.dir,'sessions-inert'),'');for(const i of [0,1]) bigNote(f,i);
+  const c=f.cli('harvest',['--no-launch']);assert.equal(c.out.result.status,'started');assert.equal(c.out.result.launched,false);assert.equal(loadStatus(s).drain,undefined);
+  const run=readRun(s,c.out.result.run);const r=complete(s,run.id,judgment(f,s,run,{drop:true}));assert.equal(r.drain,undefined);
+  assert.equal(spawnsOf(f).length,1);assert.equal(callsOf(f).some(c=>c.a[0]==='session'),false);assert.equal(loadStatus(s).activeRun,null);
+});
+test('4.2.0 the drain re-reads consent: switched off after the checkpoint, the successor is not started and the drain pauses with its resume command',t=>{
+  const f=fixture(t);const s=f.source();put(join(f.dir,'sessions-inert'),'');for(const i of [0,1]) bigNote(f,i);
+  const c=f.cli('harvest');const run=readRun(s,c.out.result.run);soulOff(f);
+  const r=complete(s,run.id,judgment(f,s,run,{drop:true}));assert.equal(r.drain.status,'harvest-off');assert.match(r.drain.next,/run-source --source .* --manual/);
+  assert.equal(spawnsOf(f).length,1);assert.match(loadStatus(s).drain.paused.reason,/soul opts out/);assert.equal(loadStatus(s).drain.boundary.length,2);
+});
+test('4.2.0 retire during an active run records the final tail for that run\'s completion, which hands it on after the source home is gone',t=>{
+  const f=fixture(t);const s=f.source();put(join(f.dir,'sessions-inert'),'');note(f);
+  const c=f.cli('harvest');const run1=readRun(s,c.out.result.run);
+  note(f,'tail.md','The final decision, written just before retirement.');
+  const r=f.cli('retire');assert.equal(r.status,0,r.stdout);assert.equal(r.out.meta.retired,true);
+  assert.equal(r.out.meta.drain.status,'already-running');assert.equal(r.out.meta.drain.run,run1.id);assert.match(r.out.meta.drain.handoff,/hands it on when it completes/);
+  const tail=loadStatus(s).captured.inputs.find(id=>!run1.inputs.includes(id));assert.ok(loadStatus(s).drain.boundary.includes(tail));
+  fs.rmSync(f.home,{recursive:true});
+  const done=complete(loadSource(s.file),run1.id,judgment(f,s,run1,{drop:true}));assert.equal(done.drain.status,'started');
+  const run2=readRun(s,done.drain.run);assert.deepEqual(run2.inputs,[tail]);
+  const spawns=spawnsOf(f);assert.ok(spawns[0].a.includes('--parent'));assert.equal(spawns[1].a.includes('--parent'),false,'no live-parent dependency after retirement');
+  assert.equal(complete(s,run2.id,judgment(f,s,run2,{drop:true})).drain.status,'drained');assert.equal(loadStatus(s).processed.length,2);
+});
+test('4.2.0 retire: certified custody with a failed handoff is reported and resumable; never claimed drained',t=>{
+  const f=fixture(t);const s=f.source();put(join(f.dir,'sessions-inert'),'');note(f);
+  // A failure before any worker effect: the drain is persisted, no run exists.
+  const id=()=>loadStatus(s).captured.inputs[0];capture(s);const file=join(dirname(s.file),'inputs',`${id()}.json`),bytes=fs.readFileSync(file);fs.writeFileSync(file,'{"tampered":true}\n');
+  const r=f.cli('retire');assert.equal(r.status,0,r.stdout);assert.equal(r.out.meta.retired,true,'custody is certified');
+  assert.equal(r.out.meta.drain.status,'failed');assert.equal(r.out.meta.drain.retained,true);assert.match(r.out.meta.drain.next,/run-source --source .* --manual/);
+  assert.equal(spawnsOf(f).length,0);assert.equal(loadStatus(s).activeRun,null);assert.deepEqual(loadStatus(s).drain.boundary,[id()]);assert.equal(loadStatus(s).lastDrain,undefined);
+  fs.rmSync(f.home,{recursive:true});
+  const owed=deploymentCli(f,'harvest-status',['--soul','source']).out.result.sources[0].outstanding;
+  assert.deepEqual(owed.map(o=>o.kind),['drain']);assert.match(owed[0].command,/^cd .* && oats okf run-source --source .* --manual --soul source --json$/);
+  fs.writeFileSync(file,bytes);
+  const resumed=deploymentCli(f,'run-source',['--source',s.file,'--manual']);assert.equal(resumed.status,0,resumed.stdout);
+  const run=readRun(s,resumed.out.result.run);assert.equal(complete(s,run.id,judgment(f,s,run,{drop:true})).drain.status,'drained');
+  // A failure after the spawn intent: the run is retained, never spawned twice.
+  const g=fixture(t);const s2=g.source();note(g);put(join(g.dir,'spawn-fail'),'');
+  const r2=g.cli('retire');assert.equal(r2.out.meta.retired,true);assert.equal(r2.out.meta.drain.status,'failed');
+  const active=loadStatus(s2).activeRun;assert.equal(readRun(s2,active).status,'spawn-intent');assert.match(r2.out.meta.drain.next.adopt,/retry --source .* --adopt-home/);
+  const again=g.cli('retire');assert.equal(again.out.meta.drain.status,'needs-recovery');assert.equal(again.out.meta.drain.run,active);assert.equal(spawnsOf(g).length,1,'an uncertain spawn is never repeated');
+});
+test('4.2.0 a drain interrupted between its request and its first run, or between a completion and the successor, resumes from custody',t=>{
+  const f=fixture(t);const s=f.source();put(join(f.dir,'sessions-inert'),'');for(const i of [0,1]) bigNote(f,i);capture(s);
+  // Killed after the durable request, before the run: only the request exists.
+  const status=loadStatus(s);status.drain={version:1,boundary:[...status.captured.inputs],by:'checkpoint',requestedAt:new Date().toISOString()};saveStatus(s,status);
+  const owed=deploymentCli(f,'harvest-status',['--soul','source']).out.result.sources[0].outstanding;assert.deepEqual(owed.map(o=>[o.kind,o.remaining]),[['drain',2]]);
+  const c=f.cli('harvest');assert.equal(c.out.result.status,'started');
+  // Killed after activeRun was cleared, before the successor: the next completion
+  // or checkpoint continues, and nothing is lost or doubled.
+  const run=readRun(s,c.out.result.run);put(join(f.dir,'spawn-fail'),'');
+  const r=complete(s,run.id,judgment(f,s,run,{drop:true}));assert.equal(r.drain.status,'failed');assert.equal(r.status,'processed','the completion itself stands');
+  const stuck=loadStatus(s).activeRun;assert.equal(readRun(s,stuck).status,'spawn-intent');
+  const h=f.cli('harvest');assert.equal(h.out.result.status,'needs-recovery');assert.equal(h.out.result.run,stuck);assert.match(h.out.result.commands.adopt,/--adopt-home/);
+  assert.equal(spawnsOf(f).length,2);assert.equal(loadStatus(s).processed.length,1);assert.equal(loadStatus(s).drain.boundary.length,2);
+});
+test('4.2.0 confirmed half-staged work continues explicitly in place: no second spawn, a partial stage is redone',t=>{
+  const f=fixture(t);const s=f.source();note(f);capture(s);let n=0;
+  assert.throws(()=>renameFailure((from,to)=>to.includes('/work/bases/project/') && ++n===2,()=>runSource(s,{manual:true,noLaunch:true})),/injected/);
+  const run=readRun(s,loadStatus(s).activeRun);assert.equal(run.status,'scaffolded');assert.ok(run.worker.home);assert.equal(run.stages.project,undefined);
+  assert.ok(fs.existsSync(join(run.worker.home,'work/bases/project')),'a partial stage was left behind');
+  const h=f.cli('harvest',['--no-launch']);assert.equal(h.out.result.status,'needs-recovery');assert.match(h.out.result.commands.continue,/retry --source/);
+  const r=deploymentCli(f,'retry',['--source',s.file]);assert.equal(r.status,0,r.stdout);assert.equal(r.out.result.status,'ready');
+  const ready=readRun(s,run.id);assert.equal(ready.stages.project.root,join(run.worker.home,'work/bases/project'));assert.equal(spawnsOf(f).length,1);
+  assert.equal(complete(s,run.id,judgment(f,s,ready,{drop:true})).status,'processed');
+});
+test('4.2.0 capture contention defers a checkpoint and never certifies a final capture; one budget bounds capture and the handoff',t=>{
+  const f=fixture(t);const s=f.source();note(f);const lock=join(dirname(s.file),'capture.lock');
+  put(join(lock,'owner.json'),JSON.stringify({token:'live',pid:process.pid,host:hostname()}));
+  const h=f.cli('harvest');assert.equal(h.status,0,h.stdout);assert.equal(h.out.result.status,'already-running');assert.equal(h.out.result.preparing,true);assert.equal(spawnsOf(f).length,0);
+  const r=f.cli('retire');assert.equal(r.status,1);assert.equal(r.out.meta.retired,false);assert.match(r.out.warning,/E_LOCKED/);assert.equal(loadStatus(s).retired,false);
+  fs.rmSync(lock,{recursive:true});
+  // A spent budget fails capture before any native call advances a cursor.
+  save(join(f.dir,'turns.json'),[{id:'t1',thread:'th',kind:'session',ts:'2026-10-06',source:'pi',text:[{role:'user',text:'hello'}]}]);save(join(f.dir,'capture.json'),{status:'complete',complete:true,sessions:[{thread:'th',lastTurnId:'t1'}]});
+  assert.throws(()=>capture(s,{deadline:Date.now()-1}),/capture deadline/);assert.deepEqual(loadStatus(s).captured.threads,{});
+  capture(s,{final:true});const d=retireDrain(s,{deadline:Date.now()+5000});assert.equal(d.status,'deferred');assert.match(d.next,/--manual/);assert.equal(spawnsOf(f).length,0);
+  assert.equal(loadStatus(s).drain.boundary.length,2,'the request is persisted before any effect');
+});
+test('4.2.0 a live checkpoint settles earlier delivered PRs first: open stays, merge is recorded, a close is recorded once and never rejudged, a GitHub failure is reported apart from capture',t=>{
+  const f=fixture(t,{kind:'git'});const s=f.source();
+  const deliver=text=>{note(f,`n-${randomUUID()}.md`,text);const {run}=prepared(f,s);const r=complete(s,run.id,judgment(f,s,run));assert.equal(r.receipts.project.status,'delivered');return {run,receipt:r.receipts.project};};
+  const one=deliver('First durable decision.');
+  const open=f.cli('harvest',['--no-launch']);assert.equal(open.status,0,open.stdout);assert.equal(open.out.result.status,'empty');assert.deepEqual(open.out.result.settled.map(r=>[r.run,r.outcome]),[[one.run.id,'open']]);
+  git(f.repo,['merge','--ff-only',one.receipt.branch]);let prs=readJSON(join(f.dir,'pr.json'));Object.assign(prs[0],{state:'MERGED',mergedAt:'2026-10-06T10:00:00Z',mergeCommit:{oid:one.receipt.commit}});save(join(f.dir,'pr.json'),prs);
+  const merged=f.cli('harvest',['--no-launch']);assert.deepEqual(merged.out.result.settled.map(r=>[r.run,r.outcome]),[[one.run.id,'accepted']]);assert.equal(loadStatus(s).accepted[`${one.run.id}/project`].status,'accepted');
+  const two=deliver('Second durable decision.');prs=readJSON(join(f.dir,'pr.json'));Object.assign(prs[1],{state:'CLOSED',closedAt:'2026-10-06T11:00:00Z'});save(join(f.dir,'pr.json'),prs);
+  const closed=f.cli('harvest',['--no-launch']);assert.deepEqual(closed.out.result.settled.map(r=>[r.run,r.outcome]),[[two.run.id,'rejected']]);
+  assert.equal(loadStatus(s).delivered[`${two.run.id}/project`].status,'rejected');assert.equal(loadStatus(s).activeRun,null);assert.equal(loadStatus(s).recoveries,undefined,'no automatic rejudgment');
+  const ghBefore=fs.readFileSync(join(f.dir,'gh-calls.jsonl'),'utf8');
+  const quiet=f.cli('harvest',['--no-launch']);assert.deepEqual(quiet.out.result.settled,[]);assert.equal(fs.readFileSync(join(f.dir,'gh-calls.jsonl'),'utf8'),ghBefore,'a recorded close is not rescanned');
+  const three=deliver('Third durable decision.');put(join(f.dir,'gh-unavailable'),'');note(f,'fresh.md','Fresh evidence at this checkpoint.');
+  const down=f.cli('harvest',['--no-launch']);assert.equal(down.status,0,down.stdout);assert.equal(down.out.result.status,'started','capture and the new run are independent of settlement');
+  assert.deepEqual(down.out.result.settled.map(r=>[r.run,r.outcome]),[[three.run.id,'unsettled']]);assert.match(down.out.result.settled[0].next,/complete --source .* --run /);
+  assert.equal(loadStatus(s).delivered[`${three.run.id}/project`].status,'delivered');
+});
+test('4.2.0 a retired source\'s delivered PRs are listed one by one with their exact command, which records the outcome from custody after both homes are gone',t=>{
+  const f=fixture(t,{kind:'git'});const s=f.source();const runs=[];
+  for(const text of ['First reviewed decision.','Second reviewed decision.']) {note(f,`n-${runs.length}.md`,text);const {run}=prepared(f,s);complete(s,run.id,judgment(f,s,run));runs.push(readRun(s,run.id));}
+  const r=f.cli('retire');assert.equal(r.out.meta.retired,true);assert.equal(r.out.meta.drain.status,'empty');
+  fs.rmSync(f.home,{recursive:true});for(const run of runs) fs.rmSync(run.worker.home,{recursive:true});
+  const listed=deploymentCli(f,'harvest-status',['--soul','source']).out.result.sources[0];assert.equal(listed.retired,true);
+  assert.deepEqual(listed.outstanding.map(o=>[o.kind,o.run]),runs.map(run=>['review',run.id]),'every delivered run, not only the latest');
+  for(const [i,o] of listed.outstanding.entries()) assert.equal(o.command,`cd ${f.context} && oats okf complete --source ${s.file} --run ${runs[i].id} --soul source --json`);
+  // The maintainer merges one and closes the other; the operator runs the listed commands.
+  const receipt=runs[0].receipts.project;git(f.repo,['merge','--ff-only',receipt.branch]);const prs=readJSON(join(f.dir,'pr.json'));
+  Object.assign(prs[0],{state:'MERGED',mergedAt:'2026-10-06T10:00:00Z',mergeCommit:{oid:receipt.commit}});Object.assign(prs[1],{state:'CLOSED',closedAt:'2026-10-06T11:00:00Z'});save(join(f.dir,'pr.json'),prs);
+  const accepted=deploymentCli(f,'complete',['--source',s.file,'--run',runs[0].id]);assert.equal(accepted.status,0,accepted.stdout);assert.equal(accepted.out.result.receipts.project.status,'accepted');
+  const rejected=deploymentCli(f,'complete',['--source',s.file,'--run',runs[1].id]);assert.equal(rejected.status,1);assert.equal(rejected.out.error.code,'E_PR');
+  assert.equal(loadStatus(s).delivered[`${runs[1].id}/project`].status,'rejected');
+  assert.deepEqual(deploymentCli(f,'harvest-status',['--soul','source']).out.result.sources[0].outstanding,[]);
+  // The explicit closed-PR rejudgment stays available and unchanged.
+  const rejudged=deploymentCli(f,'retry',['--source',s.file,'--run',runs[1].id,'--rejudge']);assert.equal(rejudged.status,0,rejudged.stdout);assert.equal(rejudged.out.result.recoveryOf,runs[1].id);
+});
+const legacyJob=(source,extra={})=>({id:`okf-${source.id}`,kind:'command',enabled:true,cron:'*/15 * * * *',tz:'UTC',cwd:source.context,argv:legacyScheduleArgv(source),...extra});
+test('4.2.0 setup --remove-schedules removes only proven own jobs (enabled, disabled, custom cadence), leaves foreign and running ones, keeps evidence, and is repeat-safe',t=>{
+  const f=fixture(t);const [own,custom,foreign,running,absent]=['seat-a','seat-b','seat-c','seat-d','seat-e'].map(name=>seat(f,name));
+  const jobs={[`okf-${own.id}`]:legacyJob(own),[`okf-${custom.id}`]:legacyJob(custom,{enabled:false,cron:'0 3 * * 1',tz:'Europe/Madrid'}),
+    [`okf-${foreign.id}`]:legacyJob(foreign,{argv:['oats','okf','run-source','--source','/elsewhere/source.json','--soul','source','--json']}),
+    [`okf-${running.id}`]:legacyJob(running),'okf-not-a-source':{id:'okf-not-a-source',kind:'command',enabled:true,cron:'* * * * *',tz:'UTC',cwd:f.context,argv:['oats','okf','harvest-status']},
+    'harvest-review':{id:'harvest-review',kind:'command',enabled:true,cron:'*/5 * * * *',tz:'UTC',cwd:f.context,argv:['oats','status']}};
+  save(join(f.dir,'schedules.json'),jobs);put(join(f.dir,`schedule-running-okf-${running.id}`),'1');
+  const first=deploymentCli(f,'setup',['--remove-schedules']);assert.equal(first.status,1);assert.equal(first.out.error.code,'E_SCHEDULE_OWNERSHIP');
+  const result=first.out.error.result;assert.deepEqual(result.removed.sort(),[`okf-${own.id}`,`okf-${custom.id}`].sort());assert.ok(result.absent.includes(`okf-${absent.id}`));
+  assert.deepEqual(result.leftovers.map(r=>[r.job,r.status,r.code]).sort(),[[`okf-${foreign.id}`,'foreign','E_SCHEDULE_OWNERSHIP'],[`okf-${running.id}`,'pending','E_SCHEDULE_MIGRATION_PENDING']].sort());
+  assert.match(first.out.error.message,/Done: .*removed/);
+  const after=readJSON(join(f.dir,'schedules.json'));assert.deepEqual(after[`okf-${foreign.id}`],jobs[`okf-${foreign.id}`],'a foreign definition is untouched');
+  assert.equal(after[`okf-${running.id}`].enabled,false,'a running job stays, disabled');for(const id of ['okf-not-a-source','harvest-review']) assert.deepEqual(after[id],jobs[id],'never by prefix');
+  const evidence=fs.readdirSync(join(dirname(custom.file),'schedule-migration')).map(n=>readJSON(join(dirname(custom.file),'schedule-migration',n)));assert.deepEqual(evidence.map(e=>e.definition),[jobs[`okf-${custom.id}`]]);
+  assert.deepEqual(readJSON(join(dirname(own.file),'schedule-migration.json')).effects.map(e=>[e.step,e.result]),[['disable','confirmed'],['remove','confirmed']]);
+  assert.deepEqual(readJSON(join(dirname(custom.file),'schedule-migration.json')).effects.map(e=>[e.step,e.result]),[['remove','confirmed']],'a disabled job is not re-disabled');
+  assert.equal(loadStatus(own).schedule.removed,true);
+  const scheduleCalls=callsOf(f).filter(c=>c.a[0]==='schedule');assert.equal(scheduleCalls.some(c=>c.a.includes('--force') || c.a.includes('host') || c.a[1]==='add'),false);
+  assert.equal(scheduleCalls.some(c=>['okf-not-a-source','harvest-review'].includes(c.a[2])),false);
+  // The operator settles the running job and deals with the foreign one; the rerun finishes, and again is a no-op.
+  fs.rmSync(join(f.dir,`schedule-running-okf-${running.id}`));const settled=readJSON(join(f.dir,'schedules.json'));delete settled[`okf-${foreign.id}`];save(join(f.dir,'schedules.json'),settled);
+  const second=deploymentCli(f,'setup',['--remove-schedules']);assert.equal(second.status,0,second.stdout);assert.deepEqual(second.out.result.removed,[`okf-${running.id}`]);
+  const third=deploymentCli(f,'setup',['--remove-schedules']);assert.equal(third.status,0,third.stdout);assert.deepEqual(third.out.result.removed,[]);assert.equal(third.out.result.absent.length,5);
+  assert.deepEqual(Object.keys(readJSON(join(f.dir,'schedules.json'))).sort(),['harvest-review','okf-not-a-source']);
+});
+test('4.2.0 setup --remove-schedules: an unconfirmed removal is reported pending and the rerun confirms it; a scheduler outage reports both sides',t=>{
+  const f=fixture(t);const [a,b]=['seat-a','seat-b'].map(name=>seat(f,name));
+  save(join(f.dir,'schedules.json'),{[`okf-${a.id}`]:legacyJob(a),[`okf-${b.id}`]:legacyJob(b)});put(join(f.dir,'schedule-remove-flaky'),'');
+  const first=deploymentCli(f,'setup',['--remove-schedules']);assert.equal(first.status,1);assert.equal(first.out.error.code,'E_SCHEDULE_MIGRATION_PENDING');
+  assert.deepEqual(first.out.error.result.leftovers.map(r=>r.status),['failed','failed']);assert.equal(loadStatus(a).schedule,undefined,'an unconfirmed removal is not recorded as removed');
+  assert.deepEqual(readJSON(join(dirname(a.file),'schedule-migration.json')).effects.map(e=>[e.step,e.result]),[['disable','confirmed'],['remove','unknown']]);
+  fs.rmSync(join(f.dir,'schedule-remove-flaky'));const second=deploymentCli(f,'setup',['--remove-schedules']);assert.equal(second.status,0,second.stdout);assert.equal(second.out.result.absent.length,2);
+  const g=fixture(t);const c=seat(g,'seat-c');save(join(g.dir,'schedules.json'),{[`okf-${c.id}`]:legacyJob(c)});put(join(g.dir,'schedule-fail'),'');
+  const down=deploymentCli(g,'setup',['--remove-schedules']);assert.equal(down.out.error.code,'E_SCHEDULE_MIGRATION_PENDING');assert.match(down.out.error.message,/Done: none/);
+  assert.equal(readJSON(join(g.dir,'schedules.json'))[`okf-${c.id}`].enabled,true);
+});
+test('4.2.0 live cron/tz bindings are refused with the migration remedy; a frozen pre-4.2 descriptor stays readable, inert and unmodified through checkpoint, complete and retire',t=>{
+  const f=fixture(t);const s=f.source();note(f);capture(s);
+  // A source descriptor as okf 4.1 froze it: bindings with cron/tz, a ready schedule receipt and job definition.
+  const legacy=readJSON(s.file);legacy.bindings={...legacy.bindings,cron:'*/15 * * * *',tz:'UTC'};save(s.file,legacy);
+  const status=loadStatus(s);status.schedule={id:`okf-${s.id}`,status:'ready',result:{schedule:legacyJob(s)}};saveStatus(s,status);save(join(dirname(s.file),'schedule.json'),legacyJob(s));
+  const bytes=fs.readFileSync(s.file);const frozen=loadSource(s.file);assert.equal(frozen.bindingFingerprint,s.bindingFingerprint);
+  const raw=readJSON(f.bindingFile);save(f.bindingFile,{...raw,cron:'0 * * * *'});
+  const fresh=join(f.context,'fresh-seat');fs.mkdirSync(join(fresh,'work'),{recursive:true});save(join(fresh,'instance.json'),{instance:'fresh-seat',agent:'source',repo:f.context,work:'directory',launched:true});
+  const refused=f.cli('spawn',[],{OATS_HOME:fresh,OATS_INSTANCE_HOME:fresh,OATS_INSTANCE:'fresh-seat'});assert.equal(refused.status,1);assert.match(refused.out.warning,/E_HARVEST_SCHEDULE_REMOVED: .*Remove cron\/tz from the bindings file; then run oats okf setup --remove-schedules --soul <source soul> from the deployment/);
+  assert.equal(deploymentCli(f,'setup',['--remove-schedules']).out.error.code,'E_HARVEST_SCHEDULE_REMOVED');
+  assert.match(deploymentCli(f,'harvest-status',['--soul','source']).out.result.error,/E_HARVEST_SCHEDULE_REMOVED/);
+  const h=f.cli('harvest',['--no-launch']);assert.equal(h.status,0,h.stdout);assert.equal(h.out.result.status,'started','the registered seat reads its frozen descriptor, not the live file');
+  const run=readRun(s,h.out.result.run);assert.equal(complete(frozen,run.id,judgment(f,s,run,{drop:true})).status,'processed');
+  const r=f.cli('retire');assert.equal(r.status,0,r.stdout);assert.equal(r.out.meta.retired,true);
+  assert.deepEqual(fs.readFileSync(s.file),bytes,'immutable custody is never rewritten');assert.equal(callsOf(f).some(c=>c.a[0]==='schedule'),false,'an old job is never touched implicitly');
+  save(f.bindingFile,raw);const migrated=deploymentCli(f,'setup',['--remove-schedules']);assert.equal(migrated.status,0,migrated.stdout);assert.deepEqual(migrated.out.result.absent,[`okf-${s.id}`]);
+});
+test('4.2.0 checkpoint settlement never turns a missing or mismatched PR into acceptance',t=>{
+  const f=fixture(t,{kind:'git'});const s=f.source();note(f);const {run}=prepared(f,s);complete(s,run.id,judgment(f,s,run));
+  const prs=readJSON(join(f.dir,'pr.json'));
+  for(const forged of [[],[{...prs[0],headRefOid:'0'.repeat(40),state:'MERGED',mergedAt:'2026-10-06T10:00:00Z'}],[{...prs[0],number:99,url:'https://github.com/fixture/knowledge/pull/99',state:'MERGED',mergedAt:'2026-10-06T10:00:00Z'}]]) {
+    save(join(f.dir,'pr.json'),forged);
+    const h=f.cli('harvest',['--no-launch']);assert.equal(h.status,0,h.stdout);assert.equal(h.out.result.settled[0].outcome,'unsettled',JSON.stringify(h.out.result.settled));
+    assert.equal(loadStatus(s).delivered[`${run.id}/project`].status,'delivered');assert.equal(loadStatus(s).accepted[`${run.id}/project`],undefined);
+  }
 });

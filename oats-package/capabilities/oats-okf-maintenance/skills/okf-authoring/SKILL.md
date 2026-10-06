@@ -132,8 +132,9 @@ captured ProviderBinding as execution authority:
   them with today's soul, workspace, settings or bindings file.
 - `responsibleHuman: null` means messaging was explicitly disabled. Missing is
   unknown, not disabled.
-- New captured source schedules are definition v2 with `capture`, explicit
-  deployment/resolution selectors and saved `--json`; they do not use `--soul`.
+- No source gets a scheduler job (okf 4.2). A captured source's worker runs
+  only through its admitted `knowledge:harvest` operation, with explicit
+  deployment/resolution selectors; it does not use `--soul`.
 - Captured `setup`, `init`, `migrate`, and `unlock` are deliberate refusals.
   Provisioning/migration remains a separate explicit operator path.
 

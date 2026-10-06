@@ -120,7 +120,8 @@ directly. Persistent receipts write the existing source/status/view/marker layou
 with the complete binding, execution binding, responsible human, retained role,
 and qualified soul identity. Helpers return `skipped: service` and create no owner
 or source. Captured owner-registry rows are versioned qualified identities; legacy
-owner-to-path evidence returns migration-required rather than converting. New
-captured sources receive a v2 `capture` command schedule with saved deployment/
-resolution selectors and `--json`; legacy source schedules retain their literal
-`--soul` behavior. Worker staging/judgment/delivery remains the existing engine.
+owner-to-path evidence returns migration-required rather than converting. Since
+okf 4.2.0 no source receives a schedule; a job registered earlier (a v2
+`capture` command with saved deployment/resolution selectors, or a legacy
+`--soul` command) is removed only by `setup --remove-schedules`. Worker
+staging/judgment/delivery remains the existing engine.

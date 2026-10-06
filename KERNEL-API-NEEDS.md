@@ -51,9 +51,9 @@ are not proof of captured helper launch. No ambient helper fallback is allowed.
   bounded full-text recall windows before copying evidence. Native record JSON
   is distinct from the command JSON-v1 envelope; incomplete capture and oversized
   turns fail closed. Inspection does not invoke capture or alter this contract.
-- **Generic scheduler command jobs:** add/show/list/enable/disable and explicit
-  host installation. Each source owns a durable descriptor-selected command;
-  existing disabled jobs remain disabled. Hooks never install a host timer.
+- **Generic scheduler command jobs:** since okf 4.2.0 only show/disable/remove,
+  for the explicit `setup --remove-schedules` migration of jobs earlier
+  versions created (never forced, never the host timer). No source owns a job.
 - **Generic inspection/operations:** `oats inspect --home` discovers the declared
   `knowledge:inspect` view and `knowledge:harvest` action. `oats operation run
   knowledge:inspect --home ... --json` relays the provider's labeled documents

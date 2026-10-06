@@ -1,5 +1,74 @@
 # Changelog
 
+## 4.2.0 — 2026-10-06
+
+Checkpoint harvest (#49); the harvester retires after delivery (#47). #46 and
+#48 are superseded. See the README's 4.2.0 section for the ordered cutover.
+
+### Changed
+
+- **Harvest runs at checkpoints, not on schedules.** No registration, spawn,
+  retire, checkpoint or recovery creates, verifies or changes a scheduler job.
+  The working agent runs `oats okf harvest` from its home at a checkpoint
+  (after opening or handing over a PR, or finishing a task); the inject, the
+  `okf-instance-knowledge` skill and the harvest-on spawn brief say so, and a
+  harvest-off brief says not to.
+- **`oats okf harvest`** re-reads the switch and the soul opt-out
+  (`E_HARVEST_OFF`), takes the source's worker lock (a live holder:
+  `already-running`, with the run id or `preparing`; a dead one is
+  reclaimed), settles earlier delivered PRs through `complete`'s checks
+  (`settled`: accepted, rejected once and never rejudged, open, or
+  unsettled with its command), reports an active run (`already-running`, or
+  `needs-recovery` with exact commands), then captures and requests a finite
+  drain (`started`, or `empty`). Its answer replaces the run's status.
+- **Finite drain.** The captured input ids are persisted as the drain's
+  boundary before any effect. A run takes at most 192 KB of them; when it
+  becomes processed, its completion starts the next run from the boundary
+  without capturing again, re-reading the switch (off pauses the drain).
+  `--no-launch` requests no drain.
+- **Retirement** takes the final capture and then the same drain within one
+  110 s budget, reported in `meta.drain` apart from the certified capture:
+  started, already-running (the active run's completion hands on the final
+  tail, also after the source home is gone), empty, not-launched (a source
+  that never launched a model launches no harvester), or needs-recovery /
+  deferred / failed with the exact resume command. Harvest off: no final
+  capture and no drain, as before. A captured source's drain stays held.
+- **The harvester retires once every destination is delivered** and hands
+  over the run and PR URLs; `okf-harvest harvest-status` answers `retire`
+  then, whatever the PR's state. A delivery in progress, failed or stopped
+  keeps it. The maintainer's review never waits for it (`knowledge-review`,
+  the maintainer inject and soul); `notify-harvester` is only for harvesters
+  spawned by 4.1.
+- **`harvest-status`** lists, per source, everything `outstanding` with its
+  exact command: every delivered run awaiting review (a retired source's
+  operator records the merge or close with `complete`), the active or stuck
+  run, and an unfinished drain.
+- **`retry --source FILE`** prepares again, in place, a confirmed worker whose
+  preparation was interrupted (persisted stages kept, a partial one redone);
+  nothing is spawned twice.
+
+### Removed
+
+- `cron`/`tz` in a live bindings document: `E_HARVEST_SCHEDULE_REMOVED`, naming
+  the remedy. Descriptors frozen by earlier versions keep them as inert data.
+  The bindings schema no longer lists them.
+- `run-source` without `--manual` (a 4.1 job firing): `E_HARVEST_SCHEDULE_REMOVED`,
+  nothing captured.
+- `setup --source`, `--enable`, `--disable`, `--install-host`: `E_REMOVED`.
+- The spawn hook's `meta.schedule` (now `meta.checkpoint`), and the retire
+  hook's `meta.schedule` (now `meta.drain`).
+
+### Added
+
+- `oats okf setup --remove-schedules [--json]` (from the deployment, with
+  `--soul`): for every registered source of the state namespace, removes its
+  `okf-<id>` job only once the actual definition proves it is that source's
+  own; keeps the definition and every effect as evidence; never forces and
+  never touches the host timer or other jobs. `E_SCHEDULE_OWNERSHIP` (a
+  foreign definition, untouched) or `E_SCHEDULE_MIGRATION_PENDING` (running,
+  unresolved or uncertain; left disabled) carry the confirmed removals and
+  the leftovers in `error.result`. Repeat-safe.
+
 ## 4.1.1 — 2026-10-01
 
 ### Fixed

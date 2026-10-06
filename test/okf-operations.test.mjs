@@ -26,21 +26,21 @@ const files = dir => fs.readdirSync(dir, { recursive: true, withFileTypes: true 
 
 // ------------------------------------------------------------------ package shape
 
-test('the package ships three capabilities, two package souls and one trigger template at 4.1.1 / >=0.29.0', () => {
+test('the package ships three capabilities, two package souls and one trigger template at 4.2.0 / >=0.29.0', () => {
   const pkg = readJSON(join(PKG, 'oats-package.json'));
-  assert.equal(pkg.version, '4.1.1'); assert.deepEqual(pkg.compatibility, { oats: '>=0.29.0' });
+  assert.equal(pkg.version, '4.2.0'); assert.deepEqual(pkg.compatibility, { oats: '>=0.29.0' });
   assert.deepEqual(pkg.capabilities, ['capabilities/oats-okf', 'capabilities/oats-okf-harvest', 'capabilities/oats-okf-maintenance']);
   assert.deepEqual(pkg.souls, ['souls/knowledge-harvester', 'souls/knowledge-maintainer']);
   assert.deepEqual(pkg.triggers, [{ id: 'harvest-review', file: 'triggers/harvest-review.json' }]);
   const manifests = pkg.capabilities.map(c => readJSON(join(PKG, c, 'oats.json')));
   assert.deepEqual(manifests.map(m => [m.capability, m.command, m.version, m.compatibility.oats, m.layer ?? null]), [
-    ['oats.okf', 'okf', '4.1.1', '>=0.29.0', 'knowledge'], ['oats.okf-harvest', 'okf-harvest', '4.1.1', '>=0.29.0', null], ['oats.okf-maintenance', 'okf-maintenance', '4.1.1', '>=0.29.0', null]]);
+    ['oats.okf', 'okf', '4.2.0', '>=0.29.0', 'knowledge'], ['oats.okf-harvest', 'okf-harvest', '4.2.0', '>=0.29.0', null], ['oats.okf-maintenance', 'okf-maintenance', '4.2.0', '>=0.29.0', null]]);
   assert.equal('agents' in manifests[0], false, 'capability agents are replaced by the package souls');
   assert.deepEqual(Object.keys(manifests[1].commands), ['complete', 'harvest-status']);
   assert.deepEqual(Object.keys(manifests[2].commands), ['review-context', 'notify-harvester']);
   assert.deepEqual(manifests[0].settings.harvest, { ...manifests[0].settings.harvest, default: 'off', values: ['on', 'off'] });
   assert.ok(manifests[0].commands['harvest-status']);
-  assert.equal(readJSON(join(ROOT, 'package.json')).version, '4.1.1');
+  assert.equal(readJSON(join(ROOT, 'package.json')).version, '4.2.0');
 });
 
 test('oats.okf ships exactly okf-consultation and okf-instance-knowledge; no harvest doctrine', () => {
@@ -257,19 +257,22 @@ test('okf-harvest complete: an inactive or untrusted source oats.okf is reported
   assert.throws(() => harvestCmd.complete({ source: st.file, run: st.run, judgment: 'relative.json' }), { code: 'E_USAGE' });
 });
 
-test('okf-harvest harvest-status: stay while a PR is open, retire when merged/closed or none was needed, max-age after the limit', t => {
+test('okf-harvest harvest-status (4.2.0, #47): retire once every destination is delivered, whatever the PR state; stay while delivery is unfinished; max-age after the limit', t => {
   const url = 'https://github.com/acme/knowledge/pull/7';
   const view = state => pr => ({ url: pr.url, number: 7, state });
   const status = (st, v, env = {}) => harvestCmd.harvestStatus({ source: st.file, run: st.run }, env, { view: v });
   const open = harvesterState(t, { receipts: { project: { status: 'delivered', pr: { url, number: 7 } } } });
-  assert.equal(status(open, view('OPEN')).action, 'stay');
-  assert.equal(status(open, view('MERGED')).action, 'retire');
-  assert.equal(status(open, view('CLOSED')).action, 'retire');
-  assert.equal(status(open, view('UNKNOWN')).action, 'stay', 'an unreadable PR is not a reason to retire');
-  const old = harvesterState(t, { created: new Date(Date.now() - 8 * 86400000).toISOString(), receipts: { project: { status: 'delivered', pr: { url, number: 7 } } } });
+  for (const state of ['OPEN', 'MERGED', 'CLOSED', 'UNKNOWN']) {
+    const r = status(open, view(state)); assert.equal(r.action, 'retire', `a delivered PR (${state}) ends the harvester's work`);
+    assert.match(r.reason, new RegExp(`hand over \\(run ${open.run}, PR ${url}\\)[\\s\\S]*maintainer reviews the PR[\\s\\S]*operator records its merge or close`));
+  }
+  const unfinished = { receipts: { project: { status: 'pushed', branch: 'okf/x' } }, run: { delivery: { state: 'failed', error: { code: 'E_PR', message: 'gh down' } } } };
+  assert.equal(status(harvesterState(t, unfinished), view('OPEN')).action, 'stay', 'a failed delivery keeps the worker and its evidence');
+  const old = harvesterState(t, { created: new Date(Date.now() - 8 * 86400000).toISOString(), ...unfinished });
   const aged = status(old, view('OPEN'));
-  assert.equal(aged.action, 'max-age'); assert.match(aged.reason, /never close the PR/);
+  assert.equal(aged.action, 'max-age'); assert.match(aged.reason, /tell your operator/);
   assert.equal(status(old, view('OPEN'), { OATS_SETTINGS: JSON.stringify({ 'harvester-max-age': '30d' }) }).action, 'stay');
+  assert.equal(status(harvesterState(t, { receipts: { project: { status: 'rejected', pr: { url, number: 7 } } } }), view('CLOSED')).action, 'retire');
   assert.equal(status(harvesterState(t, { receipts: { project: { status: 'no-change' } } }), view('OPEN')).action, 'retire');
   assert.equal(status(harvesterState(t, { judgment: null }), view('OPEN')).action, 'stay', 'not completed yet');
   assert.equal(harvestCmd.maxAgeMs('48h'), 48 * 3600000); assert.throws(() => harvestCmd.maxAgeMs('soon'), { code: 'E_CONFIG' });
@@ -345,9 +348,17 @@ test('the working-soul inject teaches the work mode and names both okf skills; r
     assert.match(inject, needle);
   assert.doesNotMatch(inject, /Capture without judging importance/, '§2.5a replaced it');
   assert.doesNotMatch(inject, /memory-harvest|\.\/knowledge|refresh|\bread --base/);
-  assert.match(fs.readFileSync(join(HARVEST, 'injects/harvester.md'), 'utf8'), /judge, not a worker[\s\S]*staged roots[\s\S]*Stay alive until your PR is merged or closed/);
-  assert.match(fs.readFileSync(join(MAINT, 'injects/maintainer.md'), 'utf8'), /one\*\* harvest PR per instance[\s\S]*Never merge what fails the doctrine[\s\S]*okf-needs-human/);
+  // okf 4.2.0: only an on spawn brief tells the agent to run the command; the inject is conditional on it.
+  assert.match(inject, /At a checkpoint\*\*—after opening or handing over a PR, or finishing a\s+task—first update STATE\.md, log\.md and relevant notes\. If your TASK\s+briefing says harvest is on, run `oats okf harvest` from your instance\s+home\. Already running or nothing new needs no action; report a failure\s+rather than repeatedly retrying\. With harvest off, do not run it\.\s+Retirement takes the final checkpoint\./);
+  const harvester = fs.readFileSync(join(HARVEST, 'injects/harvester.md'), 'utf8');
+  assert.match(harvester, /judge, not a worker[\s\S]*staged roots[\s\S]*Your work ends with durable delivery[\s\S]*retire/);
+  for (const text of [harvester, fs.readFileSync(join(HARVEST, 'skills/knowledge-harvest/SKILL.md'), 'utf8'), fs.readFileSync(join(ROOT, 'oats-package/souls/knowledge-harvester/AGENTS.md'), 'utf8'), fs.readFileSync(join(ROOT, 'oats-package/souls/knowledge-harvester/soul.yaml'), 'utf8')])
+    assert.doesNotMatch(text, /stay alive|until (your|the|its) PR is merged|run-source|schedule/i, 'no residency until merge, no tick');
+  const maintainer = fs.readFileSync(join(MAINT, 'injects/maintainer.md'), 'utf8');
+  assert.match(maintainer, /one\*\* harvest PR per instance[\s\S]*Never merge what fails the doctrine[\s\S]*okf-needs-human[\s\S]*never wait\s+for it/);
   const review = fs.readFileSync(join(MAINT, 'skills/knowledge-review/SKILL.md'), 'utf8');
+  assert.doesNotMatch(review, /wait\s+for a bounded time|notify the harvester of the state|tell the harvester/, 'review never depends on a retired alias');
+  assert.match(review, /never wait for the harvester; it has retired/);
   assert.match(review, /okf-needs-human/); assert.match(review, /untrusted/); assert.match(review, /gh pr merge <number> --repo <repo> --squash --match-head-commit <headSha>/);
   assert.doesNotMatch(review, /--squash`/, 'no merge instruction without the reviewed head');
   assert.match(review, /`okf-needs-human` is a hard stop[\s\S]*never remove the label[\s\S]*Only a human removing it clears it/);

@@ -13,8 +13,10 @@ const HELP = `oats okf-harvest complete --source FILE --run ID --judgment ABS_FI
 oats okf-harvest harvest-status --source FILE --run ID [--json]
 complete runs the source's frozen \`oats okf complete\` in its deployment (the
 only delivery path): it persists the judgment, then delivers in the background,
-answering \`delivering\` when delivery outlasts the 30 s it waits. harvest-status reports each PR's state and what to do:
-stay, retire or max-age (setting harvester-max-age, default 7d).
+answering \`delivering\` when delivery outlasts the 30 s it waits. harvest-status reports each destination's
+receipt and what to do: stay (delivery not finished), retire (every destination
+delivered: hand over and retire; the PR's review is the maintainer's) or max-age
+(setting harvester-max-age, default 7d).
 `;
 const fail = (code, message, extra = {}) => { throw Object.assign(new Error(message), { code, ...extra }); };
 const IDENTITY = /^(OATS_(?!HOME_DIR$|PACKAGE_CATALOG$)|PI_AGENT|GIT_)/;
@@ -122,14 +124,20 @@ export function harvestStatus(flags, env = process.env, { now = Date.now(), view
   });
   const judged = !!run.judgment, delivery = run.delivery ?? null;
   let action, reason;
-  const open = destinations.filter((d) => d.pr && !['MERGED', 'CLOSED'].includes(d.pr.state));
-  // A judged destination gets its receipt only once delivery confirms its baseline.
-  const pending = [...destinations.filter((d) => !d.pr && !['no-change', 'accepted'].includes(d.receipt)).map((d) => d.alias),
+  // okf 4.2.0 (#47): the harvester's work ends with durable delivery. A
+  // destination is done once its receipt is delivered (a verified PR),
+  // accepted, no-change or rejected; the PR's review is the maintainer's,
+  // and the source's operator records its merge or close.
+  const DONE = ['delivered', 'accepted', 'no-change', 'rejected'];
+  const pending = [...destinations.filter((d) => !DONE.includes(d.receipt)).map((d) => d.alias),
     ...Object.keys(run.proposals ?? {}).filter((alias) => !Object.hasOwn(receipts, alias))];
   if (!judged || pending.length) { action = age >= limit ? 'max-age' : 'stay'; reason = !judged ? 'the run is not completed yet' : deliveryReason(delivery, pending); }
-  else if (open.length) { action = age >= limit ? 'max-age' : 'stay'; reason = `open PR: ${open.map((d) => d.pr.url).join(', ')}`; }
-  else { action = 'retire'; reason = destinations.some((d) => d.pr) ? 'every PR is merged or closed' : 'no PR was needed (no-change or directory publication)'; }
-  if (action === 'max-age') reason += `; older than harvester-max-age (${Math.round(limit / 3600000)}h): tell your operator and retire, never close the PR`;
+  else {
+    action = 'retire';
+    const prs = destinations.filter((d) => d.pr).map((d) => d.pr.url);
+    reason = prs.length ? `every destination is delivered: hand over (run ${run.id}, PR ${prs.join(', ')}) in your final reply, then retire; the knowledge maintainer reviews the PR and the source's operator records its merge or close` : 'every destination is delivered; no PR was needed (no-change or directory publication)';
+  }
+  if (action === 'max-age') reason += `; older than harvester-max-age (${Math.round(limit / 3600000)}h): tell your operator (your home and the run's custody are its recovery evidence) and retire`;
   return { run: run.id, status: run.status, ageSeconds: Math.round(age / 1000), maxAgeSeconds: limit / 1000, destinations, delivery, action, reason };
 }
 function text(event, r) {

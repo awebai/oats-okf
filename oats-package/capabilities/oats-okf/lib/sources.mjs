@@ -65,7 +65,7 @@ function saveCapture(source, status) {
     current.captured=status.captured;
     if(status.launchObserved!==undefined) current.launchObserved=status.launchObserved;
     if(status.lastCapture) current.lastCapture=status.lastCapture;
-    if(status.retired) {current.retired=true;current.retiredAt=status.retiredAt;current.auto=current.auto && status.auto;}
+    if(status.retired) {current.retired=true;current.retiredAt=status.retiredAt;}
   });
 }
 export const loadStatus = source => readJSON(statusPath(source));
@@ -73,7 +73,7 @@ export function loadSource(file) {
   safePath(file); const s=readJSON(file);
   if(s.version!==1 || !/^[0-9a-f-]{36}$/.test(s.id) || resolve(file)!==join(s.bindings.stateDir,'sources',s.id,'source.json')) fail('E_SOURCE','invalid source descriptor path/identity');
   const {file:bindingsFile,...bindingsDoc}=s.bindings;
-  const checked=validateBindings(bindingsDoc,bindingsFile,{sourceHome:s.home,sourceWork:s.work});
+  const checked=validateBindings(bindingsDoc,bindingsFile,{sourceHome:s.home,sourceWork:s.work,frozen:true});
   if(bindingFingerprint(checked)!==s.bindingFingerprint) fail('E_SOURCE','frozen bindings fingerprint mismatch');
   if(s.providerBinding!==undefined) {
     let frozen;try{frozen=sourceRuntimeFromKnowledgeBinding(s.providerBinding);}catch{fail('E_SOURCE','invalid frozen provider binding');}
@@ -109,10 +109,12 @@ export function ensureInstanceKnowledge(home) {
 function finishRegistration(source) {
   // A durable home pointer precedes publication. Failures after it was saved
   // resume this same source; they never reset captured evidence or IDs.
+  // okf 4.2.0: registration creates no scheduler job; harvest runs at the
+  // working agent's checkpoints (`oats okf harvest`) and at retirement.
   ensureInstanceKnowledge(source.home);
-  scheduleSource(source);return source;
+  return source;
 }
-/** Harvest off (okf 4.0.0): no source, no custody, no schedule. The home keeps
+/** Harvest off (okf 4.0.0): no source, no custody. The home keeps
  *  a small record so retire knows there is nothing to capture, and (4.0.3) the
  *  soul's declaration, so consultation works without a source. */
 function harvestOff(home,sw,extra={}) {
@@ -332,13 +334,6 @@ export function input(source,id) {
   const value=readJSON(join(dirname(source.file),'inputs',`${id}.json`));
   if(hash(value)!==id) fail('E_INPUT','durable evidence hash mismatch');return value;
 }
-/** Take a drained, retired source's job out of the kernel scheduler. The job is
- *  first switched off, then removed: the definition it carried is kept as
- *  evidence in this source's own schedule.json, so nothing about the run is
- *  lost, and `oats schedule list` stops accumulating dead okf-<id> rows. A job
- *  that is still running (or has unresolved effects) stays disabled and is
- *  removed on the worker's next settle. Idempotent; a scheduler failure is
- *  recorded, never thrown — the evidence is already safe. */
 /** okf 4.0.1 #6: the switch for an already registered source, re-read now: the
  *  deployment setting AND the soul's opt-out (the current OATS_SOUL the kernel
  *  hands run-source/retire, else the soul directory recorded at registration). */
@@ -346,47 +341,26 @@ export function sourceSwitch(source) {
   const current = process.env.OATS_SOUL && fs.existsSync(process.env.OATS_SOUL) ? process.env.OATS_SOUL : null;
   return harvestSwitch({ settings: settings(), soulDir: current || source.soulDir || undefined });
 }
-/** Retire a registered source whose harvest is now off: no final capture; the
- *  inputs already in custody stay; the schedule is settled as for any retire. */
+/** Retire a registered source whose harvest is now off: no final capture and
+ *  no new drain; the inputs already in custody stay. */
 export function retireHarvestOff(source, sw) {
   updateStatus(source, current => {
     current.retired = true; current.retiredAt = new Date().toISOString(); current.harvestOff = { reason: sw.reason, at: current.retiredAt };
-    // As a final capture would: the schedule stays only while earlier inputs await processing.
-    current.auto = current.auto && !current.captured.inputs.every(id => current.processed.includes(id));
   });
-  return { retired: true, reason: 'harvest-off', switch: sw.reason, source: source.file, schedule: settleRetiredSchedule(source) };
+  return { retired: true, reason: 'harvest-off', switch: sw.reason, source: source.file };
 }
-export function settleRetiredSchedule(source) {
-  const status=loadStatus(source);
-  if(status.schedule?.removed===true) return {status:'already-removed',id:status.schedule.id};
-  if(!status.retired || status.auto || status.schedule?.id===undefined) return {status:'kept'};
-  const id=status.schedule.id;
-  const mark=(patch)=>updateStatus(source,current=>{current.schedule={...current.schedule,...patch};});
-  try {
-    if(status.schedule.settled!==true) {
-      oats(['schedule','disable',id,'--dir',source.context,'--json'],source.context);
-      mark({settled:true,settledAt:new Date().toISOString(),settleError:undefined});
-    }
-  } catch(e) {
-    if(e.code!=='E_SCHEDULE_UNKNOWN') {mark({settled:false,settleError:e.message});return {status:'disable-failed',id};}
-  }
-  try {
-    oats(['schedule','remove',id,'--dir',source.context,'--json'],source.context);
-    mark({removed:true,removedAt:new Date().toISOString(),removeError:undefined});
-    return {status:'removed',id};
-  } catch(e) {
-    if(e.code==='E_SCHEDULE_UNKNOWN') {mark({removed:true,removedAt:new Date().toISOString(),removeError:undefined});return {status:'already-removed',id};}
-    mark({removed:false,removeError:e.message});
-    return {status:e.code==='E_SCHEDULE_RUNNING'?'disabled-pending-removal':'remove-failed',id};
-  }
-}
-export function capture(source,{final=false,deadlineMs=85000}={}) {
+/** Capture the source's notes and session into custody. `deadline` (epoch ms)
+ *  is the caller's ONE invocation budget: every native call below gets what
+ *  is left of it, never a fresh timeout of its own. A busy capture lock is
+ *  E_LOCKED at once (another capture is in progress): the caller defers, and
+ *  a final capture is then simply not certified. */
+export function capture(source,{final=false,deadlineMs=85000,deadline=Date.now()+deadlineMs}={}) {
   return withLock(join(dirname(source.file),'capture.lock'),()=>{
     const status=loadStatus(source);
     if(status.retired) return {status:'complete',complete:true,retired:true};
     if(!fs.existsSync(markerPath(source.home))) fail('E_SOURCE','source home gone without final capture; existing evidence is retained');
     if(homeSource(source.home).id!==source.id) fail('E_SOURCE','source name reused');
-    const start=Date.now(); const meta=fs.existsSync(join(source.home,'instance.json'))?readJSON(join(source.home,'instance.json')):{};
+    const meta=fs.existsSync(join(source.home,'instance.json'))?readJSON(join(source.home,'instance.json')):{};
     const noLaunch=meta.launched!==true;status.launchObserved=!noLaunch;
     // Notes AND record, every pass. Note content versions remain captured even
     // when the live file is rewritten while a worker is judging a prior version.
@@ -400,20 +374,20 @@ export function capture(source,{final=false,deadlineMs=85000}={}) {
     }
     let report;
     try {
-      report=oats(['capture','--home',source.home,'--quiet'],source.context,{native:true,timeout:Math.min(deadlineMs,60000)});
+      const remainingTime=()=>{
+        const remaining=deadline-Date.now();
+        if(remaining<=0) fail('E_CAPTURE','capture deadline: backlog preserved; retire must retry');
+        return Math.max(1000,remaining);
+      };
+      report=oats(['capture','--home',source.home,'--quiet'],source.context,{native:true,timeout:Math.min(remainingTime(),60000)});
       if(!Array.isArray(report.sessions)) fail('E_CAPTURE','capture response has no sessions');
       for(const session of report.sessions) {
         if(!session.thread || !session.lastTurnId) continue;
         let after=status.captured.threads[session.thread] || null;
         while(after!==session.lastTurnId) {
-          if(Date.now()-start>deadlineMs) fail('E_CAPTURE','capture deadline: backlog preserved; retire must retry');
+          remainingTime();
           const args=['recall','--thread',session.thread,'--until',session.lastTurnId,'--limit','60','--json','--ids-only'];
           if(after) args.push('--after',after);
-          const remainingTime=()=>{
-            const remaining=deadlineMs-(Date.now()-start);
-            if(remaining<=0) fail('E_CAPTURE','capture deadline: backlog preserved; retire must retry');
-            return Math.max(1000,remaining);
-          };
           let plan;
           try { plan=oats(args,source.context,{native:true,timeout:remainingTime()}); }
           catch(e) { if(after && /--after: no turn/.test(e.message)) {after=null;continue;} throw e; }
@@ -452,56 +426,22 @@ export function capture(source,{final=false,deadlineMs=85000}={}) {
       }
       status.lastCapture={status:report.status,complete:report.complete===true,ignored:report.ignored||0,at:new Date().toISOString()};
       if(report.complete!==true) fail('E_CAPTURE',`capture ${report.status || 'uncertified'}: retain source and retry`);
-      if(final) {
-        status.retired=true;status.retiredAt=new Date().toISOString();
-        // A retired source whose every captured input is already processed has
-        // no further work: its schedule is switched off and removed from the
-        // kernel scheduler (settleRetiredSchedule); the definition stays as
-        // evidence in this source's schedule.json. Anything still pending keeps
-        // the job enabled until the worker drains it (see worker.mjs).
-        const drained=status.captured.inputs.every(id=>status.processed.includes(id));
-        status.auto=status.auto && !noLaunch && !drained;
-      }
+      // The retire hook hands the final input to a drain (worker.mjs
+      // requestDrain); capture itself only certifies custody.
+      if(final) {status.retired=true;status.retiredAt=new Date().toISOString();}
       saveCapture(source,status);return {...status.lastCapture,inputs:status.captured.inputs.length};
     } catch(e) {
       status.lastCapture={status:'incomplete',complete:false,error:e.message,at:new Date().toISOString()}; saveCapture(source,status);throw e;
     }
   });
 }
-export function scheduleSource(source) {
-  // A retired, drained source whose job was already taken out of the scheduler
-  // has nothing left to run: do not recreate the job (retire is re-entrant).
-  const current=loadStatus(source);
-  if(current.retired && current.schedule?.removed===true) return current.schedule.result;
+/** okf <= 4.1 gave every registered source one scheduler command job,
+ *  `okf-<source id>`, running this argv in the source's deployment. okf 4.2
+ *  creates none; `setup --remove-schedules` (schedule-migration.mjs) proves a
+ *  job is a source's own by this definition before it disables and removes it. */
+export const legacyScheduleId=source=>`okf-${source.id}`;
+export function legacyScheduleArgv(source) {
   const captured=source.registration?.schemaVersion===1 && source.registration.kind==='captured';
-  const argv=captured?['oats','okf','run-source','--source',source.file,'--deployment',source.executionBinding.deployment,'--resolution',source.executionBinding.resolution.id,'--json']
+  return captured?['oats','okf','run-source','--source',source.file,'--deployment',source.executionBinding.deployment,'--resolution',source.executionBinding.resolution.id,'--json']
     :['oats','okf','run-source','--source',source.file,'--soul',source.agent,'--json'];
-  const spec={id:`okf-${source.id}`,kind:'command',enabled:current.auto,cron:source.bindings.cron,tz:source.bindings.tz,cwd:source.context,argv,
-    ...(captured?{definitionVersion:2,recurrencePolicy:'capture',responsibleHuman:source.responsibleHuman}: {})};
-  const file=join(dirname(source.file),'schedule.json');
-  try {
-    save(file,spec);
-    let result;
-    try {result=oats(['schedule','add',spec.id,'--file',file,'--dir',source.context,'--json'],source.context);}
-    catch(e) {
-      // Never overwrite a colliding job or re-enable an operator-disabled job.
-      // Retry after an uncertain add must verify the actual definition, not a
-      // local receipt. A deleted definition is recreated by the add above.
-      if(e.code!=='E_SCHEDULE_EXISTS') throw e;
-      result=oats(['schedule','show',spec.id,'--dir',source.context,'--json'],source.context);
-    }
-    const actual=result?.schedule;
-    if(!actual || typeof actual.enabled!=='boolean' || ['id','kind','cron','tz','cwd','argv','definitionVersion','recurrencePolicy'].some(k=>JSON.stringify(actual[k])!==JSON.stringify(spec[k]))) fail('E_SCHEDULE','source schedule definition differs; inspect and repair explicitly');
-    if(captured) {
-      const responsible=actual.execution && Object.hasOwn(actual.execution,'responsibleHuman')?actual.execution.responsibleHuman
-        :Object.hasOwn(actual,'responsibleHuman')?actual.responsibleHuman:undefined;
-      if(!sameJson(responsible,spec.responsibleHuman)) fail('E_SCHEDULE','captured source schedule responsible human differs');
-      if(actual.execution && (actual.execution.deployment!==source.executionBinding.deployment || actual.execution.resolution?.id!==source.executionBinding.resolution.id)) fail('E_SCHEDULE','captured source schedule execution binding differs');
-    }
-    // A job already settled off for a retired, drained source stays settled:
-    // registration re-verifies the definition but does not forget the switch-off.
-    updateStatus(source,status=>{const settled=status.schedule?.settled===true?{settled:true,settledAt:status.schedule.settledAt}:{};status.schedule={id:spec.id,status:'ready',result,...settled};});return result;
-  } catch(e) {
-    updateStatus(source,status=>{status.schedule={...(status.schedule || {}),id:spec.id,status:'failed',error:e.message};});throw e;
-  }
 }
