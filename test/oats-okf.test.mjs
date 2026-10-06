@@ -3107,3 +3107,38 @@ test('4.2.0 consent is the deployment\'s now: a home invocation reads it through
   {const f=fixture(t);const s=f.source();note(f);deploymentHarvest(f,'off');
     const r=deploymentCli(f,'run-source',['--source',s.file,'--manual'],{OATS_SETTINGS:JSON.stringify({'bindings-file':f.bindingFile,harvest:'off'})});assert.equal(r.out.result.status,'harvest-off',r.stdout);assert.deepEqual(consentReads(f),[]);}
 });
+
+// okf 4.2.0 review R5: an automatic continuation is a new action boundary.
+test('4.2.0 a detached delivery\'s automatic successor reads the deployment\'s consent at that moment, not the settings its complete was dispatched with',async t=>{
+  /** A deployment-scoped completion (no home identity; the process's settings say on, as at dispatch),
+   *  delivered by the detached worker, with `change` applied after the judgment is persisted. */
+  async function detached(change) {
+    const f=fixture(t,{kind:'git'}),s=f.source();put(join(f.dir,'sessions-inert'),'');for(const i of [0,1]) bigNote(f,i);
+    const run=readRun(s,checkpointHarvest(s).run),j=judgment(f,s,run,{drop:true});
+    for(const key of ['OATS_HOME','OATS_INSTANCE_HOME','OATS_INSTANCE','OATS_AGENT']) delete process.env[key];
+    // The soul copy this process was dispatched with, apart from the soul the deployment resolves now.
+    const dispatched=join(f.dir,'dispatched-soul');fs.cpSync(f.soul,dispatched,{recursive:true});process.env.OATS_SOUL=dispatched;
+    const settingsAtDispatch=process.env.OATS_SETTINGS,before=effectsOf(f);
+    const r=await completeInBackground(s,run.id,j,{receiptWithinMs:20000,afterJudgment:()=>change(f)});
+    assert.equal(process.env.OATS_SETTINGS,settingsAtDispatch,'the process settings are never rewritten');assert.equal(JSON.parse(settingsAtDispatch).harvest,'on');
+    assert.equal(readRun(s,run.id).status,'processed','the delivery completes');assert.equal(loadStatus(s).processed.length,1);
+    return {f,s,run,r,before};
+  }
+  // Switched off at the deployment while the delivery ran: the remainder pauses with its remedy; no successor.
+  {const {f,s,r,before}=await detached(f=>deploymentHarvest(f,'off'));
+    assert.equal(r.drain?.status,'harvest-off',JSON.stringify(r.drain));assert.equal(r.drain.remaining,1);assert.match(r.drain.next,/^once the deployment switches harvest on .*run-source --source .* --manual/);
+    assert.deepEqual(effectsOf(f),before,'no successor spawned or launched');const st=loadStatus(s);assert.equal(st.activeRun,null);assert.equal(st.drain.paused.kind,'harvest-off');}
+  // The soul the deployment resolves now opts out; the dispatched soul copy and settings still say on.
+  {const {f,s,r,before}=await detached(f=>soulOff(f));
+    assert.equal(r.drain?.status,'harvest-off',JSON.stringify(r.drain));assert.match(r.drain.reason,/soul opts out/);assert.deepEqual(effectsOf(f),before);
+    assert.doesNotMatch(fs.readFileSync(join(process.env.OATS_SOUL,'soul.yaml'),'utf8'),/harvest/,'the dispatched copy was not rewritten');}
+  // The deployment's consent cannot be read: nothing starts, the remainder stays in custody with its command.
+  {const {f,s,r,before}=await detached(f=>put(join(f.dir,'consent-read-fail'),''));
+    assert.equal(r.drain?.status,'failed',JSON.stringify(r.drain));assert.equal(r.drain.error.code,'E_HARVEST_CONSENT_UNKNOWN');assert.equal(r.drain.retained,true);
+    assert.equal(r.drain.next,`cd ${f.context} && oats okf run-source --source ${s.file} --manual --soul source --json`);
+    assert.deepEqual(effectsOf(f),before);const st=loadStatus(s);assert.equal(st.activeRun,null);assert.equal(st.drain.error.code,'E_HARVEST_CONSENT_UNKNOWN');
+    assert.deepEqual(outstanding(s,st).map(o=>o.kind),['drain']);}
+  // Control: still on at the deployment, the successor starts.
+  {const {f,r,before}=await detached(()=>{});
+    assert.equal(r.drain?.status,'started',JSON.stringify(r.drain));assert.equal(effectsOf(f).spawns,before.spawns+1);assert.equal(effectsOf(f).sessions,before.sessions+1);}
+});

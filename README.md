@@ -84,7 +84,12 @@ to run it. `oats okf harvest [--no-launch] --json`, from the instance home:
    serially, without capturing again, until the boundary is processed
    (`drain: drained`). Notes written meanwhile wait for a later checkpoint.
    **Scope: automatic continuation needs the deployment's harvest switch on**
-   (and no soul opt-out), as it is when the completion runs. The completion
+   (and no soul opt-out), as it is when the successor would start: each
+   automatic continuation is a new action, and reads the deployment's switch
+   at that moment through the deployment-scoped view (as a home does), not
+   the settings its `complete` was dispatched with, which a detached delivery
+   may outlive. Off pauses the drain with its remedy; unknown consent starts
+   nothing and keeps the remainder in custody with its command. The completion
    runs from the deployment (`oats okf complete --soul …`), so a seat
    switched on only by a spawn-only provider setting captures and starts its
    first run at a checkpoint, and then its drain pauses visibly when the

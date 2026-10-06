@@ -367,13 +367,17 @@ function homeInvocation() {
  *  Consent that is not known (the read fails, times out or is malformed, or
  *  the soul's opt-out cannot be read while the switch would be on) is
  *  E_HARVEST_CONSENT_UNKNOWN, never a confirmed off: nothing is captured or
- *  started, and a retirement is refused. */
-export function sourceSwitch(source, { firstBatch = false, deadline } = {}) {
+ *  started, and a retirement is refused.
+ *  `live` forces the deployment read also without a home: an automatic
+ *  continuation (a completion's successor, perhaps detached and long after
+ *  its command was dispatched) is a new action, and the settings this process
+ *  got at dispatch may be stale by then. */
+export function sourceSwitch(source, { firstBatch = false, deadline, live: force = false } = {}) {
   const q = v => /^[\w@%+=:,./-]+$/.test(String(v)) ? String(v) : quote(v);
   const view = `cd ${q(source.context)} && oats okf harvest-status --soul ${q(source.agent)} --json`;
   const unknown = why => fail('E_HARVEST_CONSENT_UNKNOWN', `the deployment's current harvest consent for soul ${source.agent} is not known (${why}), and unknown is not off: nothing was captured or started, and the source stays as it is. Check it: ${view}`);
   const home = homeInvocation();
-  if (!home) {
+  if (!home && !force) {
     const current = process.env.OATS_SOUL && fs.existsSync(process.env.OATS_SOUL) ? process.env.OATS_SOUL : null;
     const sw = harvestSwitch({ settings: settings(), soulDir: current || source.soulDir || undefined });
     const [deployment, soul] = sw.rows;
@@ -393,7 +397,7 @@ export function sourceSwitch(source, { firstBatch = false, deadline } = {}) {
   if (live.harvest === 'unknown' || !soul.readable) unknown(live.reason);
   const answer = (effective, reason, consent) => ({ effective, reason, consent, rows: live.rows, warnings: live.warnings || [] });
   const real = p => { try { return fs.realpathSync(p); } catch { return resolve(p); } };
-  if (firstBatch && real(home) === real(source.home) && parseOrigins()['/harvest']?.kind === 'spawn') {
+  if (home && firstBatch && real(home) === real(source.home) && parseOrigins()['/harvest']?.kind === 'spawn') {
     if (settings().harvest !== 'on') return answer('off', 'this source\'s spawn switched harvest off for it', 'spawn-override');
     if (soul.value === 'off') return answer('off', 'the soul opts out (knowledge: { harvest: off }), which no override or deployment can switch back on', 'spawn-override');
     if (soul.value === 'on') return answer('off', `${live.reason}`, 'spawn-override');

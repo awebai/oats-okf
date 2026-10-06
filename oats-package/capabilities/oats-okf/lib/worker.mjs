@@ -861,9 +861,10 @@ export function continueDrain(source,{deadline,consent}={}) {
     // and the hold stays, also through retirement, until an explicit launch.
     const hold=drain.paused?.kind==='no-launch'?drain.paused:null;
     if(hold) return {status:'held',remaining:remaining.length,reason:`${hold.reason}; the drain waits, its input in custody, for an explicit launch`,next:operatorCommand(source,['retry','--source',source.file,'--launch'])};
-    // The retire hook's first batch passes the switch it read; every other
-    // continuation reads the deployment's switch now.
-    const sw=consent ?? sourceSwitch(source,{deadline});
+    // The retire hook's first batch passes the switch it read. Every other
+    // continuation is a new action: it reads the deployment's switch now,
+    // from the deployment, whatever this process's settings said at dispatch.
+    const sw=consent ?? sourceSwitch(source,{deadline,live:true});
     if(sw.effective!=='on') {
       pauseDrain(source,'harvest-off',sw.reason);
       return {status:'harvest-off',remaining:remaining.length,reason:`${sw.reason}; the drain is paused and its input stays in custody`,prerequisite:DRAIN_PREREQUISITE,next:`once the deployment switches harvest on for soul ${source.agent}: ${resume}`};

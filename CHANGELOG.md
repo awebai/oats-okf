@@ -37,7 +37,11 @@ Checkpoint harvest (#49); the harvester retires after delivery (#47). #46 and
   absolute. An explicit spawn override for the source (origin `spawn`)
   stands in for the deployment's switch for its own first batch (a
   checkpoint, its retirement), after the same read, never over the soul's
-  opt-out; a host value captured at spawn does not.
+  opt-out; a host value captured at spawn does not. An automatic
+  continuation (a completion's successor, also from a detached delivery) is
+  a new action: it reads the deployment's switch through that view at that
+  moment, with or without a home, never the settings its command was
+  dispatched with; the first batch's consent is not reused for it.
   Homes copied from earlier versions keep their copied modules: a pin does
   not retrofit them (see the cutover). Its answer replaces the
   run's status.
