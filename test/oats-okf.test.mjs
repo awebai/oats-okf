@@ -2560,11 +2560,20 @@ const sessionsOf=f=>callsIn(f).filter(c=>c.a[0]==='session');
  *  advance this process's clock once the call returns: a slow step, with no
  *  real wait. `fail(call)` answers a call with a failure instead of running
  *  it: a transport failure, with no real network. */
-function observeCalls(fn,{deadline,after,fail}={}) {
-  const original=cp.spawnSync,now=Date.now,seen=[];let skew=0;
-  Date.now=()=>now()+skew;
+/** Every subprocess `fn` starts, with its timeout and, under `deadline`, what
+ *  was left of it when that timeout was computed: `remaining` is the deadline
+ *  minus the clock as last read before the call, which is the reading the
+ *  call's budget (io bounded(), evaluated as the call's own argument) was
+ *  taken from. `dispatchRemaining` is what is left at the call itself, a
+ *  later reading: across a clock tick it is smaller than the budget's, so a
+ *  timeout is checked against `remaining`. `after` skews the clock after a
+ *  call; `tick` advances it by that many ms at every reading (a
+ *  deterministic tick crossing). */
+function observeCalls(fn,{deadline,after,fail,tick=0}={}) {
+  const original=cp.spawnSync,now=Date.now,seen=[];let skew=0,readings=0,last;
+  Date.now=()=>(last=now()+skew+tick*++readings);
   cp.spawnSync=function(bin,args,opts) {
-    const call={bin,args,timeout:opts?.timeout,...(deadline===undefined?{}:{remaining:deadline-Date.now()})};seen.push(call);
+    const read=last ?? Date.now(),call={bin,args,timeout:opts?.timeout,...(deadline===undefined?{}:{remaining:deadline-read,dispatchRemaining:deadline-Date.now()})};seen.push(call);
     if(fail?.(call)) return {status:128,signal:null,pid:0,output:[null,'','fatal: transport failure'],stdout:'',stderr:'fatal: transport failure'};
     const result=original.apply(this,arguments);skew+=after?.(call) || 0;return result;
   };
@@ -2572,6 +2581,7 @@ function observeCalls(fn,{deadline,after,fail}={}) {
   try {return {result:fn(),seen};} finally {Date.now=now;cp.spawnSync=original;syncBuiltinESMExports();}
 }
 const isSpawn=c=>c.args[0]==='spawn' && !c.args.includes('--preview');
+
 /** A Git source whose one run delivered two destinations, each in its own repository with its own PR. */
 function twoGitDestinations(t) {
   const f=fixture(t,{kind:'git'}),raw=readJSON(f.bindingFile),repo2=join(f.dir,'repo2');fs.mkdirSync(repo2);git(repo2,['init','-q','--initial-branch=main']);
@@ -2975,7 +2985,7 @@ test('4.2.0 the invocation deadline also bounds lock waits: a busy base lock dur
   fs.rmSync(lock,{recursive:true});
   const go=deploymentCli(f,'retry',['--source',s.file,'--launch']);assert.equal(go.out.result.status,'running',go.stdout);assert.equal(spawnsOf(f).length,1);
 });
-const {withDeadline,bounded,unlock}=await mod('io');
+const {withDeadline,bounded,unlock,exec}=await mod('io');
 test('4.2.0 an invocation deadline nests to the earlier one, is restored on exit and on error, and bounds lock waits only within it',()=>{
   const now=Date.now();
   withDeadline(now+10000,()=>{
@@ -3167,4 +3177,14 @@ test('4.2.0 every printed operator recovery hint names the source\'s soul',t=>{
   const raw=deploymentCli(f,'run-source',['--source',s.file]);assert.equal(raw.out.error.code,'E_HARVEST_SCHEDULE_REMOVED');
   assert.ok(raw.out.error.message.endsWith(`For explicit recovery of this source run: cd ${f.context} && oats okf run-source --source ${s.file} --manual --soul source --json`),raw.out.error.message);
   const removed=deploymentCli(f,'setup',['--enable']);assert.match(removed.out.error.message,/setup --harvest on\|off --soul <soul>.*setup --remove-schedules --soul <soul>/);
+});
+
+test('4.2.0 the call observer checks a timeout against the clock reading its budget was taken from, not a later one',()=>{
+  // A clock that advances 1 ms at every reading crosses a tick between the budget and the call, every time;
+  // the deadline is shorter than exec's own 30 s, so the budget is what binds.
+  const deadline=Date.now()+10000;
+  const {seen:[call]}=observeCalls(()=>withDeadline(deadline,()=>exec(process.execPath,['-e',''])),{deadline,tick:1});
+  assert.ok(call.timeout<=call.remaining,`budget ${call.timeout} within the ${call.remaining} ms its reading left`);
+  assert.equal(call.timeout,call.remaining,'the budget is exactly what was left at its reading');
+  assert.ok(call.timeout>call.dispatchRemaining,'a later reading (the old observer\'s) reports the same call as over budget');
 });
