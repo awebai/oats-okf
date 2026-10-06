@@ -69,22 +69,25 @@ const pause = ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0,
 /** Cooperative directory lock. `waitMs` lets a caller queue behind a live
  *  holder for a bounded time; a live holder is never stolen from, whatever its
  *  age. With `reclaimDead`, a lock whose owner is provably gone (reclaimable)
- *  is taken over; otherwise an abandoned lock waits for an explicit unlock. */
+ *  is taken over; otherwise an abandoned lock waits for an explicit unlock.
+ *  Within an invocation deadline (withDeadline) the wait ends with it: a
+ *  busy lock past it is E_DEADLINE, and nothing was done under it. */
 export function withLock(path, fn, { waitMs = 0, reclaimDead = false } = {}) {
   safePath(path); fs.mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-  const deadline = Date.now() + waitMs;
+  const own = Date.now() + waitMs, deadline = Math.min(own, invocationDeadline ?? Infinity);
   for (let delay = 20;; delay = Math.min(delay * 2, 250)) {
     try { fs.mkdirSync(path, { mode: 0o700 }); break; }
     catch(e) {
       if(e.code !== 'EEXIST') throw e;
       if(reclaimDead && reclaim(path)) continue;
       if(Date.now() >= deadline) {
+        if(deadline < own) fail('E_DEADLINE', `busy lock: ${path}; this invocation's time budget is spent, so nothing was done under it, and what is persisted resumes`);
         const owner = lockOwner(join(path, 'owner.json'));
         if(owner?.host === hostname() && !pidAlive(owner.pid)) fail('E_LOCKED', `abandoned lock: ${path} is held by process ${owner.pid}, which is gone; once no oats okf process is running, release it with: oats okf unlock --lock ${quote(path)} --token ${quote(owner.token)}`);
         if(owner?.host === hostname()) fail('E_LOCKED', `busy lock: ${path} is held by running process ${owner.pid}; try again once it finishes`);
         fail('E_LOCKED', `busy or abandoned lock: ${path}; inspect owner.json, never reclaim by age`);
       }
-      pause(delay);
+      pause(Math.max(1, Math.min(delay, deadline - Date.now())));
     }
   }
   const owner = { token: randomUUID(), pid: process.pid, host: hostname() };

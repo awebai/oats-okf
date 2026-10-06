@@ -82,7 +82,7 @@ export function operatorCommand(source,args) {
 /** `complete` for a run whose judgment is persisted: resumes a stopped
  *  delivery, or records a delivered PR's merge or close. */
 export const settlementCommand=(source,id)=>operatorCommand(source,['complete','--source',source.file,'--run',id]);
-export function runSource(source,{noLaunch=false,manual=false,capturedInvocation,nativeRequest,runFields={}}={}) {
+export function runSource(source,{noLaunch=false,manual=false,consent=false,capturedInvocation,nativeRequest,runFields={}}={}) {
   const plan=capturedSource(source)?qualifyCapturedWorker(source,{context:capturedInvocation,nativeRequest}):null;
   if(!plan) requireQualifiedHelper(source);
   return withWorkerLock(source,()=>{
@@ -93,6 +93,14 @@ export function runSource(source,{noLaunch=false,manual=false,capturedInvocation
       return {status:existing.status,run:existing.id,instance:existing.worker?.instance,home:existing.worker?.home,modelCompletion:'not-observed',launch:existing.launch??null};
     }
     if(!manual && !status.auto) return {status:'disabled',source:source.file};
+    // okf 4.2.0: an operator's start (run-source --manual, retry) re-reads
+    // consent HERE, under the worker lock and before any capture or worker:
+    // a free slot seen earlier (a completion may have just freed it)
+    // authorizes nothing. One-shots keep their own contract.
+    if(consent && !source.once) {
+      const sw=sourceSwitch(source);
+      if(sw.effective!=='on') return {status:'harvest-off',source:source.file,refused:['a new run from custody'],reason:`${sw.reason}; nothing was captured or started and the input stays in custody`};
+    }
     let sourceAvailable=false;
     // A one-shot's inputs are its verified manifest only: it never captures.
     if(!status.retired && !source.once) {
@@ -358,6 +366,10 @@ function finishStatus(source,run) {
   }
   if(Object.keys(run.stages).every(alias=>Object.hasOwn(run.receipts,alias)) && Object.values(run.receipts).every(r=>['accepted','delivered','no-change'].includes(r.status))) {
     for(const id of run.inputs) if(!status.processed.includes(id)) status.processed.push(id);
+    // okf 4.2.0: a --no-launch diagnostic hands no drain on. Its hold is
+    // written in the same status write that frees the active slot, so no
+    // crash before the continuation leaves the drain launchable.
+    if(run.noLaunch && run.status!=='processed' && status.drain?.boundary?.some(id=>!status.processed.includes(id))) status.drain.paused={kind:'no-launch',reason:`run ${run.id} was prepared with --no-launch (a diagnostic), so its completion launches nothing`,at:new Date().toISOString()};
     if(status.activeRun===run.id) status.activeRun=null;
     run.status='processed';persist(source,run);
   } else if(run.status==='processed' && Object.values(run.receipts).some(r=>r.status==='rejected')) {
@@ -481,7 +493,7 @@ function deliverRun(source,run,opts={}) {
     throw Object.assign(e,{result:completed(run),destinations:Object.fromEntries(failures.map(f=>[f.alias,{code:f.error.code || 'E_OKF',message:redactUrls(f.error.message)}]))});
   }
   // The handoff is recorded on the run, so a detached delivery reports it too.
-  if(opts.continueDrain!==false && !wasProcessed && run.status==='processed') {const drain=continueDrain(source,{after:run});if(drain) {run.drainHandoff=drain;persist(source,run);}}
+  if(opts.continueDrain!==false && !wasProcessed && run.status==='processed') {const drain=continueDrain(source);if(drain) {run.drainHandoff=drain;persist(source,run);}}
   return completed(run);
 }
 /** What complete answers for a delivered run. A PR the maintainer amended on
@@ -611,7 +623,7 @@ export function retry(source,{run:id,rejudge=false,launch=false,adoptHome}={}) {
   if(id!==undefined && (!rejudge || adoptHome)) fail('E_USAGE','--run requires --rejudge and cannot be combined with --adopt-home');
   const refused=retryConsent(source,{id,rejudge,launch});if(refused) return refused;
   if(id!==undefined) return recoverRun(source,id,{launch});
-  const status=loadStatus(source);if(!status.activeRun) return runSource(source,{manual:true,noLaunch:!launch});
+  const status=loadStatus(source);if(!status.activeRun) return runSource(source,{manual:true,noLaunch:!launch,consent:true});
   let run=readRun(source,status.activeRun);
   if(rejudge) refuseLiveDelivery(run);
   else if(liveDelivery(run)) return deliveryProgress(run);
@@ -823,9 +835,8 @@ function blockedRejudgment(source,status,e) {
 /** Start the next run of a recorded drain, if any input of its boundary is
  *  unprocessed and no run is active. Caller holds the worker lock. Never
  *  captures, never claims drained while any boundary input is unprocessed,
- *  and honours the harvest switch as it is now. `after` is the run whose
- *  completion hands the drain on: a --no-launch diagnostic hands on nothing. */
-export function continueDrain(source,{deadline,after}={}) {
+ *  and honours the harvest switch as it is now, and a no-launch hold. */
+export function continueDrain(source,{deadline}={}) {
   try {
     const status=loadStatus(source),drain=status.drain;
     if(!drain?.boundary?.length || status.activeRun) return null;
@@ -836,14 +847,13 @@ export function continueDrain(source,{deadline,after}={}) {
         if((current.drain?.boundary || []).some(id=>!current.processed.includes(id))) return; // a newer request arrived
         drained=true;current.lastDrain={inputs:current.drain.boundary.length,by:current.drain.by,requestedAt:current.drain.requestedAt,drainedAt:new Date().toISOString()};delete current.drain;
       });
-      return drained?{status:'drained'}:continueDrain(source,{deadline,after});
+      return drained?{status:'drained'}:continueDrain(source,{deadline});
     }
     const resume=operatorCommand(source,['run-source','--source',source.file,'--manual']);
     if(capturedSource(source)) return {status:'held',remaining:remaining.length,reason:'a captured source drains only through its admitted knowledge:harvest operation'};
-    // A --no-launch diagnostic's completion holds the drain, and the hold
-    // stays (also through retirement) until an explicit launch lifts it.
-    if(after?.noLaunch) pauseDrain(source,'no-launch',`run ${after.id} was prepared with --no-launch (a diagnostic), so its completion launches nothing`);
-    const hold=after?.noLaunch?loadStatus(source).drain?.paused:drain.paused?.kind==='no-launch'?drain.paused:null;
+    // A --no-launch diagnostic's completion held the drain (finishStatus),
+    // and the hold stays, also through retirement, until an explicit launch.
+    const hold=drain.paused?.kind==='no-launch'?drain.paused:null;
     if(hold) return {status:'held',remaining:remaining.length,reason:`${hold.reason}; the drain waits, its input in custody, for an explicit launch`,next:operatorCommand(source,['retry','--source',source.file,'--launch'])};
     const sw=sourceSwitch(source);
     if(sw.effective!=='on') {

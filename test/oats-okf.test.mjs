@@ -2892,3 +2892,75 @@ test('4.2.0 an interrupted rebuild of a retired worker\'s checkout never blocks 
     assert.equal(readRun(s,run.id).stages.project.checkout,rebuild);assert.deepEqual(outstanding(s,loadStatus(s)),[]);
   }
 });
+
+// okf 4.2.0 review R3 regressions: each asserts the corrected contract.
+const libURL=p=>new URL(`../oats-package/capabilities/oats-okf/lib/${p}.mjs`,import.meta.url).href;
+const effectsOf=f=>({captures:capturesOf(f).length,spawns:spawnsOf(f).length,sessions:sessionsOf(f).length});
+test('4.2.0 a completion that frees the active slot while a custody-only retry runs grants no new work: with harvest off, nothing is captured or spawned',t=>{
+  for(const [mode,off] of Object.entries(harvestOff)) {
+    const f=fixture(t),s=f.source();note(f);const run=readRun(s,checkpointHarvest(s,{noLaunch:true}).run),j=judgment(f,s,run,{drop:true});
+    note(f,'tail.md','Written after the active run was captured; harvest is now off.');
+    const env={...process.env,...off(f)},before=effectsOf(f),statusFile=join(dirname(s.file),'status.json'),barrier=join(f.dir,'barrier.mjs');
+    // Right after retry's first read of the status (the active run), another
+    // process completes that run; retry then goes on.
+    put(barrier,`import fs from 'node:fs';import {spawnSync} from 'node:child_process';import {syncBuiltinESMExports} from 'node:module';
+const read=fs.readFileSync;let fired=false;
+fs.readFileSync=function(path,...rest) {const value=read.call(this,path,...rest);
+  if(!fired && String(path)===${JSON.stringify(statusFile)}) {fired=true;
+    const r=spawnSync(process.execPath,['--input-type=module','-e',${JSON.stringify(`import {loadSource} from ${JSON.stringify(libURL('sources'))};import {complete} from ${JSON.stringify(libURL('worker'))};complete(loadSource(${JSON.stringify(s.file)}),${JSON.stringify(run.id)},${JSON.stringify(j)});`)}],{env:process.env,encoding:'utf8'});
+    if(r.status!==0) throw new Error('the competing completion failed: '+r.stderr);}
+  return value;};
+syncBuiltinESMExports();
+`);
+    const r=spawnSync(process.execPath,['--import',barrier,CLI,'retry','--source',s.file,'--json'],{cwd:f.context,env,encoding:'utf8',timeout:30000});
+    const why=`${mode}: ${r.stdout}${r.stderr}`;assert.equal(r.status,0,why);
+    assert.equal(readRun(s,run.id).status,'processed','the competing completion ran');assert.equal(loadStatus(s).activeRun,null);
+    assert.equal(JSON.parse(r.stdout).result.status,'harvest-off',why);assert.deepEqual(effectsOf(f),before,`${why}: no capture, spawn or session`);
+    assert.equal(loadStatus(s).captured.inputs.length,1,'the later note is not captured');
+  }
+});
+test('4.2.0 a no-launch hold is written with the processed commit: a completion killed right after it leaves the drain held, and the next checkpoint launches nothing',t=>{
+  const f=fixture(t),s=f.source();put(join(f.dir,'sessions-inert'),'');for(const i of [0,1,2]) bigNote(f,i);
+  assert.equal(checkpointHarvest(s,{deadline:Date.now()+5000}).status,'deferred');
+  const run=readRun(s,checkpointHarvest(s,{noLaunch:true}).run),j=judgment(f,s,run,{drop:true}),statusFile=join(dirname(s.file),'status.json');
+  // SIGKILL as the status lock is released after the write that frees the active slot, before any continuation.
+  const script=`import fs from 'node:fs';import {syncBuiltinESMExports} from 'node:module';import {loadSource} from ${JSON.stringify(libURL('sources'))};import {complete} from ${JSON.stringify(libURL('worker'))};
+const rm=fs.rmSync;fs.rmSync=function(path,...rest) {const result=rm.apply(this,[path,...rest]);
+  if(String(path)===${JSON.stringify(join(dirname(s.file),'status.lock'))} && JSON.parse(fs.readFileSync(${JSON.stringify(statusFile)},'utf8')).activeRun===null) process.kill(process.pid,'SIGKILL');
+  return result;};
+syncBuiltinESMExports();complete(loadSource(${JSON.stringify(s.file)}),${JSON.stringify(run.id)},${JSON.stringify(j)});`;
+  const killed=spawnSync(process.execPath,['--input-type=module','-e',script],{cwd:f.context,env:process.env,encoding:'utf8',timeout:30000});
+  assert.equal(killed.signal,'SIGKILL',killed.stdout+killed.stderr);
+  const st=loadStatus(s);assert.equal(st.activeRun,null);assert.equal(st.processed.length,1);assert.equal(st.drain.paused.kind,'no-launch','the hold was committed with the processed status');
+  const h=f.cli('harvest');assert.equal(h.out.result.status,'held',h.stdout);assert.equal(sessionsOf(f).length,0);assert.equal(spawnsOf(f).length,1);
+  assert.equal(f.cli('retire').out.meta.drain.status,'held');assert.equal(sessionsOf(f).length,0);
+  const go=deploymentCli(f,'retry',['--source',s.file,'--launch']);assert.equal(go.out.result.status,'running',go.stdout);assert.equal(sessionsOf(f).length,1);
+});
+test('4.2.0 the invocation deadline also bounds lock waits: a busy base lock during staging ends with the budget, and the confirmed worker is deferred',t=>{
+  const f=fixture(t);const s=f.source();put(join(f.dir,'sessions-inert'),'');note(f);capture(s,{final:true});
+  const lock=baseLock(s.bindings.bases.project);put(join(lock,'owner.json'),JSON.stringify({token:'live',pid:process.pid,host:hostname()}));
+  const deadline=Date.now()+110000,started=performance.now();
+  // The spawn returns with about 2 s of the budget left; the base lock is held by a live process.
+  const {result:{d,end}}=observeCalls(()=>({d:retireDrain(s,{deadline}),end:Date.now()}),{after:c=>isSpawn(c)?108000:0});
+  const elapsed=performance.now()-started;
+  assert.equal(d.status,'deferred',JSON.stringify(d));assert.equal(d.phase,'scaffolded');assert.equal(d.launched,false);
+  assert.ok(end<=deadline+1000,`ended ${end-deadline} ms past the deadline`);assert.ok(elapsed<8000,`took ${Math.round(elapsed)} ms: the lock wait outlived the budget`);
+  assert.equal(sessionsOf(f).length,0);
+  fs.rmSync(lock,{recursive:true});
+  const go=deploymentCli(f,'retry',['--source',s.file,'--launch']);assert.equal(go.out.result.status,'running',go.stdout);assert.equal(spawnsOf(f).length,1);
+});
+const {withDeadline,bounded}=await mod('io');
+test('4.2.0 an invocation deadline nests to the earlier one, is restored on exit and on error, and bounds lock waits only within it',()=>{
+  const now=Date.now();
+  withDeadline(now+10000,()=>{
+    assert.ok(bounded(20000)<=10000);withDeadline(now+20000,()=>assert.ok(bounded(30000)<=10000,'the earlier deadline wins'));
+    assert.throws(()=>withDeadline(now-1,()=>bounded(1)),{code:'E_DEADLINE'});assert.ok(bounded(20000)>1000,'restored after the error');
+  });
+  assert.equal(bounded(600000),600000,'no deadline outside one');
+  const dir=fs.mkdtempSync(join(tmpdir(),'okf-lock-')),lock=join(dir,'held.lock');put(join(lock,'owner.json'),JSON.stringify({token:'live',pid:process.pid,host:hostname()}));
+  try {
+    let t0=performance.now();assert.throws(()=>withDeadline(Date.now()+300,()=>withLock(lock,()=>{},{waitMs:10000})),{code:'E_DEADLINE'});assert.ok(performance.now()-t0<2000,'the wait ends with the deadline');
+    t0=performance.now();assert.throws(()=>withLock(lock,()=>{},{waitMs:300}),{code:'E_LOCKED'});assert.ok(performance.now()-t0>=250,'without one, the wait is its own');
+    assert.ok(fs.existsSync(join(lock,'owner.json')),'a live holder\'s lock is left alone');
+  } finally {fs.rmSync(dir,{recursive:true,force:true});}
+});

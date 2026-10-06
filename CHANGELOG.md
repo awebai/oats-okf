@@ -34,7 +34,7 @@ Checkpoint harvest (#49); the harvester retires after delivery (#47). #46 and
   outcomes.
 - **One deadline** bounds a checkpoint and a retire hook (110 s): every
   `git`, `gh` and `oats` call gets at most what is left and none starts
-  once it is spent; settlement takes at most 30 s and capture 85 s. A worker
+  once it is spent, and every lock wait ends with it (`E_DEADLINE`); settlement takes at most 30 s and capture 85 s. A worker
   is never launched past it: with under 15 s left, or staging stopped by
   it, the confirmed worker stays (`deferred`, `phase: ready` or
   `scaffolded`, `launched: false`, `next: retry --source FILE --launch`),
@@ -54,7 +54,8 @@ Checkpoint harvest (#49); the harvester retires after delivery (#47). #46 and
   the deployment off; every promised handoff says so (`prerequisite`).
   `--no-launch` requests no drain, and its run's completion launches
   nothing, also over an earlier drain request: that drain is `held`. The
-  hold is durable: later checkpoints and retirement add input to it but
+  hold is durable (written with the processed status, so a crash right
+  after keeps it): later checkpoints and retirement add input to it but
   start nothing, until an operator's explicit `retry --source FILE --launch`
   (or `run-source --manual`) lifts it.
 - **Retirement** takes the final capture and then the same drain within one
@@ -79,7 +80,8 @@ Checkpoint harvest (#49); the harvester retires after delivery (#47). #46 and
   nothing is spawned twice. **Retry re-reads consent**: while the deployment
   switch is off, or the soul opts out, it answers `harvest-off` to anything
   that would start new harvest work: a new run, `--launch`, `--rejudge`,
-  `--run ID --rejudge`, and any combination with `--launch`. It still
+  `--run ID --rejudge`, and any combination with `--launch`; a new run
+  re-reads consent under the worker lock, right before capture. It still
   delivers a persisted judgment (whose completion pauses the drain), prepares
   a confirmed worker without launching it, and adopts an already-created one.
   `harvest --once` keeps its own contract. `--launch` of a prepared worker

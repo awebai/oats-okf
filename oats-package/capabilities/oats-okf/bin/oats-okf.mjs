@@ -216,7 +216,7 @@ else {
       // then captures and processes nothing.
       const source=src(),sw=sourceSwitch(source);
       result=sw.effective!=='on'?{status:'harvest-off',source:source.file,reason:`${sw.reason}; nothing was captured`}
-        :runSource(source,{manual:!!flags.manual,noLaunch:!!flags['no-launch']});
+        :runSource(source,{manual:!!flags.manual,noLaunch:!!flags['no-launch'],consent:true});
     }
     // A captured completion's private binding file need not outlive this call,
     // so it delivers inline (and can exceed an agent's tool-call limit).

@@ -72,7 +72,9 @@ to run it. `oats okf harvest [--no-launch] --json`, from the instance home:
    it and requests no drain. Its run's completion launches nothing, also when
    an earlier checkpoint's drain is outstanding: that drain is `held`
    (`drain.paused.kind: no-launch`, input in custody). **The hold is
-   durable.** A later checkpoint, or retirement's final capture, adds its
+   durable.** It is written in the same status write that records the run
+   processed and frees the active slot, so a completion killed right after
+   leaves it in place. A later checkpoint, or retirement's final capture, adds its
    input to the held drain and answers `held`: it starts no model, and no
    continuation does. Only an operator's explicit launch lifts it:
    `oats okf retry --source FILE --launch` (or `run-source --manual`
@@ -89,7 +91,9 @@ to run it. `oats okf harvest [--no-launch] --json`, from the instance home:
 
 **One deadline.** An invocation has one time budget (110 s). Every blocking
 call within it (`git`, `gh`, `oats`) gets at most what is left, whatever
-its own timeout, and none starts once it is spent. Settlement takes at most
+its own timeout, and none starts once it is spent. Every lock wait within it
+(a base, the worker, the capture) ends with it too: a lock still busy then
+is `E_DEADLINE` and nothing was done under it. Settlement takes at most
 30 s of it and capture 85 s. With under 30 s left no harvester is started
 (`deferred`, nothing started, the input in custody). A spawned worker is
 not launched with under 15 s left, or when staging stopped at the deadline:
@@ -177,7 +181,9 @@ rejudging it stays the explicit `oats okf retry --source FILE --run ID --rejudge
 - `oats okf retry` re-reads the switch and the soul's opt-out (an absolute
   one too) before anything that would start new harvest work. While harvest
   is off it answers `harvest-off`, naming what it `refused`, and changes
-  nothing. It refuses:
+  nothing. A new run from custody re-reads consent under the source's worker
+  lock, right before capture, so a completion that frees the active slot
+  meanwhile grants nothing (`run-source --manual` does the same). It refuses:
   - a new run from custody (no active run);
   - `--launch` of an active ready, deferred or scaffolded worker;
   - `--rejudge` of the active run;
