@@ -2949,7 +2949,7 @@ test('4.2.0 the invocation deadline also bounds lock waits: a busy base lock dur
   fs.rmSync(lock,{recursive:true});
   const go=deploymentCli(f,'retry',['--source',s.file,'--launch']);assert.equal(go.out.result.status,'running',go.stdout);assert.equal(spawnsOf(f).length,1);
 });
-const {withDeadline,bounded}=await mod('io');
+const {withDeadline,bounded,unlock}=await mod('io');
 test('4.2.0 an invocation deadline nests to the earlier one, is restored on exit and on error, and bounds lock waits only within it',()=>{
   const now=Date.now();
   withDeadline(now+10000,()=>{
@@ -2963,4 +2963,28 @@ test('4.2.0 an invocation deadline nests to the earlier one, is restored on exit
     t0=performance.now();assert.throws(()=>withLock(lock,()=>{},{waitMs:300}),{code:'E_LOCKED'});assert.ok(performance.now()-t0>=250,'without one, the wait is its own');
     assert.ok(fs.existsSync(join(lock,'owner.json')),'a live holder\'s lock is left alone');
   } finally {fs.rmSync(dir,{recursive:true,force:true});}
+});
+test('4.2.0 a no-launch hold survives a completion killed between its run record and its status commit; replaying an old diagnostic never re-holds a drain a launch lifted',t=>{
+  const f=fixture(t),s=f.source();put(join(f.dir,'sessions-inert'),'');for(const i of [0,1,2]) bigNote(f,i);
+  assert.equal(checkpointHarvest(s,{deadline:Date.now()+5000}).status,'deferred');
+  const run=readRun(s,checkpointHarvest(s,{noLaunch:true}).run),j=judgment(f,s,run,{drop:true}),runFile=join(dirname(s.file),'runs',run.id,'run.json');
+  // SIGKILL right after run.json records the run processed, before the status commit.
+  const preload=join(f.dir,'kill-after-run-record.mjs');
+  put(preload,`import fs from 'node:fs';import {syncBuiltinESMExports} from 'node:module';
+const rename=fs.renameSync;fs.renameSync=function(from,to,...rest) {const out=rename.call(this,from,to,...rest);
+  if(String(to)===${JSON.stringify(runFile)} && JSON.parse(fs.readFileSync(to,'utf8')).status==='processed') process.kill(process.pid,'SIGKILL');
+  return out;};
+syncBuiltinESMExports();`);
+  const killed=spawnSync(process.execPath,['--import',preload,'--input-type=module','-e',`import {loadSource} from ${JSON.stringify(libURL('sources'))};import {complete} from ${JSON.stringify(libURL('worker'))};complete(loadSource(${JSON.stringify(s.file)}),${JSON.stringify(run.id)},${JSON.stringify(j)});`],{cwd:f.context,env:process.env,encoding:'utf8',timeout:30000});
+  assert.equal(killed.signal,'SIGKILL',killed.stdout+killed.stderr);
+  const atCrash=loadStatus(s);assert.equal(readRun(s,run.id).status,'processed');assert.equal(atCrash.activeRun,run.id);assert.equal(atCrash.processed.length,0);
+  // The documented recovery of the dead process's status lock, then complete again.
+  const statusLock=join(dirname(s.file),'status.lock');unlock(statusLock,readJSON(join(statusLock,'owner.json')).token);
+  complete(s,run.id);
+  const st=loadStatus(s);assert.equal(st.activeRun,null);assert.equal(st.processed.length,1);assert.equal(st.drain.paused.kind,'no-launch','the replayed commit holds the drain');
+  const h=f.cli('harvest');assert.equal(h.out.result.status,'held',h.stdout);assert.equal(sessionsOf(f).length,0);assert.equal(spawnsOf(f).length,1);
+  // The explicit launch lifts it; replaying the old diagnostic's completion does not hold it again.
+  const go=deploymentCli(f,'retry',['--source',s.file,'--launch']);assert.equal(go.out.result.status,'running',go.stdout);assert.equal(sessionsOf(f).length,1);
+  complete(s,run.id);assert.equal(loadStatus(s).drain.paused,undefined,'no spurious re-hold');
+  const next=readRun(s,go.out.result.run);assert.equal(complete(s,next.id,judgment(f,s,next,{drop:true})).drain.status,'started');assert.equal(sessionsOf(f).length,2);
 });

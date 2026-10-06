@@ -368,8 +368,12 @@ function finishStatus(source,run) {
     for(const id of run.inputs) if(!status.processed.includes(id)) status.processed.push(id);
     // okf 4.2.0: a --no-launch diagnostic hands no drain on. Its hold is
     // written in the same status write that frees the active slot, so no
-    // crash before the continuation leaves the drain launchable.
-    if(run.noLaunch && run.status!=='processed' && status.drain?.boundary?.some(id=>!status.processed.includes(id))) status.drain.paused={kind:'no-launch',reason:`run ${run.id} was prepared with --no-launch (a diagnostic), so its completion launches nothing`,at:new Date().toISOString()};
+    // crash before the continuation leaves the drain launchable. Whether
+    // this is that first commit is read from the status being committed (the
+    // run still holds the slot), not from run.json, which is written first:
+    // a replay after a crash between the two still holds, and a replay of a
+    // run committed long ago never re-holds a drain a launch lifted since.
+    if(run.noLaunch && status.activeRun===run.id && status.drain?.boundary?.some(id=>!status.processed.includes(id))) status.drain.paused={kind:'no-launch',reason:`run ${run.id} was prepared with --no-launch (a diagnostic), so its completion launches nothing`,at:new Date().toISOString()};
     if(status.activeRun===run.id) status.activeRun=null;
     run.status='processed';persist(source,run);
   } else if(run.status==='processed' && Object.values(run.receipts).some(r=>r.status==='rejected')) {
