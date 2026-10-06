@@ -377,7 +377,7 @@ export function capture(source,{final=false,deadlineMs=85000,deadline=Date.now()
       const remainingTime=()=>{
         const remaining=deadline-Date.now();
         if(remaining<=0) fail('E_CAPTURE','capture deadline: backlog preserved; retire must retry');
-        return Math.max(1000,remaining);
+        return remaining;
       };
       report=oats(['capture','--home',source.home,'--quiet'],source.context,{native:true,timeout:Math.min(remainingTime(),60000)});
       if(!Array.isArray(report.sessions)) fail('E_CAPTURE','capture response has no sessions');

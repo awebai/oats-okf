@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process';
 import { hostname } from 'node:os';
 import { isAbsolute, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { fs, join, dirname, safePath, readJSON, save, atomic, tree, materialize, digest, hash, withLock, oats, command, fail, relPath, quote, pidAlive, redactUrls } from './io.mjs';
+import { fs, join, dirname, safePath, readJSON, save, atomic, tree, materialize, digest, hash, withLock, withDeadline, oats, command, fail, relPath, quote, pidAlive, redactUrls } from './io.mjs';
 import { loadSource, loadStatus, saveStatus, updateStatus, capture, input, markerPath, homeSource, sourceSwitch } from './sources.mjs';
 import {capturedSource,qualifyCapturedWorker,assertCapturedRun,capturedScaffold,retainCapturedWorkerCustody,assertCapturedWorkerHome,capturedStart} from './captured-worker.mjs';
 import { metadata, splitRef } from './config.mjs';
@@ -110,12 +110,23 @@ export function runSource(source,{noLaunch=false,manual=false,capturedInvocation
       const run=readRun(source,status.activeRun);
       return {status:run.status,run:run.id,...(run.worker?{instance:run.worker.instance,home:run.worker.home}:{})};
     }
-    const previous=status.pendingRejudgment?readRun(source,status.pendingRejudgment):null;
-    if(previous) checkRecoveryGuards(source,previous);
-    const ids=previous?previous.inputs:status.captured.inputs.filter(id=>!status.processed.includes(id));
+    const {ids,previous}=nextRun(source,status,status.captured.inputs.filter(id=>!status.processed.includes(id)));
     if(!ids.length) return status.finalCaptureUncertified?{status:'source-unavailable',processedCapturedInput:true,finalCaptureComplete:false}:{status:'empty',processed:true};
     return startRun(source,{ids,noLaunch,plan,previous,runFields,parent:!status.retired && !source.once && sourceAvailable});
   });
+}
+/** What the next run of a source takes, for EVERY path that starts one
+ *  (run-source, a checkpoint, a drain's continuation): an explicitly requested
+ *  rejudgment first (`retry --rejudge` left status.pendingRejudgment), with
+ *  its predecessor's inputs and lineage, once its publication guards prove no
+ *  earlier PR of it is open or merged (E_RECOVERY otherwise: nothing starts,
+ *  and no other input is judged ahead of it). Else `ids`. startRun links the
+ *  successor and clears the request in one status write. */
+function nextRun(source,status,ids) {
+  if(!status.pendingRejudgment) return {ids,previous:null};
+  const previous=readRun(source,status.pendingRejudgment);
+  checkRecoveryGuards(source,previous);
+  return {ids:previous.inputs,previous};
 }
 /** Below this much of an invocation's budget, no run is started: spawning,
  *  staging and launching would not finish, and an interrupted start is a
@@ -123,6 +134,11 @@ export function runSource(source,{noLaunch=false,manual=false,capturedInvocation
 const MIN_START_MS=30000;
 /** At most this much of an invocation's budget goes to capture. */
 const CAPTURE_SHARE_MS=85000;
+/** At most this much of a checkpoint's budget goes to settling earlier PRs. */
+const SETTLE_SHARE_MS=30000;
+/** Below this much of an invocation's budget, a prepared worker is not
+ *  launched: it stays ready, and `retry --launch` launches it. */
+const MIN_LAUNCH_MS=15000;
 /** Start ONE run over the first inputs of `ids` (at most 192 KB of evidence;
  *  the rest wait for the run's successor). Caller holds the worker lock and
  *  has checked there is no active run. */
@@ -130,7 +146,13 @@ function startRun(source,{ids,noLaunch=false,plan=null,previous=null,runFields={
   const selected=[];let bytes=0;
   for(const id of ids) {const n=Buffer.byteLength(JSON.stringify(input(source,id)));if(selected.length && bytes+n>192000) break;selected.push(id);bytes+=n;}
   if(!source.decl.owns.length) fail('E_OWNER','source has evidence but owns no destination; retained for explicit ownership routing');
-  if(deadline!==undefined && deadline-Date.now()<MIN_START_MS) return {status:'deferred',reason:'too little of this invocation\'s time budget is left to start a harvester; nothing was started and the input stays in custody'};
+  const deferred={status:'deferred',reason:'too little of this invocation\'s time budget is left to start a harvester; nothing was started and the input stays in custody'};
+  if(deadline!==undefined && deadline-Date.now()<MIN_START_MS) return deferred;
+  // Asked before the run exists: nothing blocking stands between the
+  // spawn-intent record and the spawn, so the budget checked here is the
+  // spawn's.
+  const harness=plan?null:harnessFlag(source,deadline);
+  if(deadline!==undefined && deadline-Date.now()<MIN_START_MS) return deferred;
   const id=randomUUID();
   const run={version:1,id,source:source.id,created:new Date().toISOString(),inputs:selected,status:'spawn-intent',stages:{},receipts:{},noLaunch,...(plan?{capturedWorker:plan}: {}),...runFields};
   if(previous) {
@@ -140,12 +162,30 @@ function startRun(source,{ids,noLaunch=false,plan=null,previous=null,runFields={
   persist(source,run);updateStatus(source,current=>{
     current.activeRun=id;
     if(previous) {current.recoveries={...(current.recoveries || {}),[previous.id]:id};delete current.pendingRejudgment;}
+    // A run that launches takes the drain on again (a pause names why it stopped).
+    if(!noLaunch && current.drain) delete current.drain.paused;
   });
-  return spawnWorker(source,run,{parent,deadline});
+  return spawnWorker(source,run,{parent,deadline,harness});
 }
-/** What is left of an invocation `deadline` for one native call capped at `cap`. */
-const budget=(deadline,cap)=>deadline===undefined?cap:Math.max(1000,Math.min(cap,deadline-Date.now()));
-function spawnWorker(source,run,{parent=false,deadline}={}) {
+/** What is left of an invocation `deadline` for one native call capped at
+ *  `cap`; none once it is spent (no call is started then). */
+function budget(deadline,cap) {
+  if(deadline===undefined) return cap;
+  const left=deadline-Date.now();
+  if(left<=0) fail('E_DEADLINE','this invocation\'s time budget is spent');
+  return Math.min(cap,left);
+}
+/** A confirmed worker that was not launched because the invocation's budget
+ *  ran out: it stays (ready, or scaffolded when preparation stopped), the run
+ *  stays active, and only an explicit `retry --launch` launches it. */
+function deferLaunch(source,run,error) {
+  run.launchDeferred={at:new Date().toISOString(),phase:run.status,...(error?{error:{code:error.code || 'E_OKF',message:redactUrls(error.message)}}:{})};persist(source,run);
+  return deferredState(source,run);
+}
+const deferredState=(source,run)=>({status:'deferred',phase:run.status,run:run.id,instance:run.worker.instance,home:run.worker.home,launched:false,
+  reason:`the harvester was ${run.status==='ready'?'prepared':'spawned, but its preparation stopped,'} when this invocation's time budget ran out, so it was not launched; nothing launches it automatically`,
+  next:operatorCommand(source,['retry','--source',source.file,'--launch'])});
+function spawnWorker(source,run,{parent=false,deadline,harness}={}) {
   if(!run.capturedWorker) requireQualifiedHelper(source);
   const {id,noLaunch}=run;
   const recovery=run.recoveryOf?` This is explicit rejudgment of ${run.recoveryOf}; read ./work/previous.json for prior judgment and receipts. Do not automatically resubmit rejected content.`:"";
@@ -180,7 +220,7 @@ function spawnWorker(source,run,{parent=false,deadline}={}) {
     }
   }
   if(!['pi','claude','codex'].includes(source.execution.runtime)) fail('E_CONFIG','invalid harvest runtime');
-  const args=['spawn',HARVESTER_SOUL,'--name',harvesterInstance(id),'--dir',source.context,harnessFlag(source,deadline),source.execution.runtime,'--no-launch','--task-file',taskFile,'--json'];
+  const args=['spawn',HARVESTER_SOUL,'--name',harvesterInstance(id),'--dir',source.context,harness ?? harnessFlag(source,deadline),source.execution.runtime,'--no-launch','--task-file',taskFile,'--json'];
   if(source.execution.model) args.push('--model',source.execution.model);
   if(parent) args.push('--parent',source.instance);
   // okf 4.0.2: no team join. The harvester lives in the deployment's default
@@ -191,9 +231,18 @@ function spawnWorker(source,run,{parent=false,deadline}={}) {
     if(!run.worker.instance || !run.worker.home) fail('E_RUNTIME','spawn receipt lacks worker identity');
     run.status='scaffolded';persist(source,run);
     prepareWorker(source,run);
-    if(!noLaunch) startWorker(source,run,{deadline});
+    if(!noLaunch) {
+      // okf 4.2.0: never dispatched past the invocation's deadline.
+      if(deadline!==undefined && deadline-Date.now()<MIN_LAUNCH_MS) return deferLaunch(source,run);
+      startWorker(source,run,{deadline});
+    }
     return {status:run.status,run:id,instance:run.worker.instance,home:run.worker.home};
-  } catch(e) {run.error=e.message;persist(source,run);throw e;}
+  } catch(e) {
+    run.error=e.message;persist(source,run);
+    // Staging stopped by the deadline: the confirmed worker is continued explicitly.
+    if(run.status==='scaffolded' && deadline!==undefined && (e.code==='E_DEADLINE' || deadline-Date.now()<MIN_LAUNCH_MS)) return deferLaunch(source,run,e);
+    throw e;
+  }
   finally {fs.rmSync(taskFile,{force:true});}
 }
 
@@ -389,12 +438,18 @@ function checkpoint(source,run,alias) {
 }
 /** Deliver a judged run: confirm baselines, then publish each destination.
  *  A run this call turns processed hands the rest of its source's drain on
- *  (continueDrain), unless `continueDrain: false` (checkpoint settlement). */
+ *  (continueDrain), unless `continueDrain: false` (checkpoint settlement).
+ *  First publication stops at the first failing destination. A run already
+ *  processed (or rejected) only settles reviews: okf 4.2.0 settles each of
+ *  its destinations on its own, through the same identity and ancestry
+ *  checks, so one closed or unreachable PR never holds back another's merge.
+ *  A recorded close is never read again (rejudging is explicit). */
 function deliverRun(source,run,opts={}) {
-  const wasProcessed=run.status==='processed';
+  const wasProcessed=run.status==='processed',reviewing=['processed','rejected'].includes(run.status),failures=[];
   confirmBaselines(source,run);
   for(const [alias,r] of Object.entries(run.receipts)) {
     if(r.status==='no-change' || (run.settled?.includes(alias) && source.bindings.bases[alias].kind==='directory')) continue;
+    if(reviewing && r.status==='rejected') continue;
     if(r.status==='accepted' && !(source.bindings.bases[alias].kind==='directory' && fs.existsSync(journalPath(source.bindings.bases[alias])))) continue;
     const proposal=readJSON(r.proposal);if(hash(proposal)!==r.proposalHash) fail('E_INPUT','proposal hash mismatch');
     const base=source.bindings.bases[alias];const saveReceipt=()=>checkpoint(source,run,alias);
@@ -404,11 +459,20 @@ function deliverRun(source,run,opts={}) {
         gitPublish(base,run.stages[alias],proposal,r,saveReceipt,{beforePublish:()=>checkRecoveryGuards(source,run),prIdentity:recoveryObservation(source,alias,r).observed?.pr || r.pr,pr:harvestPr(source,run)});
       }
       else directoryPublish(base,proposal,r,saveReceipt,opts);
-    } catch(e) {r.error=e.message;persist(source,run);finishStatus(source,run);throw e;}
+    } catch(e) {
+      r.error=e.message;persist(source,run);
+      if(!reviewing) {finishStatus(source,run);throw e;}
+      failures.push({alias,error:e});
+    }
   }
   finishStatus(source,run);
+  if(failures.length) {
+    // Every destination was tried; each outcome is in the result.
+    const [first]=failures,e=failures.length===1?first.error:Object.assign(new Error(failures.map(f=>`${f.alias}: ${f.error.message}`).join('; ')),{code:first.error.code});
+    throw Object.assign(e,{result:completed(run),destinations:Object.fromEntries(failures.map(f=>[f.alias,{code:f.error.code || 'E_OKF',message:redactUrls(f.error.message)}]))});
+  }
   // The handoff is recorded on the run, so a detached delivery reports it too.
-  if(opts.continueDrain!==false && !wasProcessed && run.status==='processed') {const drain=continueDrain(source);if(drain) {run.drainHandoff=drain;persist(source,run);}}
+  if(opts.continueDrain!==false && !wasProcessed && run.status==='processed') {const drain=continueDrain(source,{after:run});if(drain) {run.drainHandoff=drain;persist(source,run);}}
   return completed(run);
 }
 /** What complete answers for a delivered run. A PR the maintainer amended on
@@ -498,7 +562,9 @@ export async function completeInBackground(source,id,judgmentFile,{receiptWithin
   while(liveDelivery(run) && Date.now()<deadline) {await new Promise(r=>setTimeout(r,100));run=readRun(source,id);}
   const delivery=run.delivery;
   if(liveDelivery(run)) return deliveryProgress(run);
-  if(delivery.state==='failed') throw Object.assign(new Error(`${delivery.error.message} (delivery log: ${delivery.log}); fix the cause, then run complete again to resume, or retry --rejudge after E_BASELINE`),{code:delivery.error.code});
+  // The run's receipts say what each destination reached (okf 4.2.0: a
+  // settlement records every destination's outcome, also when one fails).
+  if(delivery.state==='failed') throw Object.assign(new Error(`${delivery.error.message} (delivery log: ${delivery.log}); fix the cause, then run complete again to resume, or retry --rejudge after E_BASELINE`),{code:delivery.error.code,result:completed(run)});
   if(delivery.state!=='done') fail('E_DELIVERY',`the delivery worker (pid ${delivery.pid}) stopped at "${delivery.step || delivery.state}"; run complete again to resume (log: ${delivery.log})`);
   return completed(run);
 }
@@ -603,7 +669,11 @@ export function retry(source,{run:id,rejudge=false,launch=false,adoptHome}={}) {
     // place: no second spawn, and persisted stages are kept.
     else if(run.status==='scaffolded' && run.worker) prepareWorker(source,run);
     if(run.status==='ready') writeStagingMap(source,run);
-    if(launch) {if(run.status!=='ready') fail('E_RECOVERY','only ready workers can launch; inspect uncertain session through oats session inspect');startWorker(source,run);}
+    if(launch) {
+      if(run.status!=='ready') fail('E_RECOVERY','only ready workers can launch; inspect uncertain session through oats session inspect');
+      // The operator's explicit launch: this run's completion may hand its drain on.
+      run.noLaunch=false;delete run.launchDeferred;startWorker(source,run);
+    }
     return {status:run.status,run:run.id,worker:run.worker};
   });
 }
@@ -691,6 +761,8 @@ function recoverRun(source,id,{launch=false}={}) {
 // run that becomes processed starts the next from the same boundary
 // (continueDrain), without capturing again, until the boundary is processed.
 
+/** Said wherever a drain is promised to continue on its own. */
+export const DRAIN_PREREQUISITE='a drain continues on its own only while the deployment switches harvest on (oats-local.yaml settings.oats.okf.harvest) and the soul does not opt out; a source-only spawn override admits its checkpoints, not the deployment-side continuation, which otherwise pauses with its input in custody';
 const unprocessed=status=>status.captured.inputs.filter(id=>!status.processed.includes(id));
 /** Persist a drain request over `ids` (the union with an outstanding one). */
 function recordDrain(source,ids,by) {
@@ -699,16 +771,28 @@ function recordDrain(source,ids,by) {
     current.drain={version:1,boundary:[...new Set([...prior,...ids])],by,requestedAt:new Date().toISOString()};
   });
 }
+/** Mark the recorded drain paused, and why: it continues only by the
+ *  command its pause names. */
+function pauseDrain(source,kind,reason) {
+  updateStatus(source,current=>{if(current.drain) current.drain.paused={kind,reason,at:new Date().toISOString()};});
+}
 /** A source home that is still this source (parent of its harvester). */
 function sourceLive(source,status) {
   if(status.retired || source.once) return false;
   try {return fs.existsSync(markerPath(source.home)) && homeSource(source.home).id===source.id;} catch {return false;}
 }
+/** An explicitly requested rejudgment that cannot start: a PR of an earlier
+ *  attempt is open or merged again. Nothing starts ahead of it. */
+function blockedRejudgment(source,status,e) {
+  return {status:'needs-recovery',run:status.pendingRejudgment,phase:'pending-rejudgment',error:{code:e.code || 'E_OKF',message:redactUrls(e.message)},
+    commands:{inspect:operatorCommand(source,['inspect','--source',source.file]),note:`the rejudgment of run ${status.pendingRejudgment} was requested explicitly, but a PR of an earlier attempt is open or merged again: nothing starts (never a second PR for the same evidence) until that PR is closed; every input stays in custody`}};
+}
 /** Start the next run of a recorded drain, if any input of its boundary is
  *  unprocessed and no run is active. Caller holds the worker lock. Never
  *  captures, never claims drained while any boundary input is unprocessed,
- *  and honours the harvest switch as it is now. */
-export function continueDrain(source,{deadline}={}) {
+ *  and honours the harvest switch as it is now. `after` is the run whose
+ *  completion hands the drain on: a --no-launch diagnostic hands on nothing. */
+export function continueDrain(source,{deadline,after}={}) {
   try {
     const status=loadStatus(source),drain=status.drain;
     if(!drain?.boundary?.length || status.activeRun) return null;
@@ -719,19 +803,32 @@ export function continueDrain(source,{deadline}={}) {
         if((current.drain?.boundary || []).some(id=>!current.processed.includes(id))) return; // a newer request arrived
         drained=true;current.lastDrain={inputs:current.drain.boundary.length,by:current.drain.by,requestedAt:current.drain.requestedAt,drainedAt:new Date().toISOString()};delete current.drain;
       });
-      return drained?{status:'drained'}:continueDrain(source,{deadline});
+      return drained?{status:'drained'}:continueDrain(source,{deadline,after});
     }
     const resume=operatorCommand(source,['run-source','--source',source.file,'--manual']);
     if(capturedSource(source)) return {status:'held',remaining:remaining.length,reason:'a captured source drains only through its admitted knowledge:harvest operation'};
+    if(after?.noLaunch) {
+      const reason=`run ${after.id} was prepared with --no-launch (a diagnostic), so its completion launches nothing`;
+      pauseDrain(source,'no-launch',reason);
+      return {status:'held',remaining:remaining.length,reason:`${reason}; the drain waits, its input in custody, for an explicit launch`,next:operatorCommand(source,['retry','--source',source.file,'--launch'])};
+    }
     const sw=sourceSwitch(source);
     if(sw.effective!=='on') {
-      updateStatus(source,current=>{if(current.drain) current.drain.paused={reason:sw.reason,at:new Date().toISOString()};});
-      return {status:'harvest-off',remaining:remaining.length,reason:`${sw.reason}; the drain is paused and its input stays in custody`,next:resume};
+      pauseDrain(source,'harvest-off',sw.reason);
+      return {status:'harvest-off',remaining:remaining.length,reason:`${sw.reason}; the drain is paused and its input stays in custody`,prerequisite:DRAIN_PREREQUISITE,next:`once the deployment switches harvest on for soul ${source.agent}: ${resume}`};
     }
-    const started=startRun(source,{ids:remaining,parent:sourceLive(source,status),deadline});
-    if(started.status==='deferred') return {...started,remaining:remaining.length,next:resume};
+    let selection;
+    try {selection=nextRun(source,status,remaining);}
+    catch(e) {
+      if(e.code!=='E_RECOVERY') throw e;
+      updateStatus(source,current=>{if(current.drain) current.drain.error={code:e.code,message:redactUrls(e.message),at:new Date().toISOString()};});
+      return {...blockedRejudgment(source,status,e),remaining:remaining.length};
+    }
+    const started=startRun(source,{...selection,parent:sourceLive(source,status),deadline});
+    if(started.status==='deferred') return {...started,remaining:remaining.length,...(started.run?{}:{next:resume})};
     updateStatus(source,current=>{if(current.drain) {delete current.drain.paused;delete current.drain.error;}});
-    return {status:'started',run:started.run,instance:started.instance,home:started.home,inputs:readRun(source,started.run).inputs.length,remaining:remaining.length};
+    const run=readRun(source,started.run);
+    return {status:'started',run:started.run,instance:started.instance,home:started.home,inputs:run.inputs.length,remaining:remaining.length,...(run.recoveryOf?{recoveryOf:run.recoveryOf}:{}),prerequisite:DRAIN_PREREQUISITE};
   } catch(e) {
     const failure={code:e.code || 'E_OKF',message:redactUrls(e.message),at:new Date().toISOString()};
     let active=null;
@@ -762,43 +859,66 @@ export function recoveryCommands(source,run) {
 export function activeRunState(source,run) {
   const worker=run.worker?{instance:run.worker.instance,home:run.worker.home}:{};
   if(liveDelivery(run)) return {status:'already-running',run:run.id,phase:'delivering',...worker,delivery:run.delivery};
+  // Not launched because a budget ran out: still not launched, never relaunched here.
+  if(run.launchDeferred && ['ready','scaffolded'].includes(run.status) && !run.judgment) return deferredState(source,run);
   if(['ready','running'].includes(run.status) && !run.judgment) return {status:'already-running',run:run.id,phase:run.status,launched:run.status==='running',...worker,...(run.status==='ready'?{next:recoveryCommands(source,run)}: {})};
   const error=run.delivery?.state==='failed'?run.delivery.error:run.error?{message:redactUrls(run.error)}:undefined;
   return {status:'needs-recovery',run:run.id,phase:run.status,...worker,...(error?{error}:{}),commands:recoveryCommands(source,run)};
 }
-/** Runs whose PRs were delivered and await review, besides the active one. */
-function deliveredRuns(status) {
-  const ids=Object.entries(status.delivered || {}).filter(([,r])=>r?.status==='delivered').map(([key])=>key.split('/')[0]);
-  return [...new Set(ids)].filter(id=>id!==status.activeRun && !status.recoveries?.[id]);
+/** A destination's review is settled once it is accepted, needs no change, or
+ *  was closed without merge (recorded; rejudging is explicit). */
+const SETTLED=['accepted','no-change','rejected'];
+/** Earlier runs, besides the active one, with a destination still owed a
+ *  review outcome: delivered and awaiting review, or a settlement that failed
+ *  part way (a transient GitHub error leaves pr-unknown). Derived from the
+ *  receipts status.json mirrors, so none drops out until it settles or an
+ *  explicit rejudgment supersedes its run. */
+function unsettledRuns(status) {
+  const ids=Object.entries(status.delivered || {}).filter(([,r])=>r && !SETTLED.includes(r.status)).map(([key])=>key.split('/')[0]);
+  return [...new Set(ids)].filter(id=>id!==status.activeRun && id!==status.pendingRejudgment && !status.recoveries?.[id]);
 }
-const outcome=run=>{const v=Object.values(run.receipts).map(r=>r.status);return v.some(x=>x==='rejected')?'rejected':v.every(x=>['accepted','no-change'].includes(x))?'accepted':v.some(x=>x==='delivered')?'open':'unsettled';};
+/** One run's review state: open while any destination is unsettled (only
+ *  delivered ones: 'open'), whatever another destination's outcome. */
+function outcome(run) {
+  const v=Object.values(run.receipts).map(r=>r.status);
+  if(v.some(x=>!SETTLED.includes(x))) return v.every(x=>SETTLED.includes(x) || x==='delivered')?'open':'unsettled';
+  return v.includes('rejected')?'rejected':'accepted';
+}
+const receiptStates=(run,errors={})=>Object.fromEntries(Object.entries(run.receipts).map(([alias,r])=>[alias,{status:r.status,...(r.pr?.url?{pr:r.pr.url}:{}),...(errors[alias]?{error:errors[alias]}:{})}]));
 /** A live source's checkpoint settles its own earlier delivered runs first,
- *  through complete's own checks: a merge (or a reviewed amended merge) is
- *  recorded accepted, a close without merge rejected (never rejudged
- *  automatically), an open PR stays delivered. One failure (GitHub down) is
- *  reported and leaves that run as it was. Caller holds the worker lock. */
-function settleDelivered(source) {
+ *  through complete's own checks, each destination on its own: a merge (or a
+ *  reviewed amended merge) is recorded accepted, a close without merge
+ *  rejected (never rejudged automatically), an open PR stays delivered, and a
+ *  failure (GitHub down) is reported with the exact command and stays owed.
+ *  Within `deadline`; a run it does not reach is reported deferred. Caller
+ *  holds the worker lock. */
+function settleDelivered(source,{deadline}={}) {
   const rows=[];
-  for(const id of deliveredRuns(loadStatus(source))) {
+  for(const id of unsettledRuns(loadStatus(source))) {
+    if(deadline!==undefined && deadline-Date.now()<=0) {rows.push({run:id,outcome:'deferred',reason:'this checkpoint\'s time for settling earlier PRs is spent; the next checkpoint, or this command, settles it',next:settlementCommand(source,id)});continue;}
     let run;
     try {
-      run=completableRun(source,id);
-      if(liveDelivery(run)) {rows.push({run:id,outcome:'delivering'});continue;}
-      deliverRun(source,run,{continueDrain:false});
-      rows.push({run:id,outcome:outcome(run),receipts:Object.fromEntries(Object.entries(run.receipts).map(([a,r])=>[a,{status:r.status,...(r.pr?.url?{pr:r.pr.url}:{})}]))});
+      withDeadline(deadline,()=>{
+        run=completableRun(source,id);
+        if(!liveDelivery(run)) deliverRun(source,run,{continueDrain:false});
+      });
+      rows.push(liveDelivery(run)?{run:id,outcome:'delivering'}:{run:id,outcome:outcome(run),receipts:receiptStates(run)});
     } catch(e) {
-      run=run ?? null;
-      const known=run && outcome(run)==='rejected';
-      rows.push({run:id,outcome:known?'rejected':'unsettled',...(known?{}:{error:{code:e.code || 'E_OKF',message:redactUrls(e.message)},next:settlementCommand(source,id)})});
+      // A newly recorded close is an outcome; a failure on a destination still owed is not.
+      const owed=!run || !e.destinations || Object.keys(e.destinations).some(alias=>!SETTLED.includes(run.receipts[alias]?.status));
+      let state=run?outcome(run):'unsettled';if(state==='open' && owed) state='unsettled';
+      rows.push({run:id,outcome:state,...(run?{receipts:receiptStates(run,e.destinations)}:{}),
+        ...(owed && state!=='rejected'?{error:{code:e.code || 'E_OKF',message:redactUrls(e.message)}}:{}),...(['open','unsettled'].includes(state)?{next:settlementCommand(source,id)}:{})});
     }
   }
   return rows;
 }
-/** `oats okf harvest`, run by the working agent from its home at a checkpoint. */
+/** `oats okf harvest`, run by the working agent from its home at a checkpoint,
+ *  within ONE `deadline` for settlement, capture, staging and launch. */
 export function checkpointHarvest(source,{noLaunch=false,deadline}={}) {
   requireQualifiedHelper(source);
-  return tryWorkerLock(source,()=>{
-    const settled=settleDelivered(source),answer=fields=>({...fields,source:source.file,settled});
+  return withDeadline(deadline,()=>tryWorkerLock(source,()=>{
+    const settled=settleDelivered(source,{deadline:deadline===undefined?undefined:Math.min(deadline,Date.now()+SETTLE_SHARE_MS)}),answer=fields=>({...fields,source:source.file,settled});
     let status=loadStatus(source);
     if(status.activeRun) return answer(activeRunState(source,readRun(source,status.activeRun)));
     if(status.retired) return answer({status:'retired',reason:'this source is retired: its final input is in custody; harvest-status lists what is outstanding'});
@@ -808,26 +928,31 @@ export function checkpointHarvest(source,{noLaunch=false,deadline}={}) {
     status=loadStatus(source);
     const pending=unprocessed(status);
     if(!pending.length) return answer({status:'empty',capture:captured});
-    // --no-launch is a diagnostic: it requests no drain, so nothing it
-    // prepares ever leads to a later automatic launch.
+    // --no-launch is a diagnostic: it requests no drain, and the run it
+    // prepares hands no drain on when it completes (continueDrain).
     if(!noLaunch) recordDrain(source,pending,'checkpoint');
+    let selection;
+    try {selection=nextRun(source,status,pending);}
+    catch(e) {if(e.code!=='E_RECOVERY') throw e;return answer({...blockedRejudgment(source,status,e),capture:captured});}
     let started;
-    try {started=startRun(source,{ids:pending,noLaunch,parent:true,deadline});}
+    try {started=startRun(source,{...selection,noLaunch,parent:true,deadline});}
     catch(e) {
       const active=loadStatus(source).activeRun;
       if(active) e.message=`${e.message}; run ${active} is retained: ${JSON.stringify(recoveryCommands(source,readRun(source,active)))}`;
       throw e;
     }
     if(started.status==='deferred') return answer({...started,capture:captured});
-    const run=readRun(source,started.run);
-    return answer({status:'started',run:run.id,instance:started.instance,home:started.home,launched:run.status==='running',capture:captured,inputs:{run:run.inputs.length,pending:pending.length}});
-  });
+    const run=readRun(source,started.run),rest=pending.length-run.inputs.length;
+    return answer({status:'started',run:run.id,instance:started.instance,home:started.home,launched:run.status==='running',capture:captured,inputs:{run:run.inputs.length,pending:pending.length},
+      ...(run.recoveryOf?{recoveryOf:run.recoveryOf}:{}),...(rest>0 && !noLaunch?{drain:{remaining:rest,prerequisite:DRAIN_PREREQUISITE}}:{})});
+  }));
 }
 /** The retire hook's handoff, after a certified final capture: request the
  *  same finite drain of everything unprocessed. An active run's completion
- *  continues it; otherwise a run starts now within `deadline`. Never throws:
- *  custody is certified, so a failed handoff is reported with its resume
- *  command and the home may go. */
+ *  continues it; otherwise a run starts now within `deadline`, and is not
+ *  launched once too little of it is left. Never throws: custody is
+ *  certified, so a failed handoff is reported with its resume command and the
+ *  home may go. */
 export function retireDrain(source,{launched=true,deadline}={}) {
   const resume=()=>operatorCommand(source,['run-source','--source',source.file,'--manual']);
   try {
@@ -837,35 +962,38 @@ export function retireDrain(source,{launched=true,deadline}={}) {
     if(!launched && pending.length) return {status:'not-launched',remaining:pending.length,reason:'this source never launched a model session, so its retirement launches no harvester; its input stays in custody',next:resume()};
     if(pending.length) recordDrain(source,pending,'retire');
     const waitMs=deadline===undefined?0:Math.max(0,Math.min(20000,deadline-Date.now()-MIN_START_MS));
-    return tryWorkerLock(source,()=>{
+    return withDeadline(deadline,()=>tryWorkerLock(source,()=>{
       const current=loadStatus(source);
       if(current.activeRun) {
         const state=activeRunState(source,readRun(source,current.activeRun));
-        return {...state,...(pending.length?{remaining:unprocessed(current).length,handoff:`the final input is recorded in this source's drain: run ${current.activeRun} hands it on when it completes`}: {})};
+        return {...state,...(pending.length?{remaining:unprocessed(current).length,handoff:`the final input is recorded in this source's drain: run ${current.activeRun} hands it on when it completes`,prerequisite:DRAIN_PREREQUISITE}: {})};
       }
       return continueDrain(source,{deadline}) ?? {status:'empty'};
-    },{waitMs});
+    },{waitMs}));
   } catch(e) {
     return {status:'failed',error:{code:e.code || 'E_OKF',message:redactUrls(e.message)},retained:true,next:resume()};
   }
 }
 /** Everything still owed for one source, each with the exact command that
- *  moves it: delivered PRs awaiting review (their operator records the merge
- *  or close with complete), the active run, and an unfinished drain. */
+ *  moves it: PRs whose review outcome is not recorded (their operator records
+ *  the merge or close with complete), the active run, a requested rejudgment,
+ *  and an unfinished drain. */
 export function outstanding(source,status) {
   const rows=[];
-  for(const id of deliveredRuns(status)) {
-    const destinations=Object.fromEntries(Object.entries(status.delivered).filter(([key,r])=>key.startsWith(`${id}/`) && r).map(([key,r])=>[key.slice(id.length+1),{status:r.status,...(r.pr?.url?{pr:r.pr.url}:{})}]));
-    rows.push({run:id,kind:'review',destinations,command:settlementCommand(source,id),note:'the PR awaits the knowledge maintainer; once it is merged or closed, this command records the outcome (a close is recorded, never rejudged automatically)'});
+  for(const id of unsettledRuns(status)) {
+    const destinations=Object.fromEntries(Object.entries(status.delivered).filter(([key,r])=>key.startsWith(`${id}/`) && r).map(([key,r])=>[key.slice(id.length+1),{status:r.status,...(r.pr?.url?{pr:r.pr.url}:{}),...(r.error && !SETTLED.includes(r.status)?{error:redactUrls(r.error)}:{})}]));
+    rows.push({run:id,kind:'review',destinations,command:settlementCommand(source,id),note:'a PR awaits the knowledge maintainer, or its outcome is not yet recorded; once it is merged or closed, this command records each destination\'s outcome (a close is recorded, never rejudged automatically)'});
   }
   if(status.activeRun) {
-    try {const state=activeRunState(source,readRun(source,status.activeRun));rows.push({...state,kind:state.status==='already-running'?'active':'needs-recovery'});}
+    try {const state=activeRunState(source,readRun(source,status.activeRun));rows.push({...state,kind:state.status==='already-running'?'active':state.status==='deferred'?'deferred':'needs-recovery'});}
     catch(e) {rows.push({run:status.activeRun,kind:'needs-recovery',error:{code:e.code || 'E_OKF',message:e.message},commands:{inspect:operatorCommand(source,['inspect','--source',source.file])}});}
   }
+  const resume=status.activeRun?null:operatorCommand(source,['run-source','--source',source.file,'--manual']);
+  if(status.pendingRejudgment) rows.push({kind:'rejudgment',run:status.pendingRejudgment,...(resume?{command:resume}:{continues:`after run ${status.activeRun}`}),note:'an explicitly requested rejudgment: the next run judges its inputs again, and starts only while no PR of an earlier attempt is open or merged'});
   const pending=unprocessed(status),boundary=new Set(status.drain?.boundary || []);
   const draining=pending.filter(id=>boundary.has(id)),waiting=pending.filter(id=>!boundary.has(id));
-  const resume=status.activeRun?null:operatorCommand(source,['run-source','--source',source.file,'--manual']);
-  if(draining.length) rows.push({kind:'drain',remaining:draining.length,...(status.drain.paused?{paused:status.drain.paused}:{}),...(status.drain.error?{error:status.drain.error}:{}),...(resume?{command:resume}:{continues:`when run ${status.activeRun} completes`})});
+  const paused=status.drain?.paused,drainCommand=paused?.kind==='no-launch'?operatorCommand(source,['retry','--source',source.file,'--launch']):resume;
+  if(draining.length) rows.push({kind:'drain',remaining:draining.length,...(paused?{paused}:{}),...(status.drain.error?{error:status.drain.error}:{}),...(resume?{command:drainCommand}:{continues:`when run ${status.activeRun} completes`}),prerequisite:DRAIN_PREREQUISITE});
   if(waiting.length) rows.push({kind:'pending-input',remaining:waiting.length,...(status.retired?(resume?{command:resume}:{continues:`after run ${status.activeRun}`}):{continues:'at the source\'s next checkpoint'})});
   return rows;
 }

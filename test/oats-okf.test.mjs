@@ -80,7 +80,7 @@ fs.appendFileSync(join(root,'gh-calls.jsonl'),JSON.stringify(a)+'\\n');
 if(a[0]==='label') {if(a[1]!=='create' || !a.includes('--force')) process.exit(48);process.exit(fs.existsSync(join(root,'gh-label-fail'))?49:0);}
 else if(a[0]!=='pr') process.exit(44);
 else if(a[1]==='list') {if(fs.existsSync(join(root,'gh-unavailable'))) process.exit(45);console.log(JSON.stringify((fs.existsSync(p)?JSON.parse(fs.readFileSync(p,'utf8')):[]).filter(pr=>pr.headRefName===val('--head') && (!a.includes('--base') || pr.baseRefName===val('--base')))));}
-else if(a[1]==='view') {if(fs.existsSync(join(root,'gh-unavailable'))) process.exit(45);const pr=(fs.existsSync(p)?JSON.parse(fs.readFileSync(p,'utf8')):[]).find(pr=>pr.number===Number(a[2]));if(!pr) {console.error('known PR missing');process.exit(46);}console.log(JSON.stringify(pr));}
+else if(a[1]==='view') {if(fs.existsSync(join(root,'gh-unavailable'))) process.exit(45);if(fs.existsSync(join(root,'gh-view-fail-'+a[2]))) {console.error('PR '+a[2]+' unreachable');process.exit(45);}const failAt=join(root,'gh-view-fail-at'),count=join(root,'gh-view-count');if(fs.existsSync(failAt)) {const n=(fs.existsSync(count)?Number(fs.readFileSync(count,'utf8')):0)+1;fs.writeFileSync(count,String(n));if(n===Number(fs.readFileSync(failAt,'utf8'))) {console.error('transient review fetch failure');process.exit(45);}}const pr=(fs.existsSync(p)?JSON.parse(fs.readFileSync(p,'utf8')):[]).find(pr=>pr.number===Number(a[2]));if(!pr) {console.error('known PR missing');process.exit(46);}console.log(JSON.stringify(pr));}
 else if(a[1]==='create') {if(fs.existsSync(join(root,'gh-fail'))) process.exit(42);if(fs.existsSync(join(root,'gh-slow'))) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,Number(fs.readFileSync(join(root,'gh-slow'),'utf8')));const branch=val('--head'),oid=execFileSync('git',['ls-remote','origin','refs/heads/'+branch],{encoding:'utf8'}).trim().split(/\\s/)[0];const rows=fs.existsSync(p)?JSON.parse(fs.readFileSync(p,'utf8')):[],number=rows.length+1;rows.push({number,url:'https://github.com/fixture/knowledge/pull/'+number,state:'OPEN',headRefName:branch,headRefOid:oid,baseRefName:val('--base'),mergedAt:null,mergeCommit:null});fs.writeFileSync(join(root,'pr-'+number+'-created.json'),JSON.stringify({title:val('--title'),body:val('--body'),labels:a.filter((x,i)=>a[i-1]==='--label')}));fs.writeFileSync(p,JSON.stringify(rows));if(fs.existsSync(join(root,'gh-uncertain'))) process.exit(43);console.log('https://github.com/fixture/knowledge/pull/1');}
 else process.exit(44);
 `);fs.chmodSync(gh,0o755);
@@ -2263,7 +2263,8 @@ test('4.1.1 a forged commit-graph in the worker\'s checkout cannot make a rewrit
 // okf 4.2.0: checkpoint harvest (#49). No scheduler job; the working agent runs
 // `oats okf harvest` at its checkpoints and retirement takes the final one.
 // Every assertion counts real CLI calls, durable ids and receipts.
-const {checkpointHarvest,retireDrain}=await mod('worker');
+const {checkpointHarvest,retireDrain,outstanding}=await mod('worker');
+const cp=(await import('node:child_process')).default;
 const {hostname}=await import('node:os');
 const callsIn=f=>fs.existsSync(f.calls)?callsOf(f):[];
 const spawnsOf=f=>callsIn(f).filter(c=>c.a[0]==='spawn' && !c.a.includes('--preview'));
@@ -2400,8 +2401,8 @@ test('4.2.0 a drain interrupted between its request and its first run, or betwee
   const status=loadStatus(s);status.drain={version:1,boundary:[...status.captured.inputs],by:'checkpoint',requestedAt:new Date().toISOString()};saveStatus(s,status);
   const owed=deploymentCli(f,'harvest-status',['--soul','source']).out.result.sources[0].outstanding;assert.deepEqual(owed.map(o=>[o.kind,o.remaining]),[['drain',2]]);
   const c=f.cli('harvest');assert.equal(c.out.result.status,'started');
-  // Killed after activeRun was cleared, before the successor: the next completion
-  // or checkpoint continues, and nothing is lost or doubled.
+  // Killed after activeRun was cleared, during the successor's spawn: the
+  // uncertain spawn is named for adoption, never repeated, and nothing is lost.
   const run=readRun(s,c.out.result.run);put(join(f.dir,'spawn-fail'),'');
   const r=complete(s,run.id,judgment(f,s,run,{drop:true}));assert.equal(r.drain.status,'failed');assert.equal(r.status,'processed','the completion itself stands');
   const stuck=loadStatus(s).activeRun;assert.equal(readRun(s,stuck).status,'spawn-intent');
@@ -2526,5 +2527,255 @@ test('4.2.0 checkpoint settlement never turns a missing or mismatched PR into ac
     save(join(f.dir,'pr.json'),forged);
     const h=f.cli('harvest',['--no-launch']);assert.equal(h.status,0,h.stdout);assert.equal(h.out.result.settled[0].outcome,'unsettled',JSON.stringify(h.out.result.settled));
     assert.equal(loadStatus(s).delivered[`${run.id}/project`].status,'delivered');assert.equal(loadStatus(s).accepted[`${run.id}/project`],undefined);
+  }
+});
+
+// okf 4.2.0 review R1 regressions: each asserts the corrected contract.
+const ghCalls=f=>fs.existsSync(join(f.dir,'gh-calls.jsonl'))?fs.readFileSync(join(f.dir,'gh-calls.jsonl'),'utf8'):'';
+const sessionsOf=f=>callsIn(f).filter(c=>c.a[0]==='session');
+/** Run `fn` recording every subprocess this process starts (binary, argv,
+ *  timeout, and what is left of `deadline` at that moment). `after(call)` may
+ *  advance this process's clock once the call returns: a slow step, with no
+ *  real wait. */
+function observeCalls(fn,{deadline,after}={}) {
+  const original=cp.spawnSync,now=Date.now,seen=[];let skew=0;
+  Date.now=()=>now()+skew;
+  cp.spawnSync=function(bin,args,opts) {
+    const call={bin,args,timeout:opts?.timeout,...(deadline===undefined?{}:{remaining:deadline-Date.now()})};seen.push(call);
+    const result=original.apply(this,arguments);skew+=after?.(call) || 0;return result;
+  };
+  syncBuiltinESMExports();
+  try {return {result:fn(),seen};} finally {Date.now=now;cp.spawnSync=original;syncBuiltinESMExports();}
+}
+const isSpawn=c=>c.args[0]==='spawn' && !c.args.includes('--preview');
+/** A Git source whose one run delivered two destinations, each in its own repository with its own PR. */
+function twoGitDestinations(t) {
+  const f=fixture(t,{kind:'git'}),raw=readJSON(f.bindingFile),repo2=join(f.dir,'repo2');fs.mkdirSync(repo2);git(repo2,['init','-q','--initial-branch=main']);
+  raw.bases.secondary={...raw.bases.project,id:'base-2',repository:repo2};save(f.bindingFile,raw);
+  const seed=join(f.dir,'seed2');initBase(loadBindings(),'secondary',join(f.dir,'nodes.json'),seed);fs.cpSync(seed,join(repo2,'knowledge'),{recursive:true});fixtureCommit(repo2,'seed2');
+  const decl=readJSON(join(f.soul,'okf.json'));decl.owns.push('secondary/expert');save(join(f.soul,'okf.json'),decl);
+  note(f);const {s,run}=prepared(f);const j=judgment(f,s,run),both=readJSON(j);judgment(f,s,run,{base:'secondary'});both.outcomes[0].concepts.push(...readJSON(j).outcomes[0].concepts);save(j,both);
+  const delivered=complete(s,run.id,j);for(const alias of ['project','secondary']) assert.equal(delivered.receipts[alias].status,'delivered');
+  return {f,s,run:readRun(s,run.id),repo2};
+}
+function mergeDelivered(f,repo,receipt) {
+  git(repo,['merge','--ff-only',receipt.branch]);const prs=readJSON(join(f.dir,'pr.json'));
+  Object.assign(prs.find(p=>p.number===receipt.pr.number),{state:'MERGED',mergedAt:'2026-10-06T10:00:00Z',mergeCommit:{oid:receipt.commit}});save(join(f.dir,'pr.json'),prs);
+}
+/** The maintainer amends the delivered PR, squash-merges it, and records the okf-review verdict naming the merged head. */
+function amendMerged(f,repo,receipt) {
+  const cid=['-c','user.name=Maintainer','-c','user.email=maintainer@example.invalid'];
+  git(repo,['checkout','-q',receipt.branch]);fs.appendFileSync(join(repo,'knowledge/expert/decision.md'),'Superseded wording, amended in review.\n');
+  git(repo,['add','.']);git(repo,[...cid,'commit','-qm','okf-review amendment']);const amended=git(repo,['rev-parse','HEAD']);
+  git(repo,['checkout','-q','main']);git(repo,['merge','--squash','-q',receipt.branch]);git(repo,[...cid,'commit','-qm','squash merge']);const merge=git(repo,['rev-parse','HEAD']);
+  const prs=readJSON(join(f.dir,'pr.json')),pr=prs.find(p=>p.number===receipt.pr.number);
+  const block=JSON.stringify({verdict:'amend+merge',pr:pr.url,headSha:amended,checks:{},amendments:['expert/decision.md: wording'],reason:'fixable'});
+  Object.assign(pr,{state:'MERGED',mergedAt:'2026-10-06T12:00:00Z',mergeCommit:{oid:merge},headRefOid:amended,mergedBy:{login:'maintainer'},comments:[{author:{login:'host'},authorAssociation:'OWNER',body:`\`\`\`okf-review\n${block}\n\`\`\``}]});
+  save(join(f.dir,'pr.json'),prs);return {amended,merge};
+}
+const statuses=receipts=>Object.fromEntries(Object.entries(receipts).map(([alias,r])=>[alias,r.status]));
+test('4.2.0 every path that starts a run takes an explicitly requested rejudgment first, with its lineage, and never while a PR of an earlier attempt is open again',t=>{
+  // An ordinary baseline conflict: the next checkpoint rejudges exactly the abandoned run's inputs.
+  {const f=fixture(t,{kind:'git'});const s=f.source();note(f);const {run}=prepared(f,s);const j=judgment(f,s,run,{drop:true});
+    acceptedCommit(f,{'knowledge/peer/log.md':'* another writer\n'});assert.throws(()=>complete(s,run.id,j),e=>e.code==='E_BASELINE');
+    assert.equal(retry(s,{rejudge:true}).status,'abandoned');assert.equal(loadStatus(s).pendingRejudgment,run.id);
+    note(f,'later.md','Written after the conflict.');
+    const h=checkpointHarvest(s,{noLaunch:true});assert.equal(h.status,'started',JSON.stringify(h));assert.equal(h.recoveryOf,run.id);
+    const next=readRun(s,h.run),st=loadStatus(s);
+    assert.deepEqual(next.inputs,run.inputs,'the rejudgment takes its own inputs first');assert.equal(next.recoveryOf,run.id);assert.deepEqual(next.recoveryGuards,[]);
+    assert.equal(st.pendingRejudgment,undefined);assert.equal(st.recoveries[run.id],next.id);
+    assert.deepEqual(readJSON(join(dirname(s.file),'runs',next.id,'previous.json')),readRun(s,run.id));assert.ok(fs.existsSync(join(next.worker.home,'work/previous.json')));
+  }
+  // A closed PR, explicitly rejudged, then reopened: no path starts a run (no second PR); closed again, the checkpoint rejudges.
+  const closedThenRejudged=()=>{
+    const f=fixture(t,{kind:'git'});const s=f.source();note(f);const {run}=prepared(f,s);put(join(f.dir,'gh-uncertain'),'');
+    assert.throws(()=>complete(s,run.id,judgment(f,s,run)));fs.rmSync(join(f.dir,'gh-uncertain'));closePR(f,1);
+    assert.throws(()=>complete(s,run.id),{code:'E_PR'});assert.equal(retry(s,{rejudge:true}).status,'abandoned');
+    assert.equal(readRun(s,run.id).recoveryGuards.length,1);closePR(f,1,'OPEN');return {f,s,run};
+  };
+  const openPRs=f=>readJSON(join(f.dir,'pr.json')).filter(p=>p.state==='OPEN').length;
+  {const {f,s,run}=closedThenRejudged();
+    const blocked=checkpointHarvest(s,{noLaunch:true});assert.equal(blocked.status,'needs-recovery');assert.equal(blocked.phase,'pending-rejudgment');assert.equal(blocked.run,run.id);
+    assert.equal(loadStatus(s).activeRun,null);assert.equal(loadStatus(s).pendingRejudgment,run.id);assert.equal(spawnsOf(f).length,1);
+    assert.deepEqual(outstanding(s,loadStatus(s)).map(o=>o.kind).filter(k=>k==='rejudgment'),['rejudgment']);
+    closePR(f,1);
+    const h=checkpointHarvest(s,{noLaunch:true});assert.equal(h.status,'started');assert.equal(h.recoveryOf,run.id);
+    const next=readRun(s,h.run);assert.deepEqual(next.recoveryGuards,readRun(s,run.id).recoveryGuards,'the guards travel with the lineage');assert.equal(loadStatus(s).pendingRejudgment,undefined);
+    const done=complete(s,next.id,judgment(f,s,next));assert.equal(done.receipts.project.status,'delivered');
+    assert.equal(openPRs(f),1,'never two open PRs for the same evidence');assert.equal(readJSON(join(f.dir,'pr.json')).length,2);
+  }
+  // The retire handoff and the operator's run-source select the same way.
+  {const {f,s,run}=closedThenRejudged();capture(s,{final:true});
+    const d=retireDrain(s);assert.equal(d.status,'needs-recovery');assert.equal(d.phase,'pending-rejudgment');assert.equal(spawnsOf(f).length,1);assert.equal(loadStatus(s).drain.boundary.length,1);
+    const manual=deploymentCli(f,'run-source',['--source',s.file,'--manual','--no-launch']);assert.equal(manual.out.error.code,'E_RECOVERY');
+    closePR(f,1);
+    const resumed=deploymentCli(f,'run-source',['--source',s.file,'--manual','--no-launch']);assert.equal(resumed.status,0,resumed.stdout);
+    assert.equal(readRun(s,resumed.out.result.run).recoveryOf,run.id);assert.equal(openPRs(f),0);
+  }
+});
+test('4.2.0 nothing is dispatched past the invocation deadline: a prepared worker stays ready, is reported deferred with its exact launch command, is never launched by a repeat, and launches on an explicit retry --launch',t=>{
+  const f=fixture(t);const s=f.source();put(join(f.dir,'sessions-inert'),'');note(f);capture(s,{final:true});
+  const deadline=Date.now()+110000;
+  // The spawn returns with about 5 s of the budget left.
+  const {result:d,seen}=observeCalls(()=>retireDrain(s,{deadline}),{deadline,after:c=>isSpawn(c)?105000:0});
+  assert.equal(d.status,'deferred',JSON.stringify(d));assert.equal(d.phase,'ready');assert.equal(d.launched,false);assert.equal(d.home,readRun(s,d.run).worker.home);
+  assert.equal(d.next,`cd ${f.context} && oats okf retry --source ${s.file} --launch --soul source --json`);
+  assert.equal(seen.some(c=>c.args[0]==='session'),false,'no session start once too little is left');assert.equal(readRun(s,d.run).status,'ready');
+  for(const again of [retireDrain(s,{deadline:Date.now()+110000}),checkpointHarvest(s,{deadline:Date.now()+110000}),f.cli('retire').out.meta.drain]) {
+    assert.equal(again.status,'deferred');assert.equal(again.run,d.run);assert.equal(again.launched,false);
+  }
+  assert.equal(spawnsOf(f).length,1);assert.equal(sessionsOf(f).length,0);
+  assert.deepEqual(outstanding(s,loadStatus(s)).map(o=>o.kind),['deferred','drain']);
+  const go=deploymentCli(f,'retry',['--source',s.file,'--launch']);assert.equal(go.status,0,go.stdout);
+  assert.equal(readRun(s,d.run).status,'running');assert.equal(readRun(s,d.run).launchDeferred,undefined);assert.equal(sessionsOf(f).length,1);assert.equal(spawnsOf(f).length,1);
+  // Staging cut short by the deadline: the confirmed worker is not launched, and continues in place on retry --launch.
+  const g=fixture(t,{kind:'git'});const s2=g.source();put(join(g.dir,'sessions-inert'),'');note(g);capture(s2,{final:true});
+  const end=Date.now()+110000;
+  const {result:e,seen:calls}=observeCalls(()=>retireDrain(s2,{deadline:end}),{deadline:end,after:c=>c.bin==='git' && c.args.includes('clone')?200000:0});
+  assert.equal(e.status,'deferred',JSON.stringify(e));assert.equal(e.phase,'scaffolded');assert.equal(e.launched,false);assert.match(e.next,/retry --source .* --launch/);
+  assert.equal(calls.some(c=>c.args[0]==='session'),false);
+  for(const c of calls) assert.ok(c.remaining>0 && c.timeout<=c.remaining,`${c.bin} ${c.args.slice(0,3).join(' ')} started with timeout ${c.timeout} and ${c.remaining} ms left`);
+  const go2=deploymentCli(g,'retry',['--source',s2.file,'--launch']);assert.equal(go2.status,0,go2.stdout);
+  assert.equal(readRun(s2,e.run).status,'running');assert.equal(spawnsOf(g).length,1,'no second spawn');assert.equal(sessionsOf(g).length,1);
+});
+test('4.2.0 one deadline bounds every blocking call of a checkpoint (settlement, capture, staging, launch); a call without one keeps its own timeout',t=>{
+  const f=fixture(t,{kind:'git'});const s=f.source();put(join(f.dir,'sessions-inert'),'');note(f);const {run}=prepared(f,s);complete(s,run.id,judgment(f,s,run));
+  note(f,'fresh.md','Fresh evidence at this checkpoint.');
+  const deadline=Date.now()+110000;
+  const {result:h,seen}=observeCalls(()=>checkpointHarvest(s,{deadline}),{deadline});
+  assert.equal(h.status,'started',JSON.stringify(h));assert.equal(h.launched,true);assert.deepEqual(h.settled.map(r=>r.outcome),['open']);
+  for(const kind of ['gh','clone','fetch','capture','spawn','session']) assert.ok(seen.some(c=>c.bin===kind || c.args.includes(kind)),`${kind} ran`);
+  for(const c of seen) assert.ok(c.timeout<=c.remaining,`${c.bin} ${c.args.slice(0,3).join(' ')}: timeout ${c.timeout} > ${c.remaining} ms left`);
+  // An operator's complete has no invocation deadline: Git keeps its configured timeout.
+  const next=readRun(s,h.run);const {seen:plain}=observeCalls(()=>complete(s,next.id,judgment(f,s,next,{drop:true})));
+  assert.ok(plain.some(c=>c.bin==='git' && c.args.includes('fetch') && c.timeout===600000));
+  // A shorter budget bounds them as tightly.
+  const late=Date.now()+20000;const {seen:none}=observeCalls(()=>checkpointHarvest(s,{deadline:late}),{deadline:late});
+  assert.ok(none.length && none.every(c=>c.timeout<=c.remaining));
+});
+test('4.2.0 a --no-launch checkpoint over an earlier drain request launches nothing at completion: the drain is held visibly until an explicit retry --launch',t=>{
+  const f=fixture(t);const s=f.source();put(join(f.dir,'sessions-inert'),'');for(const i of [0,1,2]) bigNote(f,i);
+  const deferred=checkpointHarvest(s,{deadline:Date.now()+5000});assert.equal(deferred.status,'deferred');assert.equal(loadStatus(s).drain.boundary.length,3);
+  const diagnostic=f.cli('harvest',['--no-launch']);assert.equal(diagnostic.out.result.launched,false);
+  const run=readRun(s,diagnostic.out.result.run);assert.equal(run.noLaunch,true);
+  const r=complete(s,run.id,judgment(f,s,run,{drop:true}));assert.equal(r.drain.status,'held',JSON.stringify(r.drain));assert.match(r.drain.next,/retry --source .* --launch/);
+  assert.equal(sessionsOf(f).length,0);assert.equal(spawnsOf(f).length,1);
+  const st=loadStatus(s);assert.equal(st.activeRun,null);assert.equal(st.drain.boundary.length,3,'the earlier request is kept');assert.equal(st.drain.paused.kind,'no-launch');
+  const owed=outstanding(s,st);assert.deepEqual(owed.map(o=>[o.kind,o.remaining]),[['drain',2]]);
+  assert.equal(owed[0].command,`cd ${f.context} && oats okf retry --source ${s.file} --launch --soul source --json`);
+  complete(s,run.id);assert.equal(sessionsOf(f).length,0,'a repeated completion launches nothing either');assert.equal(spawnsOf(f).length,1);
+  const go=deploymentCli(f,'retry',['--source',s.file,'--launch']);assert.equal(go.status,0,go.stdout);
+  const next=readRun(s,go.out.result.run);assert.equal(next.status,'running');assert.equal(sessionsOf(f).length,1);assert.equal(loadStatus(s).drain.paused,undefined);
+  const r2=complete(s,next.id,judgment(f,s,next,{drop:true}));assert.equal(r2.drain.status,'started','an explicitly launched run hands the drain on');assert.equal(sessionsOf(f).length,2);
+});
+test('4.2.0 scope: a source-only harvest override admits the checkpoint, but continuation in deployment scope with the deployment off pauses visibly, names its prerequisite and keeps custody',t=>{
+  const f=fixture(t);const s=f.source();put(join(f.dir,'sessions-inert'),'');for(const i of [0,1,2]) bigNote(f,i);
+  const on=process.env.OATS_SETTINGS,off=JSON.stringify({...JSON.parse(on),harvest:'off'});
+  const c=f.cli('harvest');assert.equal(c.out.result.status,'started');assert.match(c.out.result.drain.prerequisite,/deployment switches harvest on/);
+  const run=readRun(s,c.out.result.run);
+  const retired=f.cli('retire');assert.equal(retired.out.meta.retired,true);assert.equal(retired.out.meta.drain.status,'already-running');assert.match(retired.out.meta.drain.prerequisite,/source-only spawn override/);
+  fs.rmSync(f.home,{recursive:true});
+  process.env.OATS_SETTINGS=off; // the completion runs in the deployment's scope, which is off
+  const done=complete(loadSource(s.file),run.id,judgment(f,s,run,{drop:true}));
+  assert.equal(done.drain.status,'harvest-off');assert.equal(done.drain.remaining,2);assert.match(done.drain.next,/^once the deployment switches harvest on .*run-source --source .* --manual/);
+  assert.equal(spawnsOf(f).length,1);const st=loadStatus(s);assert.equal(st.activeRun,null);assert.equal(st.drain.paused.kind,'harvest-off');assert.equal(st.drain.boundary.length,3);
+  const owed=deploymentCli(f,'harvest-status',['--soul','source']).out.result.sources[0].outstanding;assert.deepEqual(owed.map(o=>[o.kind,o.remaining]),[['drain',2]]);assert.match(owed[0].prerequisite,/source-only spawn override/);
+  for(const [cmd,args] of [['run-source',['--source',s.file,'--manual']],['retry',['--source',s.file,'--launch']]]) {const r=deploymentCli(f,cmd,args);assert.equal(r.out.result.status,'harvest-off',r.stdout);}
+  assert.equal(spawnsOf(f).length,1,'nothing starts while the deployment is off');
+  const resumed=deploymentCli(f,'run-source',['--source',s.file,'--manual'],{OATS_SETTINGS:on});assert.equal(resumed.out.result.status,'running',resumed.stdout);
+});
+test('4.2.0 the state between a processed completion and its successor is named by harvest-status and continued by the next checkpoint, never by complete again',t=>{
+  const f=fixture(t);const s=f.source();put(join(f.dir,'sessions-inert'),'');for(const i of [0,1]) bigNote(f,i);
+  const run=readRun(s,checkpointHarvest(s).run);
+  complete(s,run.id,judgment(f,s,run,{drop:true}),{continueDrain:false}); // the durable state of a kill right after processing
+  assert.equal(complete(s,run.id).drain,undefined);assert.equal(spawnsOf(f).length,1);
+  const owed=outstanding(s,loadStatus(s));assert.deepEqual(owed.map(o=>[o.kind,o.remaining]),[['drain',1]]);assert.match(owed[0].command,/run-source --source .* --manual/);
+  const h=checkpointHarvest(s);assert.equal(h.status,'started');assert.equal(readRun(s,h.run).inputs.length,1);assert.equal(spawnsOf(f).length,2);
+});
+test('4.2.0 each destination of a run settles on its own: a close never holds back another\'s merge, outage or reviewed amended merge, and repeats or the post-retire command record each outcome once',t=>{
+  {const {f,s,run,repo2}=twoGitDestinations(t);closePR(f,run.receipts.project.pr.number);mergeDelivered(f,repo2,run.receipts.secondary);
+    const first=checkpointHarvest(s,{noLaunch:true});assert.deepEqual(first.settled.map(r=>[r.run,r.outcome]),[[run.id,'rejected']]);
+    assert.deepEqual(statuses(first.settled[0].receipts),{project:'rejected',secondary:'accepted'});
+    assert.equal(loadStatus(s).accepted[`${run.id}/secondary`].status,'accepted');assert.equal(loadStatus(s).recoveries,undefined,'no automatic rejudgment');
+    const before=ghCalls(f);assert.deepEqual(checkpointHarvest(s,{noLaunch:true}).settled,[]);assert.equal(ghCalls(f),before,'recorded outcomes are not read again');
+    assert.deepEqual(outstanding(s,loadStatus(s)),[]);
+  }
+  {const {f,s,run}=twoGitDestinations(t);closePR(f,run.receipts.project.pr.number);put(join(f.dir,`gh-view-fail-${run.receipts.secondary.pr.number}`),'');
+    const row=checkpointHarvest(s,{noLaunch:true}).settled[0];
+    assert.equal(row.outcome,'unsettled','one rejection never hides a destination still owed');assert.equal(row.receipts.project.status,'rejected');
+    assert.equal(row.receipts.secondary.status,'delivered');assert.match(row.receipts.secondary.error.message,/unreachable/);assert.match(row.next,/okf complete --source .* --run /);
+    const owed=outstanding(s,loadStatus(s));assert.deepEqual(owed.map(o=>[o.kind,o.run]),[['review',run.id]]);assert.deepEqual(statuses(owed[0].destinations),{project:'rejected',secondary:'delivered'});
+    fs.rmSync(join(f.dir,`gh-view-fail-${run.receipts.secondary.pr.number}`));
+    const again=checkpointHarvest(s,{noLaunch:true}).settled[0];assert.equal(again.outcome,'open');assert.deepEqual(statuses(again.receipts),{project:'rejected',secondary:'delivered'});
+  }
+  {const {f,s,run,repo2}=twoGitDestinations(t);closePR(f,run.receipts.project.pr.number);const {amended,merge}=amendMerged(f,repo2,run.receipts.secondary);
+    const row=checkpointHarvest(s,{noLaunch:true}).settled[0];assert.deepEqual(statuses(row.receipts),{project:'rejected',secondary:'accepted'});
+    const receipt=readRun(s,run.id).receipts.secondary;assert.equal(receipt.mergeCommit,merge);assert.equal(receipt.mergedHead,amended);assert.equal(receipt.verdict,'amend+merge');
+  }
+  {const {f,s,run,repo2}=twoGitDestinations(t);
+    const r=f.cli('retire');assert.equal(r.out.meta.retired,true);fs.rmSync(f.home,{recursive:true});fs.rmSync(run.worker.home,{recursive:true});
+    closePR(f,run.receipts.project.pr.number);mergeDelivered(f,repo2,run.receipts.secondary);
+    const owed=deploymentCli(f,'harvest-status',['--soul','source']).out.result.sources[0].outstanding;assert.deepEqual(owed.map(o=>[o.kind,o.run]),[['review',run.id]]);
+    assert.equal(owed[0].command,`cd ${f.context} && oats okf complete --source ${s.file} --run ${run.id} --soul source --json`);
+    const first=deploymentCli(f,'complete',['--source',s.file,'--run',run.id]);assert.equal(first.status,1);assert.equal(first.out.error.code,'E_PR');assert.match(first.out.error.message,/closed without merge/);
+    assert.deepEqual(statuses(first.out.error.result.receipts),{project:'rejected',secondary:'accepted'},'the merge is recorded although the other PR was closed');
+    const repeat=deploymentCli(f,'complete',['--source',s.file,'--run',run.id]);assert.equal(repeat.status,0,repeat.stdout);assert.equal(repeat.out.result.status,'rejected');
+    assert.deepEqual(statuses(repeat.out.result.receipts),{project:'rejected',secondary:'accepted'});
+    assert.equal(loadStatus(s).accepted[`${run.id}/secondary`].status,'accepted');assert.deepEqual(deploymentCli(f,'harvest-status',['--soul','source']).out.result.sources[0].outstanding,[]);
+  }
+});
+test('4.2.0 a settlement that fails part way stays owed: a transient GitHub error never drops a delivered PR from checkpoints or harvest-status',t=>{
+  const f=fixture(t,{kind:'git'});const s=f.source();note(f);const {run}=prepared(f,s);complete(s,run.id,judgment(f,s,run));
+  const listed=()=>deploymentCli(f,'harvest-status',['--soul','source']).out.result.sources[0].outstanding;
+  assert.deepEqual(listed().map(o=>[o.kind,o.run,o.destinations.project.status]),[['review',run.id,'delivered']]);
+  put(join(f.dir,'gh-view-fail-at'),'2'); // the second PR read of the next settlement fails
+  const first=checkpointHarvest(s,{noLaunch:true});assert.deepEqual(first.settled.map(r=>[r.run,r.outcome]),[[run.id,'unsettled']]);
+  assert.equal(readRun(s,run.id).receipts.project.status,'pr-unknown');
+  const during=listed();assert.deepEqual(during.map(o=>[o.kind,o.run]),[['review',run.id]]);assert.equal(during[0].destinations.project.status,'pr-unknown');
+  assert.match(during[0].destinations.project.error,/transient/);assert.equal(during[0].command,`cd ${f.context} && oats okf complete --source ${s.file} --run ${run.id} --soul source --json`);
+  fs.rmSync(join(f.dir,'gh-view-fail-at'));
+  const second=checkpointHarvest(s,{noLaunch:true});assert.deepEqual(second.settled.map(r=>[r.run,r.outcome]),[[run.id,'open']]);assert.equal(readRun(s,run.id).receipts.project.status,'delivered');
+  assert.deepEqual(listed().map(o=>[o.kind,o.destinations.project.status]),[['review','delivered']]);
+  mergeDelivered(f,f.repo,readRun(s,run.id).receipts.project);
+  assert.deepEqual(checkpointHarvest(s,{noLaunch:true}).settled.map(r=>r.outcome),['accepted']);assert.deepEqual(listed(),[]);
+});
+// The released okf 4.1.1 (BASE of 4.2.0), extracted from this repository's
+// history: rollback and migration evidence runs its actual code. CI checks out
+// full history (fetch-depth: 0); elsewhere a shallow clone skips with a reason.
+const BASE_RELEASE='e1d604f70c5e4cdc39602095f139383e61f69323';
+function baseRelease() {
+  const env={...process.env,PATH:hostPath},dir=fs.mkdtempSync(join(tmpdir(),'okf-4.1.1-'));
+  const archive=spawnSync('git',['-C',ROOT,'archive','--format=tar',BASE_RELEASE,'oats-package'],{env,maxBuffer:64*1024*1024});
+  if(archive.status!==0) {fs.rmSync(dir,{recursive:true});return null;}
+  process.on('exit',()=>fs.rmSync(dir,{recursive:true,force:true}));
+  assert.equal(spawnSync('tar',['-x','-C',dir],{env,input:archive.stdout}).status,0);
+  return {dir,lib:join(dir,'oats-package/capabilities/oats-okf/lib')};
+}
+const released=baseRelease();
+test('4.2.0 compatibility with the released okf 4.1.1: what it registered loads unchanged and migrates; after a finished drain it settles a 4.2 review; an unfinished drain is a named rollback blocker',{skip:!released && !process.env.CI && `okf 4.1.1 (${BASE_RELEASE}) is not in this clone's history`},async t=>{
+  assert.ok(released,`okf 4.1.1 (${BASE_RELEASE}) must be in history: CI checks out with fetch-depth 0`);
+  const old={sources:await import(join(released.lib,'sources.mjs')),worker:await import(join(released.lib,'worker.mjs'))};
+  const {removeSchedules}=await mod('schedule-migration');
+  // A source and job 4.1.1 itself created: loaded unchanged, the job removed by proven ownership.
+  {const f=fixture(t);const s=old.sources.register(f.home),bytes=fs.readFileSync(s.file);assert.equal(s.bindings.cron,'*/15 * * * *');assert.ok(readJSON(join(f.dir,'schedules.json'))[`okf-${s.id}`]);
+    assert.equal(loadSource(s.file).bindingFingerprint,s.bindingFingerprint);assert.deepEqual(removeSchedules().removed,[`okf-${s.id}`]);assert.deepEqual(fs.readFileSync(s.file),bytes);
+  }
+  const blockers=s=>outstanding(s,loadStatus(s)).filter(o=>o.kind!=='review').map(o=>o.kind);
+  // Retirement alone is no rollback boundary: 4.1.1 completes the active run but hands its drain on to nothing.
+  {const f=fixture(t);const s=f.source();put(join(f.dir,'sessions-inert'),'');for(const i of [0,1,2]) bigNote(f,i);
+    const run=readRun(s,checkpointHarvest(s).run);assert.equal(f.cli('retire').out.meta.retired,true);fs.rmSync(f.home,{recursive:true});
+    assert.deepEqual(blockers(s),['active','drain'],'harvest-status names the unfinished drain before any re-pin');
+    const premature=old.worker.complete(old.sources.loadSource(s.file),run.id,judgment(f,s,run,{drop:true}));assert.equal(premature.processed,true);
+    assert.equal(spawnsOf(f).length,1,'4.1.1 starts no successor');assert.equal(loadStatus(s).processed.length,1);assert.deepEqual(blockers(s),['drain'],'the remainder stays owed and named');
+    // Finished under 4.2 by the named command, nothing blocks the re-pin.
+    let r=deploymentCli(f,'run-source',['--source',s.file,'--manual']);assert.equal(r.out.result.status,'running',r.stdout);let next=readRun(s,r.out.result.run);
+    r=complete(s,next.id,judgment(f,s,next,{drop:true}));assert.equal(r.drain.status,'started');next=readRun(s,r.drain.run);
+    assert.equal(complete(s,next.id,judgment(f,s,next,{drop:true})).drain.status,'drained');assert.deepEqual(blockers(s),[]);
+  }
+  // A 4.2 delivered review, once its drain is finished, is settled by 4.1.1's own complete.
+  {const f=fixture(t,{kind:'git'});const s=f.source();note(f);const {run}=prepared(f,s);complete(s,run.id,judgment(f,s,run));
+    assert.equal(f.cli('retire').out.meta.retired,true);fs.rmSync(f.home,{recursive:true});assert.deepEqual(blockers(s),[]);
+    mergeDelivered(f,f.repo,readRun(s,run.id).receipts.project);
+    assert.equal(old.worker.complete(old.sources.loadSource(s.file),run.id).receipts.project.status,'accepted');assert.deepEqual(outstanding(s,loadStatus(s)),[]);
   }
 });

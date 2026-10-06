@@ -18,14 +18,43 @@ Checkpoint harvest (#49); the harvester retires after delivery (#47). #46 and
   `already-running`, with the run id or `preparing`; a dead one is
   reclaimed), settles earlier delivered PRs through `complete`'s checks
   (`settled`: accepted, rejected once and never rejudged, open, or
-  unsettled with its command), reports an active run (`already-running`, or
-  `needs-recovery` with exact commands), then captures and requests a finite
-  drain (`started`, or `empty`). Its answer replaces the run's status.
+  unsettled with its command), reports an active run (`already-running`,
+  `deferred`, or `needs-recovery` with exact commands), then captures and
+  requests a finite drain (`started`, or `empty`). Its answer replaces the
+  run's status.
+- **Review settlement is per destination.** A run already processed settles
+  each destination on its own, through the same identity and ancestry
+  checks: a closed PR is recorded once and never read again, and never holds
+  back, or hides, another destination's merge, reviewed amended merge or
+  failure. A settlement that fails part way (a receipt left `pr-unknown`)
+  stays owed: every earlier run with a destination whose outcome is not
+  recorded is settled at each checkpoint and listed by `harvest-status`
+  until then. A newly recorded close still answers `E_PR`, now with every
+  destination's receipt in `error.result`; a repeat answers the recorded
+  outcomes.
+- **One deadline** bounds a checkpoint and a retire hook (110 s): every
+  `git`, `gh` and `oats` call gets at most what is left and none starts
+  once it is spent; settlement takes at most 30 s and capture 85 s. A worker
+  is never launched past it: with under 15 s left, or staging stopped by
+  it, the confirmed worker stays (`deferred`, `phase: ready` or
+  `scaffolded`, `launched: false`, `next: retry --source FILE --launch`),
+  and repeats never launch or spawn it again. Operator commands keep each
+  call's own timeout.
+- **An explicitly requested rejudgment goes first** on every path that starts
+  a run (checkpoint, drain continuation, retirement, `run-source --manual`),
+  with its inputs, lineage, guards and `previous.json`; while a PR of an
+  earlier attempt is open or merged again, nothing starts
+  (`needs-recovery`, `phase: pending-rejudgment`).
 - **Finite drain.** The captured input ids are persisted as the drain's
   boundary before any effect. A run takes at most 192 KB of them; when it
   becomes processed, its completion starts the next run from the boundary
   without capturing again, re-reading the switch (off pauses the drain).
-  `--no-launch` requests no drain.
+  Automatic continuation needs the deployment's harvest switch on: a seat
+  switched on only at spawn starts its first run, then pauses visibly with
+  the deployment off; every promised handoff says so (`prerequisite`).
+  `--no-launch` requests no drain, and its run's completion launches
+  nothing, also over an earlier drain request: that drain is `held` until an
+  explicit `retry --source FILE --launch`.
 - **Retirement** takes the final capture and then the same drain within one
   110 s budget, reported in `meta.drain` apart from the certified capture:
   started, already-running (the active run's completion hands on the final
@@ -45,7 +74,15 @@ Checkpoint harvest (#49); the harvester retires after delivery (#47). #46 and
   run, and an unfinished drain.
 - **`retry --source FILE`** prepares again, in place, a confirmed worker whose
   preparation was interrupted (persisted stages kept, a partial one redone);
-  nothing is spawned twice.
+  nothing is spawned twice. With no active run it starts one from custody
+  only while harvest is on (`harvest-off` otherwise), as `run-source
+  --manual` does; `--launch` of a prepared worker clears its `--no-launch`.
+- **Rollback boundary.** Retiring sources is not enough to re-pin 4.1: every
+  4.2 drain must first be finished under 4.2 (`harvest-status` shows no
+  `active`, `deferred`, `needs-recovery`, `rejudgment`, `drain` or
+  `pending-input` row), because 4.1's `complete` hands no drain on. See the
+  README.
+- CI checks out full history: a test runs the released 4.1.1 code.
 
 ### Removed
 

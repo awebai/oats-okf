@@ -138,8 +138,26 @@ export const identityKeys = ['OATS_INSTANCE','OATS_INSTANCE_HOME','OATS_HOME','P
 export function cleanEnv(env = process.env) {
   return Object.fromEntries(Object.entries(env).filter(([k]) => !/^(OATS_(?!HOME_DIR$|PACKAGE_CATALOG$)|PI_AGENT|GIT_)/.test(k)));
 }
+// okf 4.2.0: ONE invocation deadline. A checkpoint or a retire hook runs its
+// work within it (withDeadline): every blocking subprocess (git, gh, oats) gets
+// at most what is left of it, whatever its own timeout, and none starts once it
+// is spent (E_DEADLINE, before any effect). Without one, each call keeps its
+// own timeout. Synchronous callers only: the deadline is this process's.
+let invocationDeadline;
+export function withDeadline(deadline, fn) {
+  const outer = invocationDeadline;
+  if (deadline !== undefined) invocationDeadline = Math.min(deadline, outer ?? Infinity);
+  try { return fn(); } finally { invocationDeadline = outer; }
+}
+/** `timeout`, bounded by what is left of the invocation deadline. */
+export function bounded(timeout) {
+  if (invocationDeadline === undefined) return timeout;
+  const left = invocationDeadline - Date.now();
+  if (left <= 0) fail('E_DEADLINE', 'this invocation\'s time budget is spent: nothing further was started, and what is persisted resumes');
+  return Math.min(timeout, left);
+}
 export function exec(bin, args, { cwd, env = cleanEnv(), timeout = 30000, maxBuffer = 16*1024*1024, acceptedStatus = [0], input } = {}) {
-  const r = spawnSync(bin, args, { cwd, env, encoding: 'utf8', timeout, maxBuffer, input });
+  const r = spawnSync(bin, args, { cwd, env, encoding: 'utf8', timeout: bounded(timeout), maxBuffer, input });
   if(r.error || !acceptedStatus.includes(r.status)) throw Object.assign(new Error(`${bin} ${args[0]} failed: ${r.error?.message || r.stderr || `exit ${r.status}`}`),{code:'E_COMMAND',stdout:r.stdout,status:r.status});
   return r.stdout.trim();
 }
