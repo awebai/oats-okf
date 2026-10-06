@@ -71,9 +71,13 @@ to run it. `oats okf harvest [--no-launch] --json`, from the instance home:
    `--no-launch` is a diagnostic: it prepares one worker without launching
    it and requests no drain. Its run's completion launches nothing, also when
    an earlier checkpoint's drain is outstanding: that drain is `held`
-   (`drain.paused.kind: no-launch`, input in custody) until an operator runs
-   `oats okf retry --source FILE --launch`. A worker launched by `retry
-   --launch` hands the drain on as usual.
+   (`drain.paused.kind: no-launch`, input in custody). **The hold is
+   durable.** A later checkpoint, or retirement's final capture, adds its
+   input to the held drain and answers `held`: it starts no model, and no
+   continuation does. Only an operator's explicit launch lifts it:
+   `oats okf retry --source FILE --launch` (or `run-source --manual`
+   without `--no-launch`), which itself needs harvest on. A worker launched
+   that way hands the drain on as usual.
 7. **An explicitly requested rejudgment goes first.** After `oats okf retry
    --rejudge` abandoned a run, every path that starts a run (a checkpoint, a
    drain's continuation, retirement, `run-source --manual`) starts its
@@ -106,6 +110,8 @@ the same finite drain of everything unprocessed and reports it in
   drain (`handoff`) and that run's completion hands it on, after the source
   home is gone (successors are not children of a retired source).
 - `empty`: nothing unprocessed.
+- `held`: a no-launch hold (above); the final input joins the held drain
+  and nothing is launched; `next` is the explicit `retry --source FILE --launch`.
 - `not-launched`: the source never launched a model session (for example a
   no-launch spawn's compensation): no harvester is launched; `next` resumes.
 - `needs-recovery`, `deferred` or `failed`: custody is certified and retained;
@@ -161,18 +167,37 @@ rejudging it stays the explicit `oats okf retry --source FILE --run ID --rejudge
   oats.okf never installs or removes the shared host timer.
 - The spawn hook's meta carries `checkpoint: "oats okf harvest"` instead of
   `schedule`. `oats okf harvest` answers `started`, `already-running`,
-  `empty`, `needs-recovery`, `deferred` or `retired`, with `settled`, instead
+  `empty`, `held`, `needs-recovery`, `deferred` or `retired`, with `settled`, instead
   of the run's own status. `harvest-status` rows carry `outstanding` (and
   `legacySchedule` for a job 4.1 left), no longer `auto`/`schedule`.
 - A confirmed worker whose preparation was interrupted (its spawn receipt is
   recorded, it was never launched) is prepared again in place by
   `oats okf retry --source FILE`: persisted stages are kept, a partial one is
   redone, and nothing is spawned twice.
-- `oats okf retry --source FILE` with no active run starts a new run from
-  custody, as `run-source --manual` does, and like it now re-reads the
-  switch: harvest off answers `harvest-off` and starts nothing. An explicit
-  `retry --launch` of a prepared worker clears its `--no-launch`, so its
+- `oats okf retry` re-reads the switch and the soul's opt-out (an absolute
+  one too) before anything that would start new harvest work. While harvest
+  is off it answers `harvest-off`, naming what it `refused`, and changes
+  nothing. It refuses:
+  - a new run from custody (no active run);
+  - `--launch` of an active ready, deferred or scaffolded worker;
+  - `--rejudge` of the active run;
+  - `--run ID --rejudge`, with or without `--launch`;
+  - any combination with `--launch`, such as `--adopt-home … --launch`.
+  `--launch` never overrides an opt-out. While off, retry still recovers
+  existing custody, without new work: plain `retry` delivers a persisted
+  judgment (and its completion pauses the drain rather than hand a batch
+  on) or prepares a confirmed worker in place without launching it, and
+  `--adopt-home` records a worker whose spawn already happened. Inspection
+  and `complete` are unchanged. The manifest-bound `harvest --once` keeps
+  its own contract: the host switch does not govern it, and its opt-out
+  override stays explicit and recorded. An explicit `retry --launch` of a
+  prepared worker clears its `--no-launch`, and a no-launch hold, so its
   completion hands the drain on.
+- When the worker's checkout of a delivered run is gone (the harvester
+  retired), settlement rebuilds it from the frozen proposal under the run's
+  own state. A rebuild that was interrupted (by the deadline or a transport
+  failure) never became the run's stage and holds nothing of record: the
+  next checkpoint or `complete` discards and redoes it.
 - `oats okf complete` on a run that is already processed settles each
   destination on its own (above); first delivery still stops at the first
   failing destination.
@@ -289,13 +314,19 @@ this boundary.) Before re-pinning:
 1. Hold new spawns of harvesting souls, and retire every home spawned with
    4.2 that harvests: its copied 4.2 retire hook requests a drain, which only
    4.2 continues.
-2. Finish every 4.2 drain under 4.2: `oats okf harvest-status --soul <soul>
-   --json` shows, for every source of every state namespace, no
-   `outstanding` row of kind `active`, `deferred`, `needs-recovery`,
-   `rejudgment`, `drain` or `pending-input`. Run each row's command (a
-   paused drain needs the deployment's harvest switch on while it finishes).
-   Rows of kind `review` may stay: 4.1's `complete` records their merge or
-   close.
+2. Settle every 4.2 obligation under 4.2. Inventory every soul with oats.okf
+   and every state namespace (each distinct bindings file and `stateDir`):
+   `oats okf harvest-status --soul <soul> --json` for each. Do not re-pin
+   while any source lists ANY `outstanding` row: a drain (`active`,
+   `deferred`, `needs-recovery`, `rejudgment`, `drain`,
+   `pending-input`) or a review whose outcome is not recorded (`review`,
+   including a destination whose last settlement failed). Run each row's
+   command; a paused drain needs the deployment's harvest switch on while it
+   finishes, and a review needs its PR merged or closed by the maintainer
+   first. Review rows are no exception. 4.1's `complete` stops at a
+   destination already recorded closed, so it never records a later merge
+   of the same run (a test runs 4.1.1's actual code on that case). There is
+   no qualified route that keeps 4.2 settling after a re-pin.
 3. Then re-pin. Do not recreate schedules, and do not edit frozen
    descriptors to make a rollback look complete. Sources registered by 4.2
    have no `cron`/`tz` in their frozen bindings, which 4.1's spawn and

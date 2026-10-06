@@ -53,8 +53,10 @@ Checkpoint harvest (#49); the harvester retires after delivery (#47). #46 and
   switched on only at spawn starts its first run, then pauses visibly with
   the deployment off; every promised handoff says so (`prerequisite`).
   `--no-launch` requests no drain, and its run's completion launches
-  nothing, also over an earlier drain request: that drain is `held` until an
-  explicit `retry --source FILE --launch`.
+  nothing, also over an earlier drain request: that drain is `held`. The
+  hold is durable: later checkpoints and retirement add input to it but
+  start nothing, until an operator's explicit `retry --source FILE --launch`
+  (or `run-source --manual`) lifts it.
 - **Retirement** takes the final capture and then the same drain within one
   110 s budget, reported in `meta.drain` apart from the certified capture:
   started, already-running (the active run's completion hands on the final
@@ -74,15 +76,24 @@ Checkpoint harvest (#49); the harvester retires after delivery (#47). #46 and
   run, and an unfinished drain.
 - **`retry --source FILE`** prepares again, in place, a confirmed worker whose
   preparation was interrupted (persisted stages kept, a partial one redone);
-  nothing is spawned twice. With no active run it starts one from custody
-  only while harvest is on (`harvest-off` otherwise), as `run-source
-  --manual` does; `--launch` of a prepared worker clears its `--no-launch`.
-- **Rollback boundary.** Retiring sources is not enough to re-pin 4.1: every
-  4.2 drain must first be finished under 4.2 (`harvest-status` shows no
-  `active`, `deferred`, `needs-recovery`, `rejudgment`, `drain` or
-  `pending-input` row), because 4.1's `complete` hands no drain on. See the
-  README.
-- CI checks out full history: a test runs the released 4.1.1 code.
+  nothing is spawned twice. **Retry re-reads consent**: while the deployment
+  switch is off, or the soul opts out, it answers `harvest-off` to anything
+  that would start new harvest work: a new run, `--launch`, `--rejudge`,
+  `--run ID --rejudge`, and any combination with `--launch`. It still
+  delivers a persisted judgment (whose completion pauses the drain), prepares
+  a confirmed worker without launching it, and adopts an already-created one.
+  `harvest --once` keeps its own contract. `--launch` of a prepared worker
+  clears its `--no-launch`.
+- **An interrupted rebuild** of a retired worker's checkout (deadline or
+  transport failure) is discarded and redone by the next settlement, never
+  left blocking it.
+- **Rollback boundary.** Retiring sources is not enough to re-pin 4.1: no
+  source of any soul or state namespace may list any `outstanding` row, a
+  review included. 4.1's `complete` hands no drain on, and it stops at a
+  destination recorded closed, never reaching a later merge of the same run.
+  See the README.
+- Every CI job that runs `npm test` checks out full history: a test runs
+  the released 4.1.1 code, and a test checks the workflow says so.
 
 ### Removed
 

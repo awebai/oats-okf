@@ -222,12 +222,9 @@ else {
     // so it delivers inline (and can exceed an agent's tool-call limit).
     else if(event==='complete') {const s=src(),judgment=flags.judgment && resolve(flags.judgment);if(captured) retainedRun(s);result=captured?complete(s,flags.run,judgment):await completeInBackground(s,flags.run,judgment);}
     else if(event==='retry') {
+      // okf 4.2.0: retry itself refuses new harvest work while harvest is off.
       const s=src();if(captured && !flags.run && !flags.rejudge && !flags.launch && !flags['adopt-home']) retainedRun(s);
-      // okf 4.2.0: a retry with no active run starts a new one from custody
-      // (run-source --manual): as run-source, only while harvest is on.
-      const sw=!captured && !flags.run && !flags['adopt-home'] && !loadStatus(s).activeRun?sourceSwitch(s):null;
-      result=sw && sw.effective!=='on'?{status:'harvest-off',source:s.file,reason:`${sw.reason}; nothing was started and the input stays in custody`}
-        :retry(s,{run:flags.run,rejudge:!!flags.rejudge,launch:!!flags.launch,adoptHome:flags['adopt-home']});
+      result=retry(s,{run:flags.run,rejudge:!!flags.rejudge,launch:!!flags.launch,adoptHome:flags['adopt-home']});
     }
     else if(event==='inspect') result=consultOnly?inspectConsultOnly(consultSource(home)):inspect(src());
     else if(event==='setup' && (flags.source || flags.enable || flags.disable || flags['install-host'])) fail('E_REMOVED','oats.okf 4.2 has no harvest schedules, so setup --source/--enable/--disable/--install-host are gone: the working agent harvests at its checkpoints (`oats okf harvest`); `oats okf setup --harvest on|off` switches harvest for the deployment (a soul opts out with knowledge: { harvest: off }); `oats okf setup --remove-schedules` removes the jobs okf <= 4.1 created. The shared host timer is not okf\'s to install or remove.');

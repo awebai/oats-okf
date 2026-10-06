@@ -112,7 +112,7 @@ export function runSource(source,{noLaunch=false,manual=false,capturedInvocation
     }
     const {ids,previous}=nextRun(source,status,status.captured.inputs.filter(id=>!status.processed.includes(id)));
     if(!ids.length) return status.finalCaptureUncertified?{status:'source-unavailable',processedCapturedInput:true,finalCaptureComplete:false}:{status:'empty',processed:true};
-    return startRun(source,{ids,noLaunch,plan,previous,runFields,parent:!status.retired && !source.once && sourceAvailable});
+    return startRun(source,{ids,noLaunch,plan,previous,runFields,parent:!status.retired && !source.once && sourceAvailable,explicitLaunch:manual && !noLaunch && !plan});
   });
 }
 /** What the next run of a source takes, for EVERY path that starts one
@@ -142,7 +142,7 @@ const MIN_LAUNCH_MS=15000;
 /** Start ONE run over the first inputs of `ids` (at most 192 KB of evidence;
  *  the rest wait for the run's successor). Caller holds the worker lock and
  *  has checked there is no active run. */
-function startRun(source,{ids,noLaunch=false,plan=null,previous=null,runFields={},parent=false,deadline}) {
+function startRun(source,{ids,noLaunch=false,plan=null,previous=null,runFields={},parent=false,deadline,explicitLaunch=false}) {
   const selected=[];let bytes=0;
   for(const id of ids) {const n=Buffer.byteLength(JSON.stringify(input(source,id)));if(selected.length && bytes+n>192000) break;selected.push(id);bytes+=n;}
   if(!source.decl.owns.length) fail('E_OWNER','source has evidence but owns no destination; retained for explicit ownership routing');
@@ -162,8 +162,9 @@ function startRun(source,{ids,noLaunch=false,plan=null,previous=null,runFields={
   persist(source,run);updateStatus(source,current=>{
     current.activeRun=id;
     if(previous) {current.recoveries={...(current.recoveries || {}),[previous.id]:id};delete current.pendingRejudgment;}
-    // A run that launches takes the drain on again (a pause names why it stopped).
-    if(!noLaunch && current.drain) delete current.drain.paused;
+    // A launching start lifts a pause; a no-launch hold only an operator's
+    // explicit launch lifts (run-source --manual, retry --launch).
+    if(current.drain?.paused && (explicitLaunch || (!noLaunch && current.drain.paused.kind!=='no-launch'))) delete current.drain.paused;
   });
   return spawnWorker(source,run,{parent,deadline,harness});
 }
@@ -455,7 +456,15 @@ function deliverRun(source,run,opts={}) {
     const base=source.bindings.bases[alias];const saveReceipt=()=>checkpoint(source,run,alias);
     try {
       if(base.kind==='git') {
-        if(!fs.existsSync(run.stages[alias].checkout)) {run.stages[alias]=recoveryStage(base,run.stages[alias],proposal,join(run.attemptDir || dirname(runPath(source,run.id)),`${alias}-recovery`));persist(source,run);}
+        if(!fs.existsSync(run.stages[alias].checkout)) {
+          // The worker's checkout is gone: rebuild it from the frozen proposal.
+          // A rebuild left here that never became the run's stage (interrupted
+          // by a deadline or a transport failure) holds nothing of record, so
+          // it is discarded and rebuilt rather than blocking every retry.
+          const dest=join(run.attemptDir || dirname(runPath(source,run.id)),`${alias}-recovery`);
+          fs.rmSync(dest,{recursive:true,force:true});
+          run.stages[alias]=recoveryStage(base,run.stages[alias],proposal,dest);persist(source,run);
+        }
         gitPublish(base,run.stages[alias],proposal,r,saveReceipt,{beforePublish:()=>checkRecoveryGuards(source,run),prIdentity:recoveryObservation(source,alias,r).observed?.pr || r.pr,pr:harvestPr(source,run)});
       }
       else directoryPublish(base,proposal,r,saveReceipt,opts);
@@ -599,10 +608,9 @@ export function harvestPr(source,run) {
 }
 export function retry(source,{run:id,rejudge=false,launch=false,adoptHome}={}) {
   if(id!==undefined || rejudge || launch || adoptHome) requireQualifiedHelper(source);
-  if(id!==undefined) {
-    if(!rejudge || adoptHome) fail('E_USAGE','--run requires --rejudge and cannot be combined with --adopt-home');
-    return recoverRun(source,id,{launch});
-  }
+  if(id!==undefined && (!rejudge || adoptHome)) fail('E_USAGE','--run requires --rejudge and cannot be combined with --adopt-home');
+  const refused=retryConsent(source,{id,rejudge,launch});if(refused) return refused;
+  if(id!==undefined) return recoverRun(source,id,{launch});
   const status=loadStatus(source);if(!status.activeRun) return runSource(source,{manual:true,noLaunch:!launch});
   let run=readRun(source,status.activeRun);
   if(rejudge) refuseLiveDelivery(run);
@@ -671,11 +679,34 @@ export function retry(source,{run:id,rejudge=false,launch=false,adoptHome}={}) {
     if(run.status==='ready') writeStagingMap(source,run);
     if(launch) {
       if(run.status!=='ready') fail('E_RECOVERY','only ready workers can launch; inspect uncertain session through oats session inspect');
-      // The operator's explicit launch: this run's completion may hand its drain on.
-      run.noLaunch=false;delete run.launchDeferred;startWorker(source,run);
+      // The operator's explicit launch (consent checked by retryConsent): this
+      // run's completion may hand its drain on, a no-launch hold lifted.
+      run.noLaunch=false;delete run.launchDeferred;
+      updateStatus(source,current=>{if(current.drain) delete current.drain.paused;});
+      startWorker(source,run);
     }
     return {status:run.status,run:run.id,worker:run.worker};
   });
+}
+/** okf 4.2.0: a retry that would start new harvest work (a new worker or
+ *  rejudgment, or a launch) needs the registered source's harvest on as it
+ *  is NOW: the deployment switch and the soul's opt-out, also an absolute one.
+ *  --launch never overrides them. While it is off, retry only recovers
+ *  existing custody: adopting an already-created worker, preparing a confirmed
+ *  one without launching it, and delivering a persisted judgment (whose
+ *  completion then pauses the drain: continueDrain re-reads the switch). A
+ *  one-shot keeps its own contract (harvest --once: the host switch does not
+ *  govern it, and its opt-out override is explicit and recorded), and a
+ *  captured source its admitted operation. → the refusal, or null. */
+function retryConsent(source,{id,rejudge,launch}) {
+  if(source.once || capturedSource(source)) return null;
+  const starts=[...(id!==undefined?['--run --rejudge (a new worker)']:[]),...(rejudge && id===undefined?['--rejudge (a new judgment)']:[]),...(launch?['--launch (a model session)']:[])];
+  if(!starts.length && !loadStatus(source).activeRun) starts.push('a new run from custody');
+  if(!starts.length) return null;
+  const sw=sourceSwitch(source);
+  if(sw.effective==='on') return null;
+  return {status:'harvest-off',source:source.file,refused:starts,reason:`${sw.reason}; retry would start new harvest work (${starts.join(', ')}), so nothing was started and the input stays in custody`,
+    note:'while harvest is off, retry recovers existing custody only: plain retry delivers a persisted judgment or continues a confirmed worker\'s preparation without launching it, and --adopt-home records an already-created worker'};
 }
 
 // First verified PR observations live outside run/receipt history. Key them by
@@ -764,11 +795,13 @@ function recoverRun(source,id,{launch=false}={}) {
 /** Said wherever a drain is promised to continue on its own. */
 export const DRAIN_PREREQUISITE='a drain continues on its own only while the deployment switches harvest on (oats-local.yaml settings.oats.okf.harvest) and the soul does not opt out; a source-only spawn override admits its checkpoints, not the deployment-side continuation, which otherwise pauses with its input in custody';
 const unprocessed=status=>status.captured.inputs.filter(id=>!status.processed.includes(id));
-/** Persist a drain request over `ids` (the union with an outstanding one). */
+/** Persist a drain request over `ids` (the union with an outstanding one).
+ *  A no-launch hold stays: a later request (retirement's final one too) grows
+ *  the boundary, but only an explicit launch lifts the hold (startRun). */
 function recordDrain(source,ids,by) {
   updateStatus(source,current=>{
-    const prior=(current.drain?.boundary || []).filter(id=>!current.processed.includes(id));
-    current.drain={version:1,boundary:[...new Set([...prior,...ids])],by,requestedAt:new Date().toISOString()};
+    const prior=(current.drain?.boundary || []).filter(id=>!current.processed.includes(id)),hold=current.drain?.paused?.kind==='no-launch'?current.drain.paused:null;
+    current.drain={version:1,boundary:[...new Set([...prior,...ids])],by,requestedAt:new Date().toISOString(),...(hold?{paused:hold}:{})};
   });
 }
 /** Mark the recorded drain paused, and why: it continues only by the
@@ -807,11 +840,11 @@ export function continueDrain(source,{deadline,after}={}) {
     }
     const resume=operatorCommand(source,['run-source','--source',source.file,'--manual']);
     if(capturedSource(source)) return {status:'held',remaining:remaining.length,reason:'a captured source drains only through its admitted knowledge:harvest operation'};
-    if(after?.noLaunch) {
-      const reason=`run ${after.id} was prepared with --no-launch (a diagnostic), so its completion launches nothing`;
-      pauseDrain(source,'no-launch',reason);
-      return {status:'held',remaining:remaining.length,reason:`${reason}; the drain waits, its input in custody, for an explicit launch`,next:operatorCommand(source,['retry','--source',source.file,'--launch'])};
-    }
+    // A --no-launch diagnostic's completion holds the drain, and the hold
+    // stays (also through retirement) until an explicit launch lifts it.
+    if(after?.noLaunch) pauseDrain(source,'no-launch',`run ${after.id} was prepared with --no-launch (a diagnostic), so its completion launches nothing`);
+    const hold=after?.noLaunch?loadStatus(source).drain?.paused:drain.paused?.kind==='no-launch'?drain.paused:null;
+    if(hold) return {status:'held',remaining:remaining.length,reason:`${hold.reason}; the drain waits, its input in custody, for an explicit launch`,next:operatorCommand(source,['retry','--source',source.file,'--launch'])};
     const sw=sourceSwitch(source);
     if(sw.effective!=='on') {
       pauseDrain(source,'harvest-off',sw.reason);
@@ -930,7 +963,13 @@ export function checkpointHarvest(source,{noLaunch=false,deadline}={}) {
     if(!pending.length) return answer({status:'empty',capture:captured});
     // --no-launch is a diagnostic: it requests no drain, and the run it
     // prepares hands no drain on when it completes (continueDrain).
-    if(!noLaunch) recordDrain(source,pending,'checkpoint');
+    if(!noLaunch) {
+      recordDrain(source,pending,'checkpoint');
+      // A no-launch hold stays until an explicit launch: this checkpoint's
+      // input joins the held drain, and no model is started.
+      const hold=loadStatus(source).drain?.paused;
+      if(hold?.kind==='no-launch') return answer({status:'held',capture:captured,remaining:unprocessed(loadStatus(source)).length,reason:`${hold.reason}; this checkpoint's input joined the held drain, and nothing was started`,next:operatorCommand(source,['retry','--source',source.file,'--launch'])});
+    }
     let selection;
     try {selection=nextRun(source,status,pending);}
     catch(e) {if(e.code!=='E_RECOVERY') throw e;return answer({...blockedRejudgment(source,status,e),capture:captured});}

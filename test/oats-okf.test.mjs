@@ -2263,7 +2263,7 @@ test('4.1.1 a forged commit-graph in the worker\'s checkout cannot make a rewrit
 // okf 4.2.0: checkpoint harvest (#49). No scheduler job; the working agent runs
 // `oats okf harvest` at its checkpoints and retirement takes the final one.
 // Every assertion counts real CLI calls, durable ids and receipts.
-const {checkpointHarvest,retireDrain,outstanding}=await mod('worker');
+const {checkpointHarvest,retireDrain,continueDrain,outstanding,harvesterInstance}=await mod('worker');
 const cp=(await import('node:child_process')).default;
 const {hostname}=await import('node:os');
 const callsIn=f=>fs.existsSync(f.calls)?callsOf(f):[];
@@ -2536,12 +2536,14 @@ const sessionsOf=f=>callsIn(f).filter(c=>c.a[0]==='session');
 /** Run `fn` recording every subprocess this process starts (binary, argv,
  *  timeout, and what is left of `deadline` at that moment). `after(call)` may
  *  advance this process's clock once the call returns: a slow step, with no
- *  real wait. */
-function observeCalls(fn,{deadline,after}={}) {
+ *  real wait. `fail(call)` answers a call with a failure instead of running
+ *  it: a transport failure, with no real network. */
+function observeCalls(fn,{deadline,after,fail}={}) {
   const original=cp.spawnSync,now=Date.now,seen=[];let skew=0;
   Date.now=()=>now()+skew;
   cp.spawnSync=function(bin,args,opts) {
     const call={bin,args,timeout:opts?.timeout,...(deadline===undefined?{}:{remaining:deadline-Date.now()})};seen.push(call);
+    if(fail?.(call)) return {status:128,signal:null,pid:0,output:[null,'','fatal: transport failure'],stdout:'',stderr:'fatal: transport failure'};
     const result=original.apply(this,arguments);skew+=after?.(call) || 0;return result;
   };
   syncBuiltinESMExports();
@@ -2752,7 +2754,7 @@ function baseRelease() {
   return {dir,lib:join(dir,'oats-package/capabilities/oats-okf/lib')};
 }
 const released=baseRelease();
-test('4.2.0 compatibility with the released okf 4.1.1: what it registered loads unchanged and migrates; after a finished drain it settles a 4.2 review; an unfinished drain is a named rollback blocker',{skip:!released && !process.env.CI && `okf 4.1.1 (${BASE_RELEASE}) is not in this clone's history`},async t=>{
+test('4.2.0 compatibility with the released okf 4.1.1: what it registered loads unchanged and migrates; every outstanding 4.2 obligation, a drain or a review, is a named rollback blocker',{skip:!released && !process.env.CI && `okf 4.1.1 (${BASE_RELEASE}) is not in this clone's history`},async t=>{
   assert.ok(released,`okf 4.1.1 (${BASE_RELEASE}) must be in history: CI checks out with fetch-depth 0`);
   const old={sources:await import(join(released.lib,'sources.mjs')),worker:await import(join(released.lib,'worker.mjs'))};
   const {removeSchedules}=await mod('schedule-migration');
@@ -2760,7 +2762,8 @@ test('4.2.0 compatibility with the released okf 4.1.1: what it registered loads 
   {const f=fixture(t);const s=old.sources.register(f.home),bytes=fs.readFileSync(s.file);assert.equal(s.bindings.cron,'*/15 * * * *');assert.ok(readJSON(join(f.dir,'schedules.json'))[`okf-${s.id}`]);
     assert.equal(loadSource(s.file).bindingFingerprint,s.bindingFingerprint);assert.deepEqual(removeSchedules().removed,[`okf-${s.id}`]);assert.deepEqual(fs.readFileSync(s.file),bytes);
   }
-  const blockers=s=>outstanding(s,loadStatus(s)).filter(o=>o.kind!=='review').map(o=>o.kind);
+  // The rollback boundary: no outstanding row of any kind, reviews included.
+  const blockers=s=>outstanding(s,loadStatus(s)).map(o=>o.kind);
   // Retirement alone is no rollback boundary: 4.1.1 completes the active run but hands its drain on to nothing.
   {const f=fixture(t);const s=f.source();put(join(f.dir,'sessions-inert'),'');for(const i of [0,1,2]) bigNote(f,i);
     const run=readRun(s,checkpointHarvest(s).run);assert.equal(f.cli('retire').out.meta.retired,true);fs.rmSync(f.home,{recursive:true});
@@ -2772,10 +2775,120 @@ test('4.2.0 compatibility with the released okf 4.1.1: what it registered loads 
     r=complete(s,next.id,judgment(f,s,next,{drop:true}));assert.equal(r.drain.status,'started');next=readRun(s,r.drain.run);
     assert.equal(complete(s,next.id,judgment(f,s,next,{drop:true})).drain.status,'drained');assert.deepEqual(blockers(s),[]);
   }
-  // A 4.2 delivered review, once its drain is finished, is settled by 4.1.1's own complete.
-  {const f=fixture(t,{kind:'git'});const s=f.source();note(f);const {run}=prepared(f,s);complete(s,run.id,judgment(f,s,run));
-    assert.equal(f.cli('retire').out.meta.retired,true);fs.rmSync(f.home,{recursive:true});assert.deepEqual(blockers(s),[]);
+  // A review still owed blocks it too: 4.1.1 stops at a recorded close and never reaches a later merge.
+  {const {f,s,run,repo2}=twoGitDestinations(t);closePR(f,run.receipts.project.pr.number);
+    assert.equal(checkpointHarvest(s,{noLaunch:true}).settled[0].outcome,'open');
+    assert.equal(f.cli('retire').out.meta.retired,true);fs.rmSync(f.home,{recursive:true});fs.rmSync(run.worker.home,{recursive:true});
+    assert.deepEqual(blockers(s),['review'],'a review is still owed: no re-pin');
+    mergeDelivered(f,repo2,run.receipts.secondary);
+    for(let i=0;i<2;i++) assert.throws(()=>old.worker.complete(old.sources.loadSource(s.file),run.id),{code:'E_PR'});
+    assert.equal(loadStatus(s).accepted[`${run.id}/secondary`],undefined,'4.1.1 never reaches the merged destination');
+    assert.deepEqual(statuses(complete(s,run.id).receipts),{project:'rejected',secondary:'accepted'},'4.2 records it');assert.deepEqual(blockers(s),[]);
+    assert.equal(old.sources.loadStatus(old.sources.loadSource(s.file)).accepted[`${run.id}/secondary`].status,'accepted','settled 4.2 custody reads under 4.1.1');
+  }
+});
+test('4.2.0 every CI job that runs npm test checks out the history the 4.1.1 compatibility test reads',()=>{
+  const workflow=fs.readFileSync(join(ROOT,'.github/workflows/ci.yml'),'utf8'),jobs=workflow.split(/^jobs:$/m)[1].split(/^ {2}(?=[\w-]+:$)/m).filter(Boolean);
+  const testing=jobs.filter(job=>/\bnpm test\b/.test(job));assert.ok(testing.length>=2,'both the validate and the public-consumer jobs run npm test');
+  for(const job of testing) assert.match(job,/actions\/checkout@v4\n\s+with:\n(?:\s+#.*\n)*\s+fetch-depth: 0\n/,`${job.split(':')[0]}: full history`);
+});
+
+// okf 4.2.0 review R2 regressions: each asserts the corrected contract.
+const harvestOff={'deployment-off':()=>({OATS_SETTINGS:JSON.stringify({...JSON.parse(process.env.OATS_SETTINGS),harvest:'off'})}),'absolute-soul-off':f=>{soulOff(f);return {};}};
+/** A delivered Git run whose PR was closed and recorded: retained work an explicit rejudgment would recover. */
+function closedAndRecorded(t) {
+  const f=fixture(t,{kind:'git'});note(f);const {s,run}=prepared(f);put(join(f.dir,'sessions-inert'),'');complete(s,run.id,judgment(f,s,run));closePR(f,1);
+  assert.throws(()=>complete(s,run.id),{code:'E_PR'});return {f,s,run};
+}
+test('4.2.0 retry starts no new harvest work while harvest is off (deployment off, or an absolute soul opt-out): every launch, rejudgment and new worker is refused before any effect; --launch overrides nothing',t=>{
+  const routes={
+    'active ready --launch':()=>{const f=fixture(t);note(f);const {s}=prepared(f);put(join(f.dir,'sessions-inert'),'');return {f,s,args:['--launch']};},
+    'active ready --adopt-home --launch':()=>{const f=fixture(t);note(f);const {s,run}=prepared(f);put(join(f.dir,'sessions-inert'),'');return {f,s,args:['--adopt-home',run.worker.home,'--launch']};},
+    'deferred --launch':()=>{const f=fixture(t);put(join(f.dir,'sessions-inert'),'');note(f);const s=f.source();capture(s,{final:true});
+      const {result}=observeCalls(()=>retireDrain(s,{deadline:Date.now()+110000}),{after:c=>isSpawn(c)?105000:0});assert.equal(result.status,'deferred');return {f,s,args:['--launch']};},
+    'active --rejudge':()=>{const f=fixture(t,{kind:'git'});note(f);const {s,run}=prepared(f);const j=judgment(f,s,run,{drop:true});
+      acceptedCommit(f,{'knowledge/peer/log.md':'* another writer\n'});assert.throws(()=>complete(s,run.id,j),e=>e.code==='E_BASELINE');return {f,s,args:['--rejudge']};},
+    'historical --run --rejudge':()=>{const {f,s,run}=closedAndRecorded(t);return {f,s,args:['--run',run.id,'--rejudge']};},
+    'historical --run --rejudge --launch':()=>{const {f,s,run}=closedAndRecorded(t);return {f,s,args:['--run',run.id,'--rejudge','--launch']};},
+    'no active run':()=>{const f=fixture(t);note(f);const s=f.source();capture(s);return {f,s,args:[]};},
+    'no active run --launch':()=>{const f=fixture(t);note(f);const s=f.source();capture(s);put(join(f.dir,'sessions-inert'),'');return {f,s,args:['--launch']};},
+  };
+  for(const [route,make] of Object.entries(routes)) for(const [mode,off] of Object.entries(harvestOff)) {
+    const {f,s,args}=make(),env=off(f),before={spawns:spawnsOf(f).length,sessions:sessionsOf(f).length,status:loadStatus(s)};
+    const runs=()=>fs.existsSync(join(dirname(s.file),'runs'))?tree(join(dirname(s.file),'runs')):{};const custody=runs();
+    const r=f.cli('retry',['--source',s.file,...args],env);const why=`${route} under ${mode}: ${r.stdout}`;
+    assert.equal(r.status,0,why);assert.equal(r.out.result.status,'harvest-off',why);assert.ok(r.out.result.refused.length,why);
+    assert.equal(spawnsOf(f).length,before.spawns,why);assert.equal(sessionsOf(f).length,before.sessions,why);
+    assert.deepEqual(loadStatus(s),before.status,why);assert.deepEqual(runs(),custody,`${why}: no run changed`);
+  }
+  // Controls: harvest on, the same commands start what they name.
+  {const f=fixture(t);note(f);const {s}=prepared(f);put(join(f.dir,'sessions-inert'),'');assert.equal(f.cli('retry',['--source',s.file,'--launch']).out.result.status,'running');assert.equal(sessionsOf(f).length,1);}
+  {const {f,s,run}=closedAndRecorded(t);const r=f.cli('retry',['--source',s.file,'--run',run.id,'--rejudge','--launch']);assert.equal(r.out.result.recoveryOf,run.id,r.stdout);assert.equal(sessionsOf(f).length,1);}
+});
+test('4.2.0 while harvest is off, retry still recovers existing custody without new work: a persisted judgment is delivered (and hands on no successor), a confirmed worker is prepared and an already-created one adopted, never launched',t=>{
+  // A persisted judgment whose delivery stopped: delivered, the drain paused, no successor.
+  {const f=fixture(t,{kind:'git'});const s=f.source();put(join(f.dir,'sessions-inert'),'');for(const i of [0,1]) bigNote(f,i);
+    const run=readRun(s,f.cli('harvest').out.result.run);put(join(f.dir,'gh-fail'),'');
+    assert.throws(()=>complete(s,run.id,judgment(f,s,run)));fs.rmSync(join(f.dir,'gh-fail'));assert.ok(readRun(s,run.id).judgment);soulOff(f);
+    const r=deploymentCli(f,'retry',['--source',s.file]);assert.equal(r.status,0,r.stdout);assert.equal(r.out.result.processed,true);assert.equal(r.out.result.receipts.project.status,'delivered');
+    assert.equal(r.out.result.drain.status,'harvest-off');assert.equal(spawnsOf(f).length,1,'no successor');assert.equal(sessionsOf(f).length,1);
+    assert.equal(loadStatus(s).drain.paused.kind,'harvest-off');assert.equal(loadStatus(s).drain.boundary.length,2);
+  }
+  // A confirmed worker whose preparation stopped is prepared in place; --launch stays refused.
+  {const f=fixture(t);const s=f.source();note(f);capture(s);let n=0;
+    assert.throws(()=>renameFailure((from,to)=>to.includes('/work/bases/project/') && ++n===2,()=>runSource(s,{manual:true,noLaunch:true})),/injected/);soulOff(f);
+    const refused=deploymentCli(f,'retry',['--source',s.file,'--launch']);assert.equal(sessionsOf(f).length,0,'no session start was even attempted');assert.equal(refused.out.result.status,'harvest-off',refused.stdout);
+    const r=deploymentCli(f,'retry',['--source',s.file]);assert.equal(r.out.result.status,'ready',r.stdout);assert.equal(sessionsOf(f).length,0);assert.equal(spawnsOf(f).length,1);
+  }
+  // An uncertain spawn's home is adopted; adopting with --launch is refused before the adoption.
+  {const f=fixture(t);const s=f.source();note(f);capture(s);const fake=process.env.OATS_CLI_BIN,text=fs.readFileSync(fake,'utf8');
+    put(fake,text.replace('out({instance,home,work:','process.exit(48);out({instance,home,work:'));assert.throws(()=>runSource(s,{manual:true,noLaunch:true}),/failed/);put(fake,text);
+    const run=readRun(s,loadStatus(s).activeRun),home=join(f.dir,'workers',harvesterInstance(run.id));assert.equal(run.status,'spawn-intent');soulOff(f);
+    assert.equal(deploymentCli(f,'retry',['--source',s.file,'--adopt-home',home,'--launch']).out.result.status,'harvest-off');assert.equal(readRun(s,run.id).status,'spawn-intent');
+    const r=deploymentCli(f,'retry',['--source',s.file,'--adopt-home',home]);assert.equal(r.out.result.status,'ready',r.stdout);assert.equal(sessionsOf(f).length,0);assert.equal(spawnsOf(f).length,1);
+  }
+  // The manifest-bound one-shot keeps its own contract: the host switch does not govern it.
+  {const o=onceFixture(t);const r=harvestOnce({home:o.f.home,records:o.file,noLaunch:true});put(join(o.f.dir,'sessions-inert'),'');
+    assert.equal(JSON.parse(process.env.OATS_SETTINGS).harvest,'off');
+    const launched=retry(loadSource(r.source),{launch:true});assert.equal(launched.status,'running');assert.equal(sessionsOf(o.f).length,1);
+  }
+});
+test('4.2.0 a no-launch hold is durable: retirement and ordinary checkpoints grow its custody but launch nothing; only an explicit retry --launch lifts it',t=>{
+  const f=fixture(t);const s=f.source();put(join(f.dir,'sessions-inert'),'');for(const i of [0,1,2]) bigNote(f,i);
+  assert.equal(checkpointHarvest(s,{deadline:Date.now()+5000}).status,'deferred');
+  const diagnostic=readRun(s,checkpointHarvest(s,{noLaunch:true}).run);
+  assert.equal(complete(s,diagnostic.id,judgment(f,s,diagnostic,{drop:true})).drain.status,'held');
+  const launch=`cd ${f.context} && oats okf retry --source ${s.file} --launch --soul source --json`;
+  note(f,'later.md','Written after the diagnostic.');
+  const h=f.cli('harvest');assert.equal(h.out.result.status,'held',h.stdout);assert.equal(h.out.result.next,launch);
+  note(f,'tail.md','The final decision.');
+  const retired=f.cli('retire');assert.equal(retired.out.meta.retired,true);assert.equal(retired.out.meta.drain.status,'held',retired.stdout);assert.equal(retired.out.meta.drain.next,launch);
+  assert.equal(sessionsOf(f).length,0,'nothing launched');assert.equal(spawnsOf(f).length,1);
+  const st=loadStatus(s);assert.equal(st.drain.paused.kind,'no-launch');assert.equal(st.drain.boundary.length,4,'custody grew: two held inputs, the later note and the tail');
+  assert.equal(retireDrain(s).status,'held');assert.equal(continueDrain(s).status,'held');assert.equal(sessionsOf(f).length,0);
+  fs.rmSync(f.home,{recursive:true});
+  const owed=outstanding(s,loadStatus(s));assert.deepEqual(owed.map(o=>o.kind),['drain']);assert.equal(owed[0].command,launch);
+  const go=deploymentCli(f,'retry',['--source',s.file,'--launch']);assert.equal(go.out.result.status,'running',go.stdout);assert.equal(sessionsOf(f).length,1);
+  assert.equal(loadStatus(s).drain.paused,undefined,'the explicit launch lifted the hold');
+  const next=readRun(s,go.out.result.run);assert.equal(complete(s,next.id,judgment(f,s,next,{drop:true})).drain.status,'started','and the drain continues');
+});
+test('4.2.0 an interrupted rebuild of a retired worker\'s checkout never blocks settlement: the exact complete command, after both homes are gone, rebuilds it and records the outcome',t=>{
+  for(const fault of ['deadline','transport']) {
+    const f=fixture(t,{kind:'git'});const s=f.source();note(f);const {run}=prepared(f,s);complete(s,run.id,judgment(f,s,run));fs.rmSync(run.worker.home,{recursive:true});
+    const rebuild=join(dirname(s.file),'runs',run.id,'project-recovery');
+    // Interrupted after the clone created the path, twice: by the deadline, or by a transport failure.
+    for(let i=0;i<2;i++) {
+      let cloned=false;
+      const {result}=observeCalls(()=>checkpointHarvest(s,{noLaunch:true,deadline:Date.now()+110000}),{
+        after:c=>{if(c.bin==='git' && c.args.includes('clone')) {cloned=true;return fault==='deadline'?40000:0;}return 0;},
+        fail:c=>fault==='transport' && cloned && c.bin==='git' && c.args.includes('fetch')});
+      assert.ok(cloned,fault);assert.equal(result.settled[0].outcome,'unsettled',`${fault}: ${JSON.stringify(result.settled)}`);assert.ok(fs.existsSync(rebuild),'the interrupted rebuild is left behind');
+    }
+    assert.equal(readRun(s,run.id).stages.project.checkout,run.stages.project.checkout,'the run still names the deleted worker checkout');
+    assert.equal(f.cli('retire').out.meta.retired,true);fs.rmSync(f.home,{recursive:true});
     mergeDelivered(f,f.repo,readRun(s,run.id).receipts.project);
-    assert.equal(old.worker.complete(old.sources.loadSource(s.file),run.id).receipts.project.status,'accepted');assert.deepEqual(outstanding(s,loadStatus(s)),[]);
+    const [owed]=outstanding(s,loadStatus(s));assert.equal(owed.command,`cd ${f.context} && oats okf complete --source ${s.file} --run ${run.id} --soul source --json`);
+    const done=deploymentCli(f,'complete',['--source',s.file,'--run',run.id]);assert.equal(done.status,0,`${fault}: ${done.stdout}`);assert.equal(done.out.result.receipts.project.status,'accepted');
+    assert.equal(readRun(s,run.id).stages.project.checkout,rebuild);assert.deepEqual(outstanding(s,loadStatus(s)),[]);
   }
 });

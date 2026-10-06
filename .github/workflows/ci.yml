@@ -42,6 +42,9 @@ jobs:
       CONSUMER_VERSION: ${{ inputs.consumer_version }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # npm test runs the okf 4.1.1 compatibility test from history.
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
