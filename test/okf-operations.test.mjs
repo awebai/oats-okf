@@ -289,7 +289,7 @@ test('okf-harvest harvest-status reports a background delivery: in progress, fai
   const failed = status(judged({ state: 'failed', pid: 1, host: hostname(), error: { code: 'E_PR', message: 'gh failed' } }));
   assert.equal(failed.action, 'stay'); assert.match(failed.reason, /delivery failed: E_PR: gh failed.*run the complete command again/);
   const baseline = status(judged({ state: 'failed', pid: 1, host: hostname(), error: { code: 'E_BASELINE', message: 'accepted base changed' } }));
-  assert.match(baseline.reason, /E_BASELINE.*operator.*retry --rejudge/);
+  assert.match(baseline.reason, /E_BASELINE.*operator.*retry --source .* --rejudge --soul /);
   const never = status(judged());
   assert.equal(never.action, 'stay', 'a judged run without receipts is not finished'); assert.match(never.reason, /not delivered.*run the complete command again/);
 });

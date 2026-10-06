@@ -24,11 +24,13 @@ Checkpoint harvest (#49); the harvester retires after delivery (#47). #46 and
   command), then captures and requests a finite drain (`started`, or
   `empty`). Only a busy capture lock is reported as another capture
   (`preparing`); a lock met inside the capture is an error.
-- **The switch is the deployment's now.** A home's settings are its spawn's
-  snapshot (the kernel dispatches its commands and hooks with them), so from
-  a home every switch read (checkpoint, retire, retry, drain continuation,
-  run-source) asks the deployment through `oats okf harvest-status --soul
-  <soul> --json` run from the source's deployment, without the home's
+- **The switch is the deployment's now, for the source's own soul.** A
+  home's settings are its spawn's snapshot (the kernel dispatches its
+  commands and hooks with them), and an operator command's are those of the
+  soul it was dispatched as, so every switch read (checkpoint, retire,
+  retry, drain continuation, run-source, from a home or not) asks the
+  deployment through `oats okf harvest-status --soul <source soul> --json`
+  run from the source's deployment, without the invoking process's
   identity or settings, within the invocation's budget, and its rows give
   the soul's opt-out as the deployment resolves the soul now. Unknown consent
   (a read that fails, times out or is malformed, or a switch reported
@@ -41,7 +43,8 @@ Checkpoint harvest (#49); the harvester retires after delivery (#47). #46 and
   continuation (a completion's successor, also from a detached delivery) is
   a new action: it reads the deployment's switch through that view at that
   moment, with or without a home, never the settings its command was
-  dispatched with; the first batch's consent is not reused for it.
+  dispatched with; the first batch's consent is not reused for it. Every
+  printed operator or recovery command names the source's soul (`--soul`).
   Homes copied from earlier versions keep their copied modules: a pin does
   not retrofit them (see the cutover). Its answer replaces the
   run's status.

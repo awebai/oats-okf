@@ -100,7 +100,7 @@ export function setupHarvest(value) {
   const line = `settings:\n  oats.okf:\n    harvest: ${value}`;
   const file = localFile();
   const note = value === 'on'
-    ? 'Harvest applies to new spawns of souls that do not opt out (knowledge: { harvest: off }). Earlier sessions are never captured. Run `oats okf harvest-status` to confirm.'
+    ? 'Harvest applies to new spawns of souls that do not opt out (knowledge: { harvest: off }). Earlier sessions are never captured. Run `oats okf harvest-status --soul <soul>` to confirm.'
     : 'New spawns register no source. Registered sources stop capturing at their next run-source. Nothing is deleted.';
   if (!file) return { written: false, harvest: value, reason: 'no oats-local.yaml found (OATS_WORKSPACE or up from the current directory)', add: line, note };
   const edited = editLocalYaml(fs.readFileSync(file, 'utf8'), value);

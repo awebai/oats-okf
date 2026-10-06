@@ -95,7 +95,10 @@ Three tests skip by default, with explicit Node test skip output:
    with this package pinned by commit, switch only the deployment's harvest
    setting, and check that the existing homes' checkpoint and retire hook
    capture and start nothing; an explicit spawn override and a soul opt-out
-   are the controls. No model is launched.
+   are the controls, and an operator command dispatched as another soul reads
+   the source's own soul's policy. No model is launched. The optional
+   public-consumer CI job runs this file alone, before its full suite, and
+   fails if it is skipped (it needs the selected kernel at >= 0.43.0).
 
 Native tests use `OATS_OKF_NATIVE_CLI`, falling back to
 `OATS_OKF_CONSUMER_CLI`. All of them run with:

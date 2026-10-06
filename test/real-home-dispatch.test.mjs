@@ -43,10 +43,14 @@ function workspace(t) {
   const soulYaml = (extra = '') => write(join(soul, 'soul.yaml'), `schemaVersion: 2\nname: source\ndescription: Domain expert.\nwork: directory\n${extra}`);
   soulYaml(); write(join(soul, 'AGENTS.md'), '# Source\nDomain expert.\n');
   write(join(soul, 'okf.json'), JSON.stringify({ version: 1, owner: 'source-owner', owns: ['project/expert'], reads: [] }));
+  // A second provider-bearing soul, which never opts out: an operator may dispatch a command as it.
+  const other = join(ws, 'souls/other');
+  write(join(other, 'soul.yaml'), 'schemaVersion: 2\nname: other\ndescription: Another expert.\nwork: directory\n'); write(join(other, 'AGENTS.md'), '# Other\nAnother expert.\n');
+  write(join(other, 'okf.json'), JSON.stringify({ version: 1, owner: 'other-owner', owns: ['project/other'], reads: [] }));
   repo(ws, join(base, 'ws.git'));
   const dep = join(base, 'dep'), state = join(base, 'state');
   write(join(base, 'bindings.json'), JSON.stringify({ version: 1, stateDir: state, bases: { project: { id: 'test-base', kind: 'directory', path: join(base, 'accepted') } } }));
-  write(join(base, 'nodes.json'), JSON.stringify({ expert: { path: 'expert', owner: 'source-owner' } }));
+  write(join(base, 'nodes.json'), JSON.stringify({ expert: { path: 'expert', owner: 'source-owner' }, other: { path: 'other', owner: 'other-owner' } }));
   // What a host changes: the deployment's own oats-local.yaml.
   const host = value => write(join(dep, 'oats-local.yaml'), `schemaVersion: 2\nworkspace: file://${base}/ws.git\nsettings:\n  oats.okf:\n    bindings-file: ${base}/bindings.json\n    harvest: ${value}\n`);
   host('on');
@@ -181,4 +185,19 @@ test('4.2.0 real home dispatch: a live switch the deployment reports unknown (a 
   assert.equal(retired.removedDir, false, JSON.stringify(retired)); assert.ok((retired.rollbackIncomplete || []).some(line => /E_HARVEST_CONSENT_UNKNOWN/.test(line)));
   assert.equal(fs.existsSync(a), true); const st = w.status(file);
   assert.equal(st.retired, false); assert.equal(st.harvestOff, undefined); assert.deepEqual(st.captured.inputs, []); assert.equal(w.harvesters(), 0);
+});
+
+test('4.2.0 real dispatch: an operator command dispatched as another soul reads the source\'s own soul policy; an opted-out target captures and starts nothing, a permitted one starts', { skip }, t => {
+  const w = workspace(t);
+  const a = w.spawn('src-a'); w.note(a);
+  const file = w.sourceFile(a);
+  // The source's soul opts out; the soul the operator dispatches as does not.
+  w.publishSoul('knowledge:\n  harvest: off\n');
+  const refused = w.oats(['okf', 'run-source', '--source', file, '--manual', '--no-launch', '--soul', 'other']);
+  assert.equal(refused.result?.status, 'harvest-off', JSON.stringify(refused)); assert.match(refused.result.reason, /soul opts out/);
+  assert.deepEqual(w.status(file).captured.inputs, []); assert.equal(w.harvesters(), 0);
+  // The source's soul permits again: the same dispatch starts it.
+  w.publishSoul();
+  const started = w.oats(['okf', 'run-source', '--source', file, '--manual', '--no-launch', '--soul', 'other']);
+  assert.equal(started.result?.status, 'ready', JSON.stringify(started)); assert.equal(w.status(file).captured.inputs.length, 1); assert.equal(w.harvesters(), 1);
 });

@@ -107,7 +107,7 @@ function deliveryReason(delivery, pending) {
   if (live) return `delivery in progress (${delivery.step || delivery.state})`;
   if (delivery?.state === 'failed') {
     const { code, message } = delivery.error ?? {};
-    return `delivery failed: ${code}: ${message}; ${code === 'E_BASELINE' ? 'the accepted base changed under your judgment: report it to your operator, who rejudges with oats okf retry --rejudge' : RESUME}`;
+    return `delivery failed: ${code}: ${message}; ${code === 'E_BASELINE' ? 'the accepted base changed under your judgment: report it to your operator, who rejudges with oats okf retry --source <source descriptor> --rejudge --soul <the source\'s soul>' : RESUME}`;
   }
   if (['starting', 'running'].includes(delivery?.state)) return `delivery stopped at "${delivery.step || delivery.state}"; ${RESUME}`;
   return `destinations not delivered: ${pending.join(', ')}; ${RESUME}`;

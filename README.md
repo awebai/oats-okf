@@ -26,10 +26,12 @@ to run it. `oats okf harvest [--no-launch] --json`, from the instance home:
    now**: off answers `E_HARVEST_OFF` and captures nothing. A home's own
    settings are what its spawn captured, not the deployment's current
    consent: the kernel dispatches a home's commands and hooks with that
-   snapshot, so switching the deployment off would not reach them. From a
-   home the switch is read through the provider's own deployment-scoped view,
-   `oats okf harvest-status --soul <soul> --json` run from the source's
-   deployment without the home's identity or settings (the kernel resolves
+   snapshot, so switching the deployment off would not reach them; and an
+   operator command's settings are those of whichever soul it was dispatched
+   as. So every switch read, from a home or not, is the provider's own
+   deployment-scoped view for the source's own soul, `oats okf harvest-status
+   --soul <source soul> --json` run from the source's deployment without the
+   invoking process's identity or settings (the kernel resolves
    the deployment's settings and the soul's current revision for it), within
    the checkpoint's budget (at most 20 s). The soul's opt-out stays absolute,
    as the deployment resolves the soul now (not the home's spawn-time copy).
@@ -41,10 +43,10 @@ to run it. `oats okf harvest [--no-launch] --json`, from the instance home:
    harvest=on`, which the kernel records with origin `spawn`) stands in for
    the deployment's switch for the source's own first batch, at a checkpoint
    or its retirement: it never skips the read and never overrides the soul's
-   opt-out. A host value captured at spawn is no override. Operator commands run from the
-   deployment (`run-source`, `retry`, `complete`) already get its current
-   settings and read them in place; run from a home they read the
-   deployment's like a checkpoint, with no override.
+   opt-out. A host value captured at spawn is no override. Operator commands
+   (`run-source`, `retry`, `complete` and its automatic continuation) read
+   the same view, with no override. Every recovery command this package
+   prints names the source's soul (`--soul`).
 2. Takes the source's worker lock. If another live process holds it, the
    answer is `already-running`: with the run id when a run exists, else
    `preparing: true` (no model is known to run yet). A lock whose holder died
@@ -130,7 +132,10 @@ timeout: with under 91 s left (the spawn plus a second for the records
 written before it) no harvester is started (`deferred`, nothing spawned, no
 run active, the drain and the input in custody, `next` the exact
 `run-source --source FILE --manual`); the harness version check only uses
-the time beyond that. A spawned worker is
+the time beyond that. In plain terms: the whole checkpoint has 110 s, and
+a harvester needs 91 s of it, so a busy source (slow settlement or capture)
+can leave too little: the checkpoint then defers and an operator recovers
+with the printed `run-source --manual`. A spawned worker is
 not launched with under 15 s left, or when staging stopped at the deadline:
 it stays confirmed, the run stays active, and the answer is `deferred` with
 `phase: ready` (or `scaffolded`), `run`, `home`, `launched: false` and

@@ -7,7 +7,7 @@ import { SCHEDULE_REMOVED } from '../lib/config.mjs';
 import { harvestStatus, setupHarvest } from '../lib/harvest-status.mjs';
 import { settings } from '../lib/config.mjs';
 import { CONSULT } from '../lib/consult.mjs';
-import { runSource, complete, completeInBackground, retry, readRun, requireQualifiedHelper, checkpointHarvest, retireDrain } from '../lib/worker.mjs';
+import { runSource, complete, completeInBackground, retry, readRun, requireQualifiedHelper, checkpointHarvest, retireDrain, operatorCommand } from '../lib/worker.mjs';
 import { initBase, migrate, deliverMigration, cutoverMigration, migrateSource, forgetMigration } from '../lib/migration.mjs';
 import { inspect, inspectConsultOnly } from '../lib/inspection.mjs';
 import { harvestOnce } from '../lib/once.mjs';
@@ -19,9 +19,10 @@ oats okf harvest [--home PATH] [--no-launch] [--json]
   capture, and start the harvester on what was captured; already-running and empty need no action)
 oats okf harvest --once --home PATH --records MANIFEST [--override-opt-out] [--no-launch] [--json]
   (operator, from the deployment with --soul: one reviewed harvest of a seat from a hash-verified manifest; registers nothing)
-oats okf run-source --source FILE --manual [--no-launch] [--json]   (operator recovery; no schedule)
-oats okf complete --source FILE --run ID --judgment FILE [--json]
-oats okf retry --source FILE [--run ID --rejudge | --rejudge | --launch | --adopt-home PATH] [--json]
+oats okf run-source --source FILE --manual [--no-launch] --soul SOUL [--json]   (operator recovery; no schedule)
+oats okf complete --source FILE --run ID [--judgment FILE] --soul SOUL [--json]
+oats okf retry --source FILE [--run ID --rejudge | --rejudge | --launch | --adopt-home PATH] --soul SOUL [--json]
+  (operator commands run from the deployment with --soul, the source's own soul)
 oats okf bases [--fresh] [--json]
 oats okf index [--base ALIAS] [NODE | ALIAS/NODE] [--fresh] [--json]
 oats okf cat --base ALIAS PATH [--from PATH] [--fresh] [--json]
@@ -217,7 +218,12 @@ else {
     } else if(event==='run-source') {
       // okf 4.2.0: run-source is the operator's explicit recovery only. Without
       // --manual it is an okf <= 4.1 scheduler job firing: inert, and named.
-      if(!flags.manual) fail('E_HARVEST_SCHEDULE_REMOVED',`run-source without --manual is the removed scheduled harvest; nothing was captured. ${SCHEDULE_REMOVED} For explicit recovery of this source run: oats okf run-source --source FILE --manual`);
+      if(!flags.manual) {
+        // The exact recovery, with the source's own soul selector when its descriptor is readable.
+        let recovery='oats okf run-source --source FILE --manual --soul <the source\'s soul> --json, from its deployment';
+        try {const s=src();recovery=operatorCommand(s,['run-source','--source',s.file,'--manual']);} catch { /* the descriptor is unreadable: the generic form */ }
+        fail('E_HARVEST_SCHEDULE_REMOVED',`run-source without --manual is the removed scheduled harvest; nothing was captured. ${SCHEDULE_REMOVED} For explicit recovery of this source run: ${recovery}`);
+      }
       // The deployment can switch harvest off after a source registered: it
       // then captures and processes nothing.
       const source=src(),sw=sourceSwitch(source);
@@ -233,7 +239,7 @@ else {
       result=retry(s,{run:flags.run,rejudge:!!flags.rejudge,launch:!!flags.launch,adoptHome:flags['adopt-home']});
     }
     else if(event==='inspect') result=consultOnly?inspectConsultOnly(consultSource(home)):inspect(src());
-    else if(event==='setup' && (flags.source || flags.enable || flags.disable || flags['install-host'])) fail('E_REMOVED','oats.okf 4.2 has no harvest schedules, so setup --source/--enable/--disable/--install-host are gone: the working agent harvests at its checkpoints (`oats okf harvest`); `oats okf setup --harvest on|off` switches harvest for the deployment (a soul opts out with knowledge: { harvest: off }); `oats okf setup --remove-schedules` removes the jobs okf <= 4.1 created. The shared host timer is not okf\'s to install or remove.');
+    else if(event==='setup' && (flags.source || flags.enable || flags.disable || flags['install-host'])) fail('E_REMOVED','oats.okf 4.2 has no harvest schedules, so setup --source/--enable/--disable/--install-host are gone: the working agent harvests at its checkpoints (`oats okf harvest`); `oats okf setup --harvest on|off --soul <soul>` switches harvest for the deployment (a soul opts out with knowledge: { harvest: off }); `oats okf setup --remove-schedules --soul <soul>` removes the jobs okf <= 4.1 created, once per state namespace. The shared host timer is not okf\'s to install or remove.');
     else if(event==='setup' && flags.harvest!==undefined) {
       if(flags['remove-schedules']) fail('E_USAGE','setup --harvest takes no other setup flag');
       result=setupHarvest(flags.harvest);

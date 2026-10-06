@@ -83,7 +83,7 @@ export function withLock(path, fn, { waitMs = 0, reclaimDead = false } = {}) {
       if(Date.now() >= deadline) {
         if(deadline < own) fail('E_DEADLINE', `busy lock: ${path}; this invocation's time budget is spent, so nothing was done under it, and what is persisted resumes`);
         const owner = lockOwner(join(path, 'owner.json'));
-        if(owner?.host === hostname() && !pidAlive(owner.pid)) fail('E_LOCKED', `abandoned lock: ${path} is held by process ${owner.pid}, which is gone; once no oats okf process is running, release it with: oats okf unlock --lock ${quote(path)} --token ${quote(owner.token)}`);
+        if(owner?.host === hostname() && !pidAlive(owner.pid)) fail('E_LOCKED', `abandoned lock: ${path} is held by process ${owner.pid}, which is gone; once no oats okf process is running, release it with: oats okf unlock --lock ${quote(path)} --token ${quote(owner.token)} --soul <soul>`);
         if(owner?.host === hostname()) fail('E_LOCKED', `busy lock: ${path} is held by running process ${owner.pid}; try again once it finishes`);
         fail('E_LOCKED', `busy or abandoned lock: ${path}; inspect owner.json, never reclaim by age`);
       }

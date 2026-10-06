@@ -79,8 +79,10 @@ else if(consentRead) {
   if(fs.existsSync(join(root,'consent-read-fail'))) {console.log(JSON.stringify({schemaVersion:1,ok:false,error:{code:'E_CONFIG_BROKEN',message:'fixture: the deployment cannot be resolved'}}));process.exit(1);}
   if(fs.existsSync(join(root,'consent-read-malformed'))) {console.log(JSON.stringify({schemaVersion:1,ok:true,result:{sources:[]}}));process.exit(0);}
   if(fs.existsSync(join(root,'consent-read-slow'))) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,Number(fs.readFileSync(join(root,'consent-read-slow'),'utf8')));
+  // The soul --soul names, as the deployment resolves it now; an unknown soul is refused.
+  const soulFile=join(root,'deployment-soul-'+val('--soul'));if(!fs.existsSync(soulFile)) {console.log(JSON.stringify({schemaVersion:1,ok:false,error:{code:'E_SOUL_UNKNOWN',message:'fixture: no soul '+val('--soul')}}));process.exit(1);}
   const {spawnSync}=await import('node:child_process');
-  const r=spawnSync(process.execPath,[${JSON.stringify(CLI)},'harvest-status',...a.slice(2)],{cwd:process.cwd(),encoding:'utf8',env:{...process.env,OATS_SETTINGS:fs.readFileSync(join(root,'deployment-settings.json'),'utf8'),OATS_SETTINGS_ORIGINS:'{}',OATS_SOUL:fs.readFileSync(join(root,'deployment-soul'),'utf8')}});
+  const r=spawnSync(process.execPath,[${JSON.stringify(CLI)},'harvest-status',...a.slice(2)],{cwd:process.cwd(),encoding:'utf8',env:{...process.env,OATS_SETTINGS:fs.readFileSync(join(root,'deployment-settings.json'),'utf8'),OATS_SETTINGS_ORIGINS:'{}',OATS_SOUL:fs.readFileSync(soulFile,'utf8')}});
   process.stdout.write(r.stdout);process.stderr.write(r.stderr);process.exit(r.status ?? 94);
 }
 else {console.error('unknown fixture call '+JSON.stringify(a));process.exit(90);}
@@ -110,7 +112,7 @@ else process.exit(44);
     if(root!=='.') put(join(repo,'code.txt'),'code baseline\n');
     git(repo,['add','.']);git(repo,['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','baseline']);
   }
-  const home=join(context,'source-home'),soul=join(context,'source-soul');fs.mkdirSync(join(home,'work'),{recursive:true});fs.mkdirSync(soul);put(join(dir,'deployment-soul'),soul);
+  const home=join(context,'source-home'),soul=join(context,'source-soul');fs.mkdirSync(join(home,'work'),{recursive:true});fs.mkdirSync(soul);put(join(dir,'deployment-soul-source'),soul);
   put(join(soul,'AGENTS.md'),'# Expert\nOwn domain rationale and hard-won limitations.\n');
   put(join(soul,'soul.yaml'),'name: source\nwork: directory\n');save(join(soul,'okf.json'),{version:1,owner:'owner-1',owns:['project/expert'],reads:['project/peer']});
   fs.symlinkSync(soul,join(home,'soul'));save(join(home,'instance.json'),{instance:'source-one',agent:'source',repo:context,work:'directory',launched:true});
@@ -3103,9 +3105,11 @@ test('4.2.0 consent is the deployment\'s now: a home invocation reads it through
   // Slow: bounded by the invocation's deadline.
   {const f=fixture(t);const s=f.source();put(join(f.dir,'consent-read-slow'),'5000');
     const started=performance.now();assert.throws(()=>sourceSwitch(s,{firstBatch:true,deadline:Date.now()+500}),{code:'E_HARVEST_CONSENT_UNKNOWN'});assert.ok(performance.now()-started<3000);}
-  // A deployment-scoped invocation already holds the deployment's settings: it reads them in place.
+  // A deployment-scoped invocation reads it the same way, for the source's own soul: its own settings are
+  // those of whichever soul it was dispatched as, and may be stale.
   {const f=fixture(t);const s=f.source();note(f);deploymentHarvest(f,'off');
-    const r=deploymentCli(f,'run-source',['--source',s.file,'--manual'],{OATS_SETTINGS:JSON.stringify({'bindings-file':f.bindingFile,harvest:'off'})});assert.equal(r.out.result.status,'harvest-off',r.stdout);assert.deepEqual(consentReads(f),[]);}
+    const r=deploymentCli(f,'run-source',['--source',s.file,'--manual'],{OATS_SETTINGS:JSON.stringify({'bindings-file':f.bindingFile,harvest:'on'})});assert.equal(r.out.result.status,'harvest-off',r.stdout);
+    assert.deepEqual(consentReads(f).map(read=>read.a),[['okf','harvest-status','--soul','source','--json']]);}
 });
 
 // okf 4.2.0 review R5: an automatic continuation is a new action boundary.
@@ -3141,4 +3145,26 @@ test('4.2.0 a detached delivery\'s automatic successor reads the deployment\'s c
   // Control: still on at the deployment, the successor starts.
   {const {f,r,before}=await detached(()=>{});
     assert.equal(r.drain?.status,'started',JSON.stringify(r.drain));assert.equal(effectsOf(f).spawns,before.spawns+1);assert.equal(effectsOf(f).sessions,before.sessions+1);}
+});
+
+// okf 4.2.0 paired maintainer return: the policy is the SOURCE's soul's, whichever soul dispatched the command.
+test('4.2.0 an operator command dispatched as another soul reads the source\'s own soul policy: a target that opts out captures and starts nothing; a permitted target starts',t=>{
+  const f=fixture(t);const s=f.source();note(f);put(join(f.dir,'sessions-inert'),'');
+  // Another provider-bearing soul of the deployment, which does not opt out.
+  const other=join(f.context,'other-soul');put(join(other,'soul.yaml'),'name: other\nwork: directory\n');save(join(other,'okf.json'),{version:1,owner:'owner-2',owns:['project/peer'],reads:[]});put(join(f.dir,'deployment-soul-other'),other);
+  const asOther={OATS_SOUL:other,OATS_AGENT:'other',OATS_SETTINGS:JSON.stringify({'bindings-file':f.bindingFile,harvest:'on'})};
+  soulOff(f);const before=effectsOf(f);
+  const r=deploymentCli(f,'run-source',['--source',s.file,'--manual'],asOther);assert.equal(r.out.result.status,'harvest-off',r.stdout);assert.match(r.out.result.reason,/soul opts out/);
+  const again=deploymentCli(f,'retry',['--source',s.file,'--launch'],asOther);assert.equal(again.out.result.status,'harvest-off',again.stdout);
+  assert.deepEqual(effectsOf(f),before);assert.deepEqual(loadStatus(s).captured.inputs,[]);
+  for(const read of consentReads(f)) assert.deepEqual(read.a,['okf','harvest-status','--soul','source','--json'],'the read targets the source\'s soul, not the dispatching one');
+  // The target permits: the same dispatch starts it.
+  put(join(f.soul,'soul.yaml'),'name: source\nwork: directory\n');
+  const go=deploymentCli(f,'run-source',['--source',s.file,'--manual'],asOther);assert.equal(go.out.result.status,'running',go.stdout);assert.equal(effectsOf(f).spawns,before.spawns+1);
+});
+test('4.2.0 every printed operator recovery hint names the source\'s soul',t=>{
+  const f=fixture(t);const s=f.source();
+  const raw=deploymentCli(f,'run-source',['--source',s.file]);assert.equal(raw.out.error.code,'E_HARVEST_SCHEDULE_REMOVED');
+  assert.ok(raw.out.error.message.endsWith(`For explicit recovery of this source run: cd ${f.context} && oats okf run-source --source ${s.file} --manual --soul source --json`),raw.out.error.message);
+  const removed=deploymentCli(f,'setup',['--enable']);assert.match(removed.out.error.message,/setup --harvest on\|off --soul <soul>.*setup --remove-schedules --soul <soul>/);
 });

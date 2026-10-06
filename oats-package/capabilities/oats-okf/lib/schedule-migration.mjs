@@ -45,7 +45,7 @@ function removeOne(source) {
   try { actual = call(['show']).schedule; }
   catch (e) {
     if (e.code === 'E_SCHEDULE_UNKNOWN') { markRemoved(source, job, 'absent'); return { job, ...at, status: 'absent' }; }
-    return { job, ...at, status: 'failed', code: 'E_SCHEDULE_MIGRATION_PENDING', error: `${e.code || 'E_RUNTIME'}: ${e.message}`, next: `inspect: ${inspect(source, job)}; then rerun oats okf setup --remove-schedules` };
+    return { job, ...at, status: 'failed', code: 'E_SCHEDULE_MIGRATION_PENDING', error: `${e.code || 'E_RUNTIME'}: ${e.message}`, next: `inspect: ${inspect(source, job)}; then rerun oats okf setup --remove-schedules --soul ${quote(source.agent)}` };
   }
   if (!actual || typeof actual !== 'object') return { job, ...at, status: 'failed', code: 'E_SCHEDULE_MIGRATION_PENDING', error: 'the scheduler answered no definition', next: `inspect: ${inspect(source, job)}` };
   const differs = ownershipMismatch(source, job, actual);
@@ -56,7 +56,7 @@ function removeOne(source) {
     catch (e) {
       if (e.code === 'E_SCHEDULE_UNKNOWN') { markRemoved(source, job, 'absent'); return { job, ...at, status: 'absent', evidence }; }
       effect(source, job, { step: 'disable', result: 'unknown', error: `${e.code || 'E_RUNTIME'}: ${e.message}` });
-      return { job, ...at, status: 'failed', code: 'E_SCHEDULE_MIGRATION_PENDING', evidence, error: `disable: ${e.message}`, next: `inspect: ${inspect(source, job)}; then rerun oats okf setup --remove-schedules` };
+      return { job, ...at, status: 'failed', code: 'E_SCHEDULE_MIGRATION_PENDING', evidence, error: `disable: ${e.message}`, next: `inspect: ${inspect(source, job)}; then rerun oats okf setup --remove-schedules --soul ${quote(source.agent)}` };
     }
   }
   try { call(['remove']); }
@@ -65,8 +65,8 @@ function removeOne(source) {
     const running = e.code === 'E_SCHEDULE_RUNNING';
     effect(source, job, { step: 'remove', result: running ? 'pending' : 'unknown', error: `${e.code || 'E_RUNTIME'}: ${e.message}` });
     return { job, ...at, status: running ? 'pending' : 'failed', code: 'E_SCHEDULE_MIGRATION_PENDING', disabled: true, evidence, error: e.message,
-      next: running ? `inspect: ${inspect(source, job)}; settle: let its run end, or resolve its unresolved attempt with oats schedule reconcile; never --force; then rerun oats okf setup --remove-schedules`
-        : `inspect: ${inspect(source, job)}; then rerun oats okf setup --remove-schedules` };
+      next: running ? `inspect: ${inspect(source, job)}; settle: let its run end, or resolve its unresolved attempt with oats schedule reconcile; never --force; then rerun oats okf setup --remove-schedules --soul ${quote(source.agent)}`
+        : `inspect: ${inspect(source, job)}; then rerun oats okf setup --remove-schedules --soul ${quote(source.agent)}` };
   }
   effect(source, job, { step: 'remove', result: 'confirmed' });
   markRemoved(source, job, 'remove-schedules');
