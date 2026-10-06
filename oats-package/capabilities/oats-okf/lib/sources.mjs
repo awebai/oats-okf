@@ -349,43 +349,58 @@ function homeInvocation() {
   }
 }
 /** okf 4.0.1 #6, 4.2.0: the switch for an already registered source, as the
- *  deployment holds it NOW, AND the soul's absolute opt-out (the current
- *  OATS_SOUL, else the soul directory recorded at registration).
+ *  deployment holds it NOW, AND the soul's absolute opt-out.
  *  A deployment-scoped invocation (an operator's, the harvester's completion:
- *  no instance home) has the deployment's current settings. An instance home's
- *  settings are what its spawn captured, which is not the deployment's
- *  current consent: from a home the switch is read from the deployment, by
- *  the provider's own deployment-scoped view (`oats okf harvest-status --soul
- *  S` from the source's deployment, without the home's identity or
- *  settings). Only a first batch (a checkpoint, the retire hook) taken in the
- *  source's own home keeps an explicit spawn override for that source, which
- *  the kernel's origins name (kind spawn); a host value captured at spawn is
- *  no override. A read that fails or runs out of time is
- *  E_HARVEST_CONSENT_UNKNOWN: nothing was captured or started. */
+ *  no instance home) has the deployment's current settings, and the soul the
+ *  kernel resolved for it (OATS_SOUL, else the directory recorded at
+ *  registration). An instance home's settings, and its soul copy, are its
+ *  spawn's, not the deployment's current consent: from a home both are read
+ *  from the deployment, by the provider's own deployment-scoped view (`oats
+ *  okf harvest-status --soul S` from the source's deployment, without the
+ *  home's identity or settings). Its rows are authoritative: the soul's
+ *  opt-out as the deployment resolves the soul now.
+ *  An explicit spawn override for this source (the kernel's origin kind
+ *  spawn; a host value captured at spawn is none) stands in for the
+ *  deployment's own switch for a first batch (a checkpoint, the retire hook)
+ *  taken in the source's own home: it never skips the read, and never
+ *  overrides the soul's opt-out.
+ *  Consent that is not known (the read fails, times out or is malformed, or
+ *  the soul's opt-out cannot be read while the switch would be on) is
+ *  E_HARVEST_CONSENT_UNKNOWN, never a confirmed off: nothing is captured or
+ *  started, and a retirement is refused. */
 export function sourceSwitch(source, { firstBatch = false, deadline } = {}) {
-  const current = process.env.OATS_SOUL && fs.existsSync(process.env.OATS_SOUL) ? process.env.OATS_SOUL : null;
-  const soulDir = current || source.soulDir || undefined;
-  const home = homeInvocation();
-  if (!home) return harvestSwitch({ settings: settings(), soulDir });
-  const real = p => { try { return fs.realpathSync(p); } catch { return resolve(p); } };
-  const override = firstBatch && real(home) === real(source.home) && parseOrigins()['/harvest']?.kind === 'spawn';
-  if (override) return { ...harvestSwitch({ settings: settings(), soulDir }), consent: 'spawn-override' };
-  // The soul's opt-out is absolute: no deployment read can switch it back on.
-  const soul = harvestSwitch({ settings: { harvest: 'on' }, origins: {}, soulDir });
-  if (soul.effective !== 'on') return soul;
   const q = v => /^[\w@%+=:,./-]+$/.test(String(v)) ? String(v) : quote(v);
   const view = `cd ${q(source.context)} && oats okf harvest-status --soul ${q(source.agent)} --json`;
+  const unknown = why => fail('E_HARVEST_CONSENT_UNKNOWN', `the deployment's current harvest consent for soul ${source.agent} is not known (${why}), and unknown is not off: nothing was captured or started, and the source stays as it is. Check it: ${view}`);
+  const home = homeInvocation();
+  if (!home) {
+    const current = process.env.OATS_SOUL && fs.existsSync(process.env.OATS_SOUL) ? process.env.OATS_SOUL : null;
+    const sw = harvestSwitch({ settings: settings(), soulDir: current || source.soulDir || undefined });
+    const [deployment, soul] = sw.rows;
+    if (sw.effective !== 'on' && deployment.value === 'on' && soul.readable === false) unknown(sw.reason);
+    return sw;
+  }
   let live;
   try {
     const timeout = deadline === undefined ? CONSENT_READ_MS : Math.min(CONSENT_READ_MS, deadline - Date.now());
     if (timeout <= 0) fail('E_DEADLINE', 'this invocation\'s time budget is spent');
     live = oats(['okf', 'harvest-status', '--soul', source.agent, '--json'], source.context, { timeout, env: { ...cleanEnv(), PWD: source.context } });
-    if (!['on', 'off', 'unknown'].includes(live?.harvest) || typeof live.reason !== 'string') fail('E_RUNTIME', 'the deployment\'s harvest-status answered no switch');
   } catch (e) {
-    fail('E_HARVEST_CONSENT_UNKNOWN', `the deployment's current harvest switch for soul ${source.agent} could not be read (${e.code || 'E_OKF'}: ${redactUrls(e.message)}); a home's own settings are its spawn's, not the deployment's consent, so nothing was captured or started. Check it: ${view}`);
+    unknown(`the read failed: ${e.code || 'E_OKF'}: ${redactUrls(e.message)}; a home's own settings are its spawn's`);
   }
-  return live.harvest === 'on' ? { effective: 'on', reason: 'the deployment switches harvest on now and the soul does not opt out', consent: 'deployment', rows: live.rows, warnings: live.warnings || [] }
-    : { effective: 'off', reason: `the deployment's current switch is off for soul ${source.agent}: ${live.reason}`, consent: 'deployment', rows: live.rows, warnings: live.warnings || [] };
+  const soul = Array.isArray(live?.rows) ? live.rows.find(row => row?.layer === 'soul') : undefined;
+  if (!['on', 'off', 'unknown'].includes(live?.harvest) || typeof live.reason !== 'string' || !soul || typeof soul.readable !== 'boolean' || ![null, 'on', 'off'].includes(soul.value)) unknown('the deployment\'s harvest-status answered no switch');
+  if (live.harvest === 'unknown' || !soul.readable) unknown(live.reason);
+  const answer = (effective, reason, consent) => ({ effective, reason, consent, rows: live.rows, warnings: live.warnings || [] });
+  const real = p => { try { return fs.realpathSync(p); } catch { return resolve(p); } };
+  if (firstBatch && real(home) === real(source.home) && parseOrigins()['/harvest']?.kind === 'spawn') {
+    if (settings().harvest !== 'on') return answer('off', 'this source\'s spawn switched harvest off for it', 'spawn-override');
+    if (soul.value === 'off') return answer('off', 'the soul opts out (knowledge: { harvest: off }), which no override or deployment can switch back on', 'spawn-override');
+    if (soul.value === 'on') return answer('off', `${live.reason}`, 'spawn-override');
+    return answer('on', 'an explicit spawn override for this source admits its first batch, and the soul does not opt out', 'spawn-override');
+  }
+  return live.harvest === 'on' ? answer('on', 'the deployment switches harvest on now and the soul does not opt out', 'deployment')
+    : answer('off', `the deployment's current switch is off for soul ${source.agent}: ${live.reason}`, 'deployment');
 }
 /** Retire a registered source whose harvest is now off: no final capture and
  *  no new drain; the inputs already in custody stay. */

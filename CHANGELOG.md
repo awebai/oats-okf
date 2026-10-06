@@ -29,11 +29,15 @@ Checkpoint harvest (#49); the harvester retires after delivery (#47). #46 and
   a home every switch read (checkpoint, retire, retry, drain continuation,
   run-source) asks the deployment through `oats okf harvest-status --soul
   <soul> --json` run from the source's deployment, without the home's
-  identity or settings, within the invocation's budget. A read that fails or
-  times out is `E_HARVEST_CONSENT_UNKNOWN`: nothing captured or started, a
-  retirement refused. The soul's opt-out stays absolute. An explicit spawn
-  override for the source (origin `spawn`) admits its own first batch (a
-  checkpoint, its retirement); a host value captured at spawn does not.
+  identity or settings, within the invocation's budget, and its rows give
+  the soul's opt-out as the deployment resolves the soul now. Unknown consent
+  (a read that fails, times out or is malformed, or a switch reported
+  `unknown`) is `E_HARVEST_CONSENT_UNKNOWN`, never off: nothing captured or
+  started, a retirement refused with the home kept. The soul's opt-out stays
+  absolute. An explicit spawn override for the source (origin `spawn`)
+  stands in for the deployment's switch for its own first batch (a
+  checkpoint, its retirement), after the same read, never over the soul's
+  opt-out; a host value captured at spawn does not.
   Homes copied from earlier versions keep their copied modules: a pin does
   not retrofit them (see the cutover). Its answer replaces the
   run's status.

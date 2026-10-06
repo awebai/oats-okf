@@ -2305,9 +2305,10 @@ function seat(f,name) {
 
 test('4.2.0 consent: own-home harvest re-reads the switch for a registered source; off, opted out or unreadable captures and launches nothing',t=>{
   const f=fixture(t);const s=f.source();note(f);
-  const cases=[[()=>{},offSettings(f),/deployment does not switch harvest on/],[()=>soulOff(f),{},/soul opts out/],[()=>put(join(f.soul,'soul.yaml'),'name: source\nknowledge:\n\tharvest: on\n'),{},/could not be read/]];
-  for(const [arrange,env,why] of cases) {
-    arrange();const r=f.cli('harvest',[],env);assert.equal(r.status,1,r.stdout);assert.equal(r.out.error.code,'E_HARVEST_OFF');assert.match(r.out.error.message,why);
+  // An opt-out the soul reader cannot read is unknown consent, not a confirmed off.
+  const cases=[[()=>{},offSettings(f),/deployment does not switch harvest on/,'E_HARVEST_OFF'],[()=>soulOff(f),{},/soul opts out/,'E_HARVEST_OFF'],[()=>put(join(f.soul,'soul.yaml'),'name: source\nknowledge:\n\tharvest: on\n'),{},/could not be read/,'E_HARVEST_CONSENT_UNKNOWN']];
+  for(const [arrange,env,why,code] of cases) {
+    arrange();const r=f.cli('harvest',[],env);assert.equal(r.status,1,r.stdout);assert.equal(r.out.error.code,code);assert.match(r.out.error.message,why);
     assert.equal(fs.existsSync(f.calls),false,'no capture, recall, spawn or session');assert.deepEqual(loadStatus(s).captured.inputs,[]);assert.equal(loadStatus(s).drain,undefined);
     put(join(f.soul,'soul.yaml'),'name: source\nwork: directory\n');deploymentHarvest(f,'on');
   }

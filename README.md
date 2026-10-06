@@ -31,13 +31,17 @@ to run it. `oats okf harvest [--no-launch] --json`, from the instance home:
    `oats okf harvest-status --soul <soul> --json` run from the source's
    deployment without the home's identity or settings (the kernel resolves
    the deployment's settings and the soul's current revision for it), within
-   the checkpoint's budget (at most 20 s). The soul's opt-out stays absolute.
-   A read that fails or runs out of time answers `E_HARVEST_CONSENT_UNKNOWN`
-   with that command, and nothing is captured or started. An explicit spawn
-   override for this source (`oats spawn <soul> --provider oats.okf
-   harvest=on`, which the kernel records with origin `spawn`) admits the
-   source's own first batch, at a checkpoint or its retirement; a host value
-   captured at spawn is no override. Operator commands run from the
+   the checkpoint's budget (at most 20 s). The soul's opt-out stays absolute,
+   as the deployment resolves the soul now (not the home's spawn-time copy).
+   Consent that is not known answers `E_HARVEST_CONSENT_UNKNOWN` with that
+   command, and nothing is captured or started: a read that fails, times out
+   or is malformed, and a switch the deployment reports `unknown` (an opt-out
+   its soul reader cannot read). Unknown is never treated as off. An explicit
+   spawn override for this source (`oats spawn <soul> --provider oats.okf
+   harvest=on`, which the kernel records with origin `spawn`) stands in for
+   the deployment's switch for the source's own first batch, at a checkpoint
+   or its retirement: it never skips the read and never overrides the soul's
+   opt-out. A host value captured at spawn is no override. Operator commands run from the
    deployment (`run-source`, `retry`, `complete`) already get its current
    settings and read them in place; run from a home they read the
    deployment's like a checkpoint, with no override.
@@ -132,9 +136,10 @@ have no invocation deadline: each call keeps its own timeout (`git-timeout`).
 
 **Retirement.** The retire hook takes the final capture within the same
 budget, after the same switch read as a checkpoint (the deployment's now, or
-the source's explicit spawn override): off since spawn takes no final capture
-and starts nothing; a read that fails refuses the retirement
-(`E_HARVEST_CONSENT_UNKNOWN`, nothing captured, the home kept). An
+the source's explicit spawn override, with the soul's opt-out read live):
+confirmed off since spawn takes no final capture and starts nothing;
+unknown consent refuses the retirement (`E_HARVEST_CONSENT_UNKNOWN`,
+nothing captured, not recorded as harvest-off, the home kept). An
 incomplete or uncertified capture (including a busy capture lock) still
 refuses retirement, as before. Once custody is certified it requests
 the same finite drain of everything unprocessed and reports it in

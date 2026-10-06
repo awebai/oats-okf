@@ -132,3 +132,53 @@ test('4.2.0 real home dispatch: when the deployment\'s switch cannot be read, th
   assert.equal(fs.existsSync(a), true, 'the home is kept'); assert.equal(w.status(file).retired, false); assert.equal(w.status(file).harvestOff, undefined);
   assert.deepEqual(w.status(file).captured.inputs, []); assert.equal(w.harvesters(), 0);
 });
+
+test('4.2.0 real home dispatch: an explicit spawn override never skips the live read: a soul opt-out published after the spawn stops its checkpoint and its retirement capture, and an unreadable deployment refuses both', { skip }, t => {
+  const w = workspace(t);
+  w.host('off');
+  // Control first: the override with the deployment off and the soul permitting admits the retire hook's first batch.
+  const c = w.spawn('src-c', ['--provider', 'oats.okf', 'harvest=on']); w.note(c);
+  const cFile = w.sourceFile(c);
+  const control = w.oats(['retire', 'src-c']);
+  const cMeta = control.capabilityMeta?.['oats.okf'];
+  assert.equal(cMeta?.retired, true, JSON.stringify(control)); assert.equal(cMeta.capture?.complete, true, 'the final capture is taken under the override');
+  assert.equal(w.status(cFile).captured.inputs.length, 1); assert.equal(w.status(cFile).harvestOff, undefined);
+  // An override home whose deployment cannot be read: no capture, no worker, no retirement.
+  const u = w.spawn('src-u', ['--provider', 'oats.okf', 'harvest=on']); w.note(u);
+  const uFile = w.sourceFile(u);
+  w.breakDeployment();
+  let checkpoint, retired;
+  try {
+    checkpoint = w.oats(['okf', 'harvest', '--no-launch'], { cwd: u, home: u });
+    retired = w.oats(['retire', 'src-u'], { cwd: u });
+  } finally { w.restoreDeployment(); }
+  assert.equal(checkpoint.error?.code, 'E_HARVEST_CONSENT_UNKNOWN', JSON.stringify(checkpoint));
+  assert.equal(retired.removedDir, false, JSON.stringify(retired)); assert.ok((retired.rollbackIncomplete || []).some(line => /E_HARVEST_CONSENT_UNKNOWN/.test(line)));
+  assert.deepEqual(w.status(uFile).captured.inputs, []); assert.equal(w.status(uFile).retired, false); assert.equal(w.harvesters(), 0);
+  // The soul opts out after the override spawns: absolute, for the checkpoint and the retirement alike.
+  const o = w.spawn('src-o', ['--provider', 'oats.okf', 'harvest=on']); w.note(o);
+  const oFile = w.sourceFile(o);
+  w.publishSoul('knowledge:\n  harvest: off\n');
+  const optedOut = w.oats(['okf', 'harvest', '--no-launch'], { cwd: o, home: o });
+  assert.equal(optedOut.error?.code, 'E_HARVEST_OFF', JSON.stringify(optedOut)); assert.match(optedOut.error.message, /soul opts out/);
+  assert.deepEqual(w.status(oFile).captured.inputs, []); assert.equal(w.harvesters(), 0);
+  const oRetired = w.oats(['retire', 'src-o']);
+  const oMeta = oRetired.capabilityMeta?.['oats.okf'];
+  assert.equal(oMeta?.reason, 'harvest-off', JSON.stringify(oRetired)); assert.equal(oMeta.capture, undefined, 'no final capture');
+  assert.deepEqual(w.status(oFile).captured.inputs, []); assert.equal(w.harvesters(), 0);
+});
+
+test('4.2.0 real home dispatch: a live switch the deployment reports unknown (a soul opt-out its reader cannot read) is no confirmed off: the checkpoint starts nothing and the retirement is refused, keeping the home', { skip }, t => {
+  const w = workspace(t);
+  const a = w.spawn('src-a'); w.note(a);
+  const file = w.sourceFile(a);
+  // A valid YAML scalar the kernel accepts, which the provider's deliberately narrow soul reader does not read.
+  w.publishSoul('knowledge: { harvest: "o\\x66f" }\n');
+  assert.equal(w.oats(['okf', 'harvest-status', '--soul', 'source']).result?.harvest, 'unknown', 'precondition: the deployment reports unknown');
+  const checkpoint = w.oats(['okf', 'harvest', '--no-launch'], { cwd: a, home: a });
+  assert.equal(checkpoint.error?.code, 'E_HARVEST_CONSENT_UNKNOWN', JSON.stringify(checkpoint));
+  const retired = w.oats(['retire', 'src-a'], { cwd: a });
+  assert.equal(retired.removedDir, false, JSON.stringify(retired)); assert.ok((retired.rollbackIncomplete || []).some(line => /E_HARVEST_CONSENT_UNKNOWN/.test(line)));
+  assert.equal(fs.existsSync(a), true); const st = w.status(file);
+  assert.equal(st.retired, false); assert.equal(st.harvestOff, undefined); assert.deepEqual(st.captured.inputs, []); assert.equal(w.harvesters(), 0);
+});
