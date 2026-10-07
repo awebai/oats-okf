@@ -3,7 +3,7 @@
 ## 4.2.0 — 2026-10-06
 
 Checkpoint harvest (#49); the harvester retires after delivery (#47). #46 and
-#48 are superseded. See the README's 4.2.0 section for the ordered cutover.
+#48 are superseded. See the README's "Upgrading from 4.1".
 
 ### Changed
 
@@ -131,25 +131,24 @@ Checkpoint harvest (#49); the harvester retires after delivery (#47). #46 and
 
 ### Removed
 
-- `cron`/`tz` in a live bindings document: `E_HARVEST_SCHEDULE_REMOVED`, naming
-  the remedy. Descriptors frozen by earlier versions keep them as inert data.
-  The bindings schema no longer lists them.
+- All scheduler-job management. No oats.okf code adds, enables, disables,
+  removes, lists or installs a scheduler job, or calls `oats schedule` at all:
+  the operator removes each job 4.1 created with the kernel's
+  `oats schedule list`/`remove` (README "Upgrading from 4.1"). The
+  `harvest-review` trigger and its skill stay.
+- `cron`/`tz` in a live bindings document: `E_HARVEST_SCHEDULE_REMOVED`, in
+  one sentence naming both fixes (remove cron/tz; remove each old job with
+  `oats schedule remove`) and the README section. Descriptors frozen by
+  earlier versions keep them as inert data. The bindings schema no longer
+  lists them.
 - `run-source` without `--manual` (a 4.1 job firing): `E_HARVEST_SCHEDULE_REMOVED`,
   nothing captured.
-- `setup --source`, `--enable`, `--disable`, `--install-host`: `E_REMOVED`.
+- `setup --source`, `--enable`, `--disable`, `--install-host` and the 4.2
+  candidates' `--remove-schedules`: `E_REMOVED`, naming the same fix.
+- `oats okf inspect`'s `scheduler` (health) field, and `harvest-status`'s
+  `legacySchedule`: oats.okf no longer observes scheduler jobs.
 - The spawn hook's `meta.schedule` (now `meta.checkpoint`), and the retire
   hook's `meta.schedule` (now `meta.drain`).
-
-### Added
-
-- `oats okf setup --remove-schedules [--json]` (from the deployment, with
-  `--soul`): for every registered source of the state namespace, removes its
-  `okf-<id>` job only once the actual definition proves it is that source's
-  own; keeps the definition and every effect as evidence; never forces and
-  never touches the host timer or other jobs. `E_SCHEDULE_OWNERSHIP` (a
-  foreign definition, untouched) or `E_SCHEDULE_MIGRATION_PENDING` (running,
-  unresolved or uncertain; left disabled) carry the confirmed removals and
-  the leftovers in `error.result`. Repeat-safe.
 
 ## 4.1.1 — 2026-10-01
 

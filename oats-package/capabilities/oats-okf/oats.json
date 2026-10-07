@@ -132,7 +132,7 @@
       "kind": "view",
       "command": "inspect",
       "context": "home",
-      "description": "Inspect matching live working-memory documents, durable receipts, bindings, the accepted resolution, any legacy local view and scheduler health."
+      "description": "Inspect matching live working-memory documents, durable receipts, bindings, the accepted resolution, and any legacy local view."
     },
     "harvest": {
       "kind": "action",

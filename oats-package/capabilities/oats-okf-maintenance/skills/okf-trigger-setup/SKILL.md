@@ -108,9 +108,15 @@ local trigger on one host.
 
 ```sh
 oats trigger test <member>/okf-harvest-review   # or: oats trigger test okf-harvest-review (local)
-oats schedule host install                      # the host timer, if the test says it is missing
+oats schedule host install                      # the host tick, if the test says it is missing
 oats trigger status
 ```
+
+- **Why a schedule command here:** the shared host tick that
+  `oats schedule host install` installs is what polls PR triggers such as this
+  one ([OATS v0.41.0 schedules, Triggers](https://github.com/awebai/oats/blob/v0.41.0/docs/schedules.md)).
+  Run it for this review trigger only. It adds no scheduler job, and harvest
+  needs no timer: it runs at the working agent's checkpoints.
 
 - `oats trigger test` checks gh auth and where its credential comes from, the
   repository and your merge permissions, the soul, its messaging capability,

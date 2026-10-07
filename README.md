@@ -211,26 +211,30 @@ not accepted, and it blocks no new work. A closed PR is recorded `rejected`;
 rejudging it stays the explicit `oats okf retry --source FILE --run ID --rejudge`.
 
 **Removed and changed** (contract changes):
+- oats.okf manages no scheduler job: no code of the package adds, enables,
+  disables, removes, lists or installs one. The jobs 4.1 created are removed
+  by the operator with the kernel (`oats schedule remove`; see
+  [Upgrading from 4.1](#upgrading-from-41)).
 - A live bindings document with `cron` or `tz` is refused:
   `E_HARVEST_SCHEDULE_REMOVED: oats.okf 4.2 harvests at checkpoints, not on
-  schedules. Remove cron/tz from the bindings file; then run oats okf setup
-  --remove-schedules --soul <source soul> from the deployment, once per state
-  namespace (each bindings file's stateDir); --soul only selects the
-  capability.` Source
+  schedules: remove cron/tz from the bindings file, and remove each
+  okf-<source id> job okf <= 4.1 created with oats schedule remove <id> --dir
+  <deployment> (README#upgrading-from-41).` Source
   descriptors frozen by 4.1 and earlier keep their recorded `cron`/`tz` as
   inert history: they load, their fingerprint (which never covered them) and
   bytes are unchanged, and nothing uses them.
 - `run-source` without `--manual` (what a 4.1 job runs) answers
-  `E_HARVEST_SCHEDULE_REMOVED` and captures nothing. `run-source --source
+  the same `E_HARVEST_SCHEDULE_REMOVED` and captures nothing. `run-source --source
   FILE --manual` stays the operator's explicit recovery.
-- `setup --source`, `--enable`, `--disable` and `--install-host` answer
-  `E_REMOVED`, naming the checkpoint, the switch and `--remove-schedules`.
-  oats.okf never installs or removes the shared host timer.
+- `setup --source`, `--enable`, `--disable`, `--install-host` and
+  `--remove-schedules` (a 4.2 candidate's job cleanup) answer `E_REMOVED`,
+  naming the checkpoint, the switch and the kernel's `oats schedule remove`.
+  `oats okf inspect` no longer reports scheduler health.
 - The spawn hook's meta carries `checkpoint: "oats okf harvest"` instead of
   `schedule`. `oats okf harvest` answers `started`, `already-running`,
   `empty`, `held`, `needs-recovery`, `deferred` or `retired`, with `settled`, instead
-  of the run's own status. `harvest-status` rows carry `outstanding` (and
-  `legacySchedule` for a job 4.1 left), no longer `auto`/`schedule`.
+  of the run's own status. `harvest-status` rows carry `outstanding`, no
+  longer `auto`/`schedule`.
 - A confirmed worker whose preparation was interrupted (its spawn receipt is
   recorded, it was never launched) is prepared again in place by
   `oats okf retry --source FILE`: persisted stages are kept, a partial one is
@@ -265,59 +269,35 @@ rejudging it stays the explicit `oats okf retry --source FILE --run ID --rejudge
   destination on its own (above); first delivery still stops at the first
   failing destination.
 
-### Upgrading from 4.1: ordered cutover
+### Upgrading from 4.1
 
-Old homes keep the oats.okf 4.1 hooks they were spawned with, and those
-hooks re-create jobs (spawn replay and retire both register one). So:
+oats.okf 4.2 creates and removes no scheduler job; the operator removes the
+jobs 4.1 created with the kernel's own commands
+([OATS v0.41.0 schedules](https://github.com/awebai/oats/blob/v0.41.0/docs/schedules.md):
+Commands, Changing a job).
 
-1. **Inventory, before anything changes.** From the deployment:
-   `oats schedule list --dir <deployment> --json` (record every `okf-*` job
-   and the other jobs), and `oats okf harvest-status --soul <soul> --json`
-   for a soul with oats.okf (active runs, pending input).
-2. **Quiesce old-code homes.** Finish or retire, under a plan, every home
-   spawned with oats.okf 4.1 that harvests (its final capture runs its own
-   4.1 hook). Keep paused harvesters and all unprocessed custody: nothing
-   here deletes it. A home that stays must be retired before cleanup is
-   declared complete, or cleanup must be rerun after it retires.
-3. **Pin and sync 4.2.0.** The OATS repository mirrors the tag and pins it
-   in `package-catalog.json` and `oats-workspace.yaml` in one reviewed
-   change; then `oats sync` on the host. Harvest stays off unless it is
-   explicitly switched on (`oats okf setup --harvest on`); syncing does not.
-4. **Remove `cron` and `tz` from every live bindings file** the deployment's
-   `settings.oats.okf.bindings-file` names. `oats okf harvest-status --soul
-   <soul> --json` then reports no `E_HARVEST_SCHEDULE_REMOVED`.
-5. **Remove the old jobs, once per state namespace** (each distinct
-   bindings file/`stateDir`):
-   `cd <deployment> && oats okf setup --remove-schedules --soul <a soul with oats.okf> --json`.
-   It enumerates every registered source of the namespace and, for each
-   `okf-<source id>` job, proves from the actual definition that it is that
-   source's own (kind, cwd, the exact `run-source --source <its descriptor>`
-   argv and selectors), keeps the definition and each confirmed effect under
-   the source (`schedule-migration/`, `schedule-migration.json`), disables
-   it, then removes it. Disabled and custom-cadence jobs are included; a
-   missing job is success. Never by the `okf-` prefix alone, never forced.
-   - `ok`: `removed` and `absent` list the jobs.
-   - `E_SCHEDULE_OWNERSHIP`: a job with a source's id is not that source's
-     definition; it is untouched. **Stop**: inspect it
-     (`oats schedule show <id> --dir <deployment>`) and decide by hand.
-   - `E_SCHEDULE_MIGRATION_PENDING`: a job is running, has an unresolved
-     attempt, or the scheduler's answer was uncertain; it stays disabled.
-     Inspect it, let it end or resolve it with `oats schedule reconcile`,
-     then rerun the command (it is repeat-safe).
-   Either error's `result` lists the confirmed removals and the leftovers.
-6. **Verify.** `oats schedule list --dir <deployment> --json` lists no
-   `okf-<source id>` job of a registered source; other jobs, the
-   harvest-review trigger and the host timer are as in step 1.
-7. **Respawn selectively.** Only homes that should get the new instructions
-   are respawned; copied homes are never rewritten. New homes get the
-   checkpoint brief when harvest is on.
+1. **Quiesce old homes.** A home spawned with 4.1 keeps its hooks, which
+   register its job again on spawn replay and retire. Finish or retire such
+   homes under a plan first; their unprocessed custody is kept.
+2. **Pin and sync 4.2.0** (mirror and catalog pin in one reviewed change,
+   then `oats sync`). Harvest stays off until `oats okf setup --harvest on`.
+3. **Remove `cron` and `tz`** from every live bindings file
+   (`settings.oats.okf.bindings-file`); until then it answers
+   `E_HARVEST_SCHEDULE_REMOVED`.
+4. **Remove each old OKF job.** `oats schedule list --dir <deployment> --json`;
+   an old OKF job is `okf-<source id>` running
+   `oats okf run-source --source <that source's descriptor> …`. For each,
+   `oats schedule remove <id> --dir <deployment>`. Decide by its definition,
+   never by the `okf-` prefix alone, and never with `--force` (it only
+   forgets the job and stops nothing). The kernel refuses while the job has a
+   tracked instance or an unresolved effect: let it end or settle it
+   (`oats schedule reconcile <id> --dir <deployment>`), then remove it again.
+   A refused job is not removed.
 
-**Stop** on: an uncaptured source tail (a retire that did not certify
-capture), an unknown launch or effect, a foreign job, a failed or partial
-cleanup, a missing authorization for a real target, review/SHA drift, or a
-harvest switch that differs from what was consented. Never retag, erase
-custody, re-create old schedules, edit live modules, or retry an unknown
-model effect.
+The `harvest-review` trigger is not a scheduler job: `oats schedule` neither
+lists nor removes it. **Stop** on an uncaptured source tail, a job you cannot
+attribute from its definition, or a refusal you cannot settle; never erase
+custody, re-create old schedules or edit copied homes.
 
 ### The first harvest-on source
 
@@ -947,11 +927,9 @@ incarnation or grant new worker/native authority. See
 [invocation transport and limits](INVOCATION-WIRE-STATUS.md).
 
 Captured persistent sources receive no schedule (none does since 4.2.0); one
-registered earlier had a job with `definitionVersion: 2`, explicit saved
-`--deployment`/`--resolution` selectors and no `--soul`, which
-`setup --remove-schedules` recognizes. Consult reads, inspect and existing-run
-completion use the exact frozen
-descriptor after source/config deletion. **First-cut captured worker creation is
+registered earlier had a job with explicit saved `--deployment`/`--resolution`
+selectors and no `--soul`. Consult reads, inspect and existing-run completion
+use the exact frozen descriptor after source/config deletion. **First-cut captured worker creation is
 operation-only:** a current admitted persistent-instance `knowledge:harvest`
 operation with an explicit backend request may create and launch its retained
 worker. See [the exact entrypoint and limits](CAPTURED-WORKER-STATUS.md).
@@ -1082,8 +1060,6 @@ State layout (private, local, **no automatic evidence deletion**):
 <stateDir>/sources/<uuid>/runs/<uuid>/previous.json # frozen predecessor on recovery
 <stateDir>/sources/<uuid>/recovery-observations/<hash>.json
                                             # first verified PR identity per publication
-<stateDir>/sources/<uuid>/schedule-migration.json, schedule-migration/
-                                            # a 4.1 job's definition and removal effects
 <stateDir>/cache/<base-id>.git               # host-wide consult cache (bare partial clone)
 <stateDir>/migrations/<uuid>/               # explicit migration preservation
 ```
@@ -1100,14 +1076,11 @@ pretending the unseen last input was captured.
 oats okf inspect --source /absolute/state/sources/UUID/source.json --soul domain-expert --json
 oats okf harvest-status --soul domain-expert --json          # what each source still owes, with commands
 oats okf run-source --source /absolute/state/sources/UUID/source.json --manual --soul domain-expert --json
-oats okf setup --remove-schedules --soul domain-expert --json # once, to take 4.1 jobs out (see 4.2.0)
 ```
 
 Inspect reports frozen bindings (`owns`, `reads`, `bases`), the registered
 `acceptedView` (not a fresh read of today's accepted branch), durable capture /
-processing / delivery / acceptance receipts, and scheduler health. An absent or
-inactive timer is not claimed active; scheduler lookup failures are diagnostic,
-not a reason to hide durable receipts. `status.lastCapture` describes the last
+processing / delivery / acceptance receipts. `status.lastCapture` describes the last
 capture attempt, not current source availability.
 
 The additive `authority` summary reports `registration` as `captured`, `legacy`,
@@ -1485,8 +1458,7 @@ npm test
 # Full suite plus the optional probes against an actual >=0.24.4 CLI (the real
 # home-dispatch probes need >=0.43.0 and skip, saying so, on an older one):
 OATS_OKF_CONSUMER_CLI=/absolute/oats/bin/oats.mjs npm test
-# Native capture/recall transport (60 x 350kB), plus the --remove-schedules probe
-# against the real scheduler (a scratch v2 deployment; no host timer):
+# Native capture/recall transport (60 x 350kB):
 OATS_OKF_NATIVE_CLI=/absolute/oats/bin/oats.mjs node --test --test-name-pattern='R1 actual native' test/oats-okf.test.mjs
 # okf 4.2.0: a real home's checkpoint and retire hook follow the deployment's switch,
 # not its spawn-time settings (a disposable file:// v2 workspace; no model):

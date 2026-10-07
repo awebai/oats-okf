@@ -2,8 +2,7 @@
 import { fs, join, resolve, readJSON, safePath, oats, fail, unlock, redactUrls } from '../lib/io.mjs';
 import { loadBindings } from '../lib/config.mjs';
 import { register, registerCaptured, loadInvocationSourceReceipt, homeSource, loadSource, loadStatus, capture, service, markerPath, harvestOffRecord, sourceSwitch, retireHarvestOff, consultSource } from '../lib/sources.mjs';
-import { removeSchedules } from '../lib/schedule-migration.mjs';
-import { SCHEDULE_REMOVED } from '../lib/config.mjs';
+import { SCHEDULE_REMOVED, JOBS_REMOVED } from '../lib/config.mjs';
 import { harvestStatus, setupHarvest } from '../lib/harvest-status.mjs';
 import { settings } from '../lib/config.mjs';
 import { CONSULT } from '../lib/consult.mjs';
@@ -33,8 +32,6 @@ Consult commands read the accepted state remotely (host cache, no local copy);
 also accept --home PATH | --source FILE. PATH is /node/x.md from the base root,
 relative to --from's directory, or bare node/x.md from the root.
 oats okf setup --harvest on|off [--json]      (writes oats-local.yaml settings.oats.okf.harvest)
-oats okf setup --remove-schedules [--json]    (operator, from the deployment with --soul: disable and remove
-  the okf-<source> scheduler jobs okf <= 4.1 created, after proving each is its source's own)
 oats okf harvest-status [--home PATH] [--soul NAME] [--json]  (the effective harvest switch, why, the registered
   sources, and everything outstanding for each, with the exact command that settles it)
 oats okf init --base ALIAS --nodes FILE [--output PATH | --confirm] [--json]
@@ -239,13 +236,11 @@ else {
       result=retry(s,{run:flags.run,rejudge:!!flags.rejudge,launch:!!flags.launch,adoptHome:flags['adopt-home']});
     }
     else if(event==='inspect') result=consultOnly?inspectConsultOnly(consultSource(home)):inspect(src());
-    else if(event==='setup' && (flags.source || flags.enable || flags.disable || flags['install-host'])) fail('E_REMOVED','oats.okf 4.2 has no harvest schedules, so setup --source/--enable/--disable/--install-host are gone: the working agent harvests at its checkpoints (`oats okf harvest`); `oats okf setup --harvest on|off --soul <soul>` switches harvest for the deployment (a soul opts out with knowledge: { harvest: off }); `oats okf setup --remove-schedules --soul <soul>` removes the jobs okf <= 4.1 created, once per state namespace. The shared host timer is not okf\'s to install or remove.');
-    else if(event==='setup' && flags.harvest!==undefined) {
-      if(flags['remove-schedules']) fail('E_USAGE','setup --harvest takes no other setup flag');
-      result=setupHarvest(flags.harvest);
-    }
-    else if(event==='setup' && flags['remove-schedules']) result=removeSchedules();
-    else if(event==='setup') fail('E_USAGE','setup needs --harvest on|off or --remove-schedules'); else if(event==='init') result=initBase(loadBindings(),flags.base,flags.nodes,flags.output,{confirm:!!flags.confirm});
+    // okf 4.2.0 manages no scheduler job; the removed setup flags stay
+    // recognized only to name the fix.
+    else if(event==='setup' && (flags.source || flags.enable || flags.disable || flags['install-host'] || flags['remove-schedules'])) fail('E_REMOVED',`oats.okf 4.2 harvests at checkpoints and manages no scheduler job, so setup --source/--enable/--disable/--install-host/--remove-schedules are gone: the working agent harvests at its checkpoints (\`oats okf harvest\`); \`oats okf setup --harvest on|off --soul <soul>\` switches harvest for the deployment (a soul opts out with knowledge: { harvest: off }). ${JOBS_REMOVED}`);
+    else if(event==='setup' && flags.harvest!==undefined) result=setupHarvest(flags.harvest);
+    else if(event==='setup') fail('E_USAGE','setup needs --harvest on|off'); else if(event==='init') result=initBase(loadBindings(),flags.base,flags.nodes,flags.output,{confirm:!!flags.confirm});
     else if(event==='migrate') {
       if(flags['source-home']) result=migrateSource(loadBindings(),flags['source-home']);
       else if(flags.forget) result=forgetMigration(loadBindings(),flags.forget);

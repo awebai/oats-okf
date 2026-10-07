@@ -15,7 +15,7 @@ const CLI=join(CAP,'bin/oats-okf.mjs');
 const mod=p=>import(new URL(`../oats-package/capabilities/oats-okf/lib/${p}.mjs`,import.meta.url));
 const {loadBindings,metadata,validateBindings,validateDeclaration}=await mod('config');
 const {tree,save,readJSON,atomic,digest,withLock,baseLock:unused,quote,command,hash}=await mod('io');
-const {register,registerCaptured,capture,input,loadStatus,loadSource,saveStatus,pinOwner,legacyScheduleArgv,sourceSwitch}=await mod('sources');
+const {register,registerCaptured,capture,input,loadStatus,loadSource,saveStatus,pinOwner,sourceSwitch}=await mod('sources');
 const {cat:consultCat,acceptedResolution}=await mod('consult');
 /** An okf 3.0.0 consult read of one accepted file (no local view). */
 const readAccepted=(s,path='/expert/index.md',alias=Object.keys(s.bindings.bases)[0])=>consultCat(s,{base:alias},[path]).result;
@@ -61,13 +61,12 @@ else if(a[0]==='session') {console.error('NO MODEL SESSIONS IN FIXTURES');proces
 else if(a[0]==='schedule') {
   if(a.includes('install')) {console.error('NO HOST TIMERS IN FIXTURES');process.exit(92);}
   const error=(code,message)=>{console.log(JSON.stringify({schemaVersion:1,ok:false,error:{code,message}}));process.exit(1);};
-  if(fs.existsSync(join(root,'schedule-fail'))) error('E_SCHEDULE_FIXTURE','scheduler unavailable');
   const p=join(root,'schedules.json'),jobs=fs.existsSync(p)?JSON.parse(fs.readFileSync(p,'utf8')):{};
   const persist=()=>fs.writeFileSync(p,JSON.stringify(jobs));
   if(a[1]==='add') {if(jobs[a[2]]) error('E_SCHEDULE_EXISTS','already exists');jobs[a[2]]=JSON.parse(fs.readFileSync(val('--file'),'utf8'));persist();out({schedule:jobs[a[2]]});}
   else if(a[1]==='show') {if(!jobs[a[2]]) error('E_SCHEDULE_UNKNOWN','missing');out({schedule:jobs[a[2]]});}
   else if(['enable','disable'].includes(a[1])) {if(!jobs[a[2]]) error('E_SCHEDULE_UNKNOWN','missing');jobs[a[2]].enabled=a[1]==='enable';persist();out({schedule:jobs[a[2]]});}
-  else if(a[1]==='remove') {if(a.includes('--force')) error('E_FIXTURE','never forced');if(!jobs[a[2]]) error('E_SCHEDULE_UNKNOWN','missing');if(fs.existsSync(join(root,'schedule-running-'+a[2]))) error('E_SCHEDULE_RUNNING','running');delete jobs[a[2]];persist();if(fs.existsSync(join(root,'schedule-remove-flaky'))) {console.error('timed out after the effect');process.exit(124);}out({removed:a[2]});}
+  else if(a[1]==='remove') {if(a.includes('--force')) error('E_FIXTURE','never forced');if(!jobs[a[2]]) error('E_SCHEDULE_UNKNOWN','missing');delete jobs[a[2]];persist();out({removed:a[2]});}
   else if(a[1]==='list') out({schedules:Object.values(jobs),scheduler:{installed:false,active:false}});
   else error('E_FIXTURE','unknown schedule call');
 }
@@ -191,12 +190,13 @@ test('c77 OKF declares only own helper omission and unchanged lifecycle input op
 test('help is side-effect free, including malformed settings and every declared command',t=>{
   const f=fixture(t);for(const cmd of Object.keys(readJSON(join(CAP,'oats.json')).commands)) {const r=f.cli(cmd,['--help'],{OATS_SETTINGS:'!'});assert.equal(r.status,0,r.stderr);assert.match(r.stdout,/oats okf/);}assert.equal(fs.existsSync(f.calls),false);
 });
-test('directory init, cross-node views, role evidence allowlist and inactive scheduler',t=>{
+test('directory init, cross-node views, role evidence allowlist and no scheduler query',t=>{
   const f=fixture(t);const s=f.source();assertNoLocalCopy(f.home);assert.match(readAccepted(s,'/peer/index.md').text,/# peer/);assert.equal(s.owner,'owner-1');assert.equal(s.launchRecipe,undefined);assert.equal(s.settings,undefined);
   // okf 4.2.0: registration creates no scheduler job and records no schedule.
   assert.equal(fs.existsSync(f.calls),false,'registration made no CLI call');assert.equal(fs.existsSync(join(dirname(s.file),'schedule.json')),false);assert.equal(loadStatus(s).schedule,undefined);
   assert.equal(s.bindings.cron,undefined);assert.equal(s.bindings.tz,undefined);
-  assert.equal(f.cli('inspect').out.result.scheduler.active,false);
+  // Inspection reports custody, not scheduler health: it asks the scheduler nothing.
+  const inspected=f.cli('inspect');assert.equal(inspected.status,0);assert.equal(Object.hasOwn(inspected.out.result,'scheduler'),false);assert.equal(fs.existsSync(f.calls),false,'inspect makes no oats call, the scheduler included');
 });
 test('notes AND complete bounded record backlog are durable before final home deletion',t=>{
   const f=fixture(t);const s=f.source();note(f);
@@ -427,8 +427,6 @@ test('captured registration freezes qualified identity and binding, creates no s
   assert.equal(fs.existsSync(join(f.dir,'schedules.json')),false,'okf 4.2.0: no scheduler job');assert.equal(fs.existsSync(join(dirname(s.file),'schedule.json')),false);
   const again=registerCaptured(f.home,receipt);assert.equal(again.id,s.id,'captured registration remains idempotent');assert.equal(s.registration.kind,'captured');assert.deepEqual(s.providerBinding,receipt.binding);assert.deepEqual(s.executionBinding,receipt.executionBinding);assert.equal(s.responsibleHuman,null);
   const owner=readJSON(join(f.bindings.stateDir,'owners.json'))['owner-1'];assert.equal(owner.kind,'captured-qualified-soul');assert.deepEqual(owner.identity,receipt.sourceIdentity);
-  // The legacy job shape --remove-schedules proves ownership by (okf <= 4.1 registered it).
-  const argv=legacyScheduleArgv(s);assert.ok(argv.includes('--deployment'));assert.equal(argv[argv.indexOf('--resolution')+1],receipt.executionBinding.resolution.id);assert.equal(argv.includes('--soul'),false);
   save(snapshot,receipt.binding);const capturedEnv={OATS_BINDING_FILE:snapshot,OATS_SETTINGS:JSON.stringify({'bindings-file':join(f.dir,'poison.json'),'state-dir':join(f.dir,'poison-state')})},alias=f.base.id;
   const inspected=f.cli('inspect',[],capturedEnv);assert.equal(inspected.status,0);assert.deepEqual(inspected.out.result.authority,{schemaVersion:1,registration:'captured',capture:'recorded',migrationRequired:false,sourceIdentity:receipt.sourceIdentity,executionBinding:receipt.executionBinding,responsibleHuman:{status:'disabled'}});
   for(const [key,value] of [['source',s.file],['owns',s.decl.owns],['reads',s.decl.reads],['bases',s.bindings.bases],['acceptedView',s.acceptedView],['status',loadStatus(s)]]) assert.deepEqual(inspected.out.result[key],value,`existing inspect field ${key} is unchanged`);
@@ -930,8 +928,9 @@ test('R1 near-limit legal compact input is not rejected merely for pretty-print 
 test('4.2.0 registration, replayed spawn, checkpoint, retire and removed setup flags never add, show or change a job',t=>{
   const f=fixture(t),s=f.source();note(f);capture(s);
   const before=loadStatus(s);assert.equal(f.source().id,s.id);assert.equal(loadStatus(s).schedule,undefined);
-  for(const flags of [['--source',s.file],['--source',s.file,'--enable'],['--source',s.file,'--disable'],['--install-host']]) {
-    const r=f.cli('setup',flags);assert.equal(r.status,1);assert.equal(r.out.error.code,'E_REMOVED');assert.match(r.out.error.message,/checkpoints[\s\S]*setup --harvest on\|off[\s\S]*setup --remove-schedules/);
+  for(const flags of [['--source',s.file],['--source',s.file,'--enable'],['--source',s.file,'--disable'],['--install-host'],['--remove-schedules']]) {
+    // Each removed flag names the valid fix: the switch, and the kernel's own removal of the old jobs.
+    const r=f.cli('setup',flags);assert.equal(r.status,1);assert.equal(r.out.error.code,'E_REMOVED');assert.match(r.out.error.message,/checkpoints[\s\S]*setup --harvest on\|off[\s\S]*oats schedule list --dir <deployment> --json, then oats schedule remove <id> --dir <deployment> \(README#upgrading-from-41\)/);
   }
   assert.equal(f.cli('spawn').status,0);assert.equal(f.cli('harvest',['--no-launch']).status,0);assert.equal(f.cli('retire').status,0);
   assert.deepEqual(loadStatus(s).captured.inputs,before.captured.inputs);
@@ -946,8 +945,8 @@ test('2.1.3 a soul without okf.json refuses the spawn hook with E_CONFIG naming 
   assert.ok(!fs.existsSync(join(f.home,'.okf-source.json')),'no source registered');
 });
 // okf 4.2.0: the okf <= 4.1 schedule lifecycle tests (2.1.4 retire-time job
-// removal, R1 registration scheduling failure and collision) are replaced by
-// the explicit `setup --remove-schedules` migration tests below.
+// removal, R1 registration scheduling failure and collision) are gone with the
+// schedules; oats.okf manages no job (the operator removes old ones with the kernel).
 test('R1 harvest after legacy source migration registers one durable source (no job) that survives retirement',t=>{
   const f=fixture(t);note(f);put(join(f.home,'.okf-harvest-record.json'),'{}\n');assert.equal(f.cli('migrate',['--source-home',f.home]).status,0);
   const h=f.cli('harvest',['--no-launch']);assert.equal(h.status,0,h.stdout);assert.equal(h.out.result.status,'started');
@@ -1084,19 +1083,11 @@ test('R1 actual native capture/recall transports 60 large Claude records into du
   const run=readRun(s,runSource(loadSource(s.file),{manual:true,noLaunch:true}).run);const evidence=readJSON(join(run.worker.home,'work/input.json'));assert.ok(evidence.inputs[0].turns[0].text[0].text.startsWith('0:'));
   assert.equal(complete(s,run.id,judgment(f,s,run,{drop:true})).processed,true);assert.equal(loadStatus(s).processed.length,1);assert.equal(loadStatus(s).captured.inputs.length,60);
 });
-test('4.2.0 actual native scheduler: registration adds no job; --remove-schedules removes an authentic okf 4.1 job, keeps a foreign one, installs no host timer',{skip:!nativeCLI},t=>{
-  const f=fixture(t),s=f.source();put(join(f.context,'oats-local.yaml'),'schemaVersion: 2\nworkspace: local:okf-fixture\n');process.env.OATS_CLI_BIN=resolve(nativeCLI);
+test('4.2.0 actual native scheduler: registration adds no job and installs no host timer',{skip:!nativeCLI},t=>{
+  const f=fixture(t);f.source();put(join(f.context,'oats-local.yaml'),'schemaVersion: 2\nworkspace: local:okf-fixture\n');
   const native=args=>{const r=spawnSync(process.execPath,[resolve(nativeCLI),...args,'--dir',f.context,'--json'],{cwd:f.context,env:process.env,encoding:'utf8'});return JSON.parse(r.stdout);};
-  assert.deepEqual(native(['schedule','list']).result.schedules.filter(j=>j.id.startsWith('okf-')),[],'registration added no job');
-  // The exact definition okf 4.1 registered, through the real kernel.
-  const job=`okf-${s.id}`,old={id:job,kind:'command',enabled:true,cron:'*/15 * * * *',tz:'UTC',cwd:f.context,argv:legacyScheduleArgv(s)};
-  save(join(f.dir,'old-job.json'),old);assert.equal(native(['schedule','add',job,'--file',join(f.dir,'old-job.json')]).ok,true);
-  const g=seat(f,'seat-foreign');save(join(f.dir,'foreign.json'),{...old,id:`okf-${g.id}`,argv:['oats','status']});assert.equal(native(['schedule','add',`okf-${g.id}`,'--file',join(f.dir,'foreign.json')]).ok,true);
-  const r=deploymentCli(f,'setup',['--remove-schedules']);assert.equal(r.out.error.code,'E_SCHEDULE_OWNERSHIP',r.stdout);assert.deepEqual(r.out.error.result.removed,[job]);
-  const left=native(['schedule','list']).result;assert.deepEqual(left.schedules.map(j=>j.id),[`okf-${g.id}`]);assert.notEqual(left.scheduler.installed,true);
-  assert.equal(readJSON(join(dirname(s.file),'schedule-migration.json')).effects.at(-1).result,'confirmed');
+  const list=native(['schedule','list']).result;assert.deepEqual(list.schedules.filter(j=>j.id.startsWith('okf-')),[],'registration added no job');assert.notEqual(list.scheduler.installed,true);
 });
-
 // Custody R1: publication must confirm the delivered tree, not merely a valid
 // working copy. All repositories, HOME configs and killed processes are fixtures.
 function fixtureCommit(repo,message) {git(repo,['add','.']);git(repo,['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm',message]);}
@@ -1953,7 +1944,7 @@ test('4.0.0 harvest-status and setup --harvest report and edit only the deployme
   assert.equal(fs.readFileSync(join(ws,'oats-local.yaml'),'utf8'),'# local\nsettings:\n  oats.okf:\n    harvest: on\n    bindings-file: b.json\n');
   f.cli('setup',['--harvest','off'],{OATS_WORKSPACE:ws});assert.match(fs.readFileSync(join(ws,'oats-local.yaml'),'utf8'),/ {4}harvest: off\n/);
   put(join(ws,'oats-local.yaml'),'settings: {oats.okf: {harvest: off}}\n');const flow=f.cli('setup',['--harvest','on'],{OATS_WORKSPACE:ws});assert.equal(flow.out.result.written,false);assert.match(flow.out.result.add,/harvest: on/);
-  assert.equal(f.cli('setup',['--harvest','yes'],{OATS_WORKSPACE:ws}).out.error.code,'E_USAGE');assert.equal(f.cli('setup',['--harvest','on','--enable'],{OATS_WORKSPACE:ws}).out.error.code,'E_REMOVED');assert.equal(f.cli('setup',['--harvest','on','--remove-schedules'],{OATS_WORKSPACE:ws}).out.error.code,'E_USAGE');
+  assert.equal(f.cli('setup',['--harvest','yes'],{OATS_WORKSPACE:ws}).out.error.code,'E_USAGE');assert.equal(f.cli('setup',['--harvest','on','--enable'],{OATS_WORKSPACE:ws}).out.error.code,'E_REMOVED');assert.equal(f.cli('setup',['--harvest','on','--remove-schedules'],{OATS_WORKSPACE:ws}).out.error.code,'E_REMOVED');
 });
 test('4.0.6 harvest-status reports unknown, with the reason, when the soul opt-out cannot be read',t=>{
   const f=fixture(t);f.source();
@@ -2488,44 +2479,8 @@ test('4.2.0 a retired source\'s delivered PRs are listed one by one with their e
   // The explicit closed-PR rejudgment stays available and unchanged.
   const rejudged=deploymentCli(f,'retry',['--source',s.file,'--run',runs[1].id,'--rejudge']);assert.equal(rejudged.status,0,rejudged.stdout);assert.equal(rejudged.out.result.recoveryOf,runs[1].id);
 });
-const legacyJob=(source,extra={})=>({id:`okf-${source.id}`,kind:'command',enabled:true,cron:'*/15 * * * *',tz:'UTC',cwd:source.context,argv:legacyScheduleArgv(source),...extra});
-test('4.2.0 setup --remove-schedules removes only proven own jobs (enabled, disabled, custom cadence), leaves foreign and running ones, keeps evidence, and is repeat-safe',t=>{
-  const f=fixture(t);const [own,custom,foreign,running,absent]=['seat-a','seat-b','seat-c','seat-d','seat-e'].map(name=>seat(f,name));
-  const jobs={[`okf-${own.id}`]:legacyJob(own),[`okf-${custom.id}`]:legacyJob(custom,{enabled:false,cron:'0 3 * * 1',tz:'Europe/Madrid'}),
-    [`okf-${foreign.id}`]:legacyJob(foreign,{argv:['oats','okf','run-source','--source','/elsewhere/source.json','--soul','source','--json']}),
-    [`okf-${running.id}`]:legacyJob(running),'okf-not-a-source':{id:'okf-not-a-source',kind:'command',enabled:true,cron:'* * * * *',tz:'UTC',cwd:f.context,argv:['oats','okf','harvest-status']},
-    'harvest-review':{id:'harvest-review',kind:'command',enabled:true,cron:'*/5 * * * *',tz:'UTC',cwd:f.context,argv:['oats','status']}};
-  save(join(f.dir,'schedules.json'),jobs);put(join(f.dir,`schedule-running-okf-${running.id}`),'1');
-  const first=deploymentCli(f,'setup',['--remove-schedules']);assert.equal(first.status,1);assert.equal(first.out.error.code,'E_SCHEDULE_OWNERSHIP');
-  const result=first.out.error.result;assert.deepEqual(result.removed.sort(),[`okf-${own.id}`,`okf-${custom.id}`].sort());assert.ok(result.absent.includes(`okf-${absent.id}`));
-  assert.deepEqual(result.leftovers.map(r=>[r.job,r.status,r.code]).sort(),[[`okf-${foreign.id}`,'foreign','E_SCHEDULE_OWNERSHIP'],[`okf-${running.id}`,'pending','E_SCHEDULE_MIGRATION_PENDING']].sort());
-  assert.match(first.out.error.message,/Done: .*removed/);
-  const after=readJSON(join(f.dir,'schedules.json'));assert.deepEqual(after[`okf-${foreign.id}`],jobs[`okf-${foreign.id}`],'a foreign definition is untouched');
-  assert.equal(after[`okf-${running.id}`].enabled,false,'a running job stays, disabled');for(const id of ['okf-not-a-source','harvest-review']) assert.deepEqual(after[id],jobs[id],'never by prefix');
-  const evidence=fs.readdirSync(join(dirname(custom.file),'schedule-migration')).map(n=>readJSON(join(dirname(custom.file),'schedule-migration',n)));assert.deepEqual(evidence.map(e=>e.definition),[jobs[`okf-${custom.id}`]]);
-  assert.deepEqual(readJSON(join(dirname(own.file),'schedule-migration.json')).effects.map(e=>[e.step,e.result]),[['disable','confirmed'],['remove','confirmed']]);
-  assert.deepEqual(readJSON(join(dirname(custom.file),'schedule-migration.json')).effects.map(e=>[e.step,e.result]),[['remove','confirmed']],'a disabled job is not re-disabled');
-  assert.equal(loadStatus(own).schedule.removed,true);
-  const scheduleCalls=callsOf(f).filter(c=>c.a[0]==='schedule');assert.equal(scheduleCalls.some(c=>c.a.includes('--force') || c.a.includes('host') || c.a[1]==='add'),false);
-  assert.equal(scheduleCalls.some(c=>['okf-not-a-source','harvest-review'].includes(c.a[2])),false);
-  // The operator settles the running job and deals with the foreign one; the rerun finishes, and again is a no-op.
-  fs.rmSync(join(f.dir,`schedule-running-okf-${running.id}`));const settled=readJSON(join(f.dir,'schedules.json'));delete settled[`okf-${foreign.id}`];save(join(f.dir,'schedules.json'),settled);
-  const second=deploymentCli(f,'setup',['--remove-schedules']);assert.equal(second.status,0,second.stdout);assert.deepEqual(second.out.result.removed,[`okf-${running.id}`]);
-  const third=deploymentCli(f,'setup',['--remove-schedules']);assert.equal(third.status,0,third.stdout);assert.deepEqual(third.out.result.removed,[]);assert.equal(third.out.result.absent.length,5);
-  assert.deepEqual(Object.keys(readJSON(join(f.dir,'schedules.json'))).sort(),['harvest-review','okf-not-a-source']);
-});
-test('4.2.0 setup --remove-schedules: an unconfirmed removal is reported pending and the rerun confirms it; a scheduler outage reports both sides',t=>{
-  const f=fixture(t);const [a,b]=['seat-a','seat-b'].map(name=>seat(f,name));
-  save(join(f.dir,'schedules.json'),{[`okf-${a.id}`]:legacyJob(a),[`okf-${b.id}`]:legacyJob(b)});put(join(f.dir,'schedule-remove-flaky'),'');
-  const first=deploymentCli(f,'setup',['--remove-schedules']);assert.equal(first.status,1);assert.equal(first.out.error.code,'E_SCHEDULE_MIGRATION_PENDING');
-  assert.deepEqual(first.out.error.result.leftovers.map(r=>r.status),['failed','failed']);assert.equal(loadStatus(a).schedule,undefined,'an unconfirmed removal is not recorded as removed');
-  assert.deepEqual(readJSON(join(dirname(a.file),'schedule-migration.json')).effects.map(e=>[e.step,e.result]),[['disable','confirmed'],['remove','unknown']]);
-  fs.rmSync(join(f.dir,'schedule-remove-flaky'));const second=deploymentCli(f,'setup',['--remove-schedules']);assert.equal(second.status,0,second.stdout);assert.equal(second.out.result.absent.length,2);
-  const g=fixture(t);const c=seat(g,'seat-c');save(join(g.dir,'schedules.json'),{[`okf-${c.id}`]:legacyJob(c)});put(join(g.dir,'schedule-fail'),'');
-  const down=deploymentCli(g,'setup',['--remove-schedules']);assert.equal(down.out.error.code,'E_SCHEDULE_MIGRATION_PENDING');assert.match(down.out.error.message,/Done: none/);
-  assert.equal(readJSON(join(g.dir,'schedules.json'))[`okf-${c.id}`].enabled,true);
-});
-test('4.2.0 live cron/tz bindings are refused with the migration remedy; a frozen pre-4.2 descriptor stays readable, inert and unmodified through checkpoint, complete and retire',t=>{
+const legacyJob=source=>({id:`okf-${source.id}`,kind:'command',enabled:true,cron:'*/15 * * * *',tz:'UTC',cwd:source.context,argv:['oats','okf','run-source','--source',source.file,'--soul',source.agent,'--json']});
+test('4.2.0 live cron/tz bindings are refused with the one-sentence remedy; a frozen pre-4.2 descriptor stays readable, inert and unmodified through checkpoint, complete and retire',t=>{
   const f=fixture(t);const s=f.source();note(f);capture(s);
   // A source descriptor as okf 4.1 froze it: bindings with cron/tz, a ready schedule receipt and job definition.
   const legacy=readJSON(s.file);legacy.bindings={...legacy.bindings,cron:'*/15 * * * *',tz:'UTC'};save(s.file,legacy);
@@ -2533,14 +2488,16 @@ test('4.2.0 live cron/tz bindings are refused with the migration remedy; a froze
   const bytes=fs.readFileSync(s.file);const frozen=loadSource(s.file);assert.equal(frozen.bindingFingerprint,s.bindingFingerprint);
   const raw=readJSON(f.bindingFile);save(f.bindingFile,{...raw,cron:'0 * * * *'});
   const fresh=join(f.context,'fresh-seat');fs.mkdirSync(join(fresh,'work'),{recursive:true});save(join(fresh,'instance.json'),{instance:'fresh-seat',agent:'source',repo:f.context,work:'directory',launched:true});
-  const refused=f.cli('spawn',[],{OATS_HOME:fresh,OATS_INSTANCE_HOME:fresh,OATS_INSTANCE:'fresh-seat'});assert.equal(refused.status,1);assert.match(refused.out.warning,/E_HARVEST_SCHEDULE_REMOVED: .*Remove cron\/tz from the bindings file; then run oats okf setup --remove-schedules --soul <source soul> from the deployment, once per state namespace \(each bindings file's stateDir\); --soul only selects the capability/);
-  assert.equal(deploymentCli(f,'setup',['--remove-schedules']).out.error.code,'E_HARVEST_SCHEDULE_REMOVED');
+  const refused=f.cli('spawn',[],{OATS_HOME:fresh,OATS_INSTANCE_HOME:fresh,OATS_INSTANCE:'fresh-seat'});assert.equal(refused.status,1);assert.match(refused.out.warning,/E_HARVEST_SCHEDULE_REMOVED: .*oats\.okf 4\.2 harvests at checkpoints, not on schedules: remove cron\/tz from the bindings file, and remove each okf-<source id> job okf <= 4\.1 created with oats schedule remove <id> --dir <deployment> \(README#upgrading-from-41\)\.$/);
+  const cleanup=deploymentCli(f,'setup',['--remove-schedules']);assert.equal(cleanup.status,1);assert.match(cleanup.out.error.message,/oats schedule remove <id> --dir <deployment>/,'the removed cleanup names the kernel\'s removal');
   assert.match(deploymentCli(f,'harvest-status',['--soul','source']).out.result.error,/E_HARVEST_SCHEDULE_REMOVED/);
   const h=f.cli('harvest',['--no-launch']);assert.equal(h.status,0,h.stdout);assert.equal(h.out.result.status,'started','the registered seat reads its frozen descriptor, not the live file');
   const run=readRun(s,h.out.result.run);assert.equal(complete(frozen,run.id,judgment(f,s,run,{drop:true})).status,'processed');
   const r=f.cli('retire');assert.equal(r.status,0,r.stdout);assert.equal(r.out.meta.retired,true);
   assert.deepEqual(fs.readFileSync(s.file),bytes,'immutable custody is never rewritten');assert.equal(callsOf(f).some(c=>c.a[0]==='schedule'),false,'an old job is never touched implicitly');
-  save(f.bindingFile,raw);const migrated=deploymentCli(f,'setup',['--remove-schedules']);assert.equal(migrated.status,0,migrated.stdout);assert.deepEqual(migrated.out.result.absent,[`okf-${s.id}`]);
+  // Without cron/tz the deployment reads again; the old job is the operator's to remove with the kernel.
+  save(f.bindingFile,raw);const status2=deploymentCli(f,'harvest-status',['--soul','source']);assert.equal(status2.status,0,status2.stdout);assert.equal(status2.out.result.error,undefined);
+  assert.equal(Object.hasOwn(status2.out.result.sources[0],'legacySchedule'),false,'harvest-status reports no job it cannot observe');assert.equal(callsOf(f).some(c=>c.a[0]==='schedule'),false);
 });
 test('4.2.0 checkpoint settlement never turns a missing or mismatched PR into acceptance',t=>{
   const f=fixture(t,{kind:'git'});const s=f.source();note(f);const {run}=prepared(f,s);complete(s,run.id,judgment(f,s,run));
@@ -2793,10 +2750,9 @@ const released=baseRelease();
 test('4.2.0 compatibility with the released okf 4.1.1: what it registered loads unchanged and migrates; every outstanding 4.2 obligation, a drain or a review, is a named rollback blocker',{skip:!released && !process.env.CI && `okf 4.1.1 (${BASE_RELEASE}) is not in this clone's history`},async t=>{
   assert.ok(released,`okf 4.1.1 (${BASE_RELEASE}) must be in history: CI checks out with fetch-depth 0`);
   const old={sources:await import(join(released.lib,'sources.mjs')),worker:await import(join(released.lib,'worker.mjs'))};
-  const {removeSchedules}=await mod('schedule-migration');
-  // A source and job 4.1.1 itself created: loaded unchanged, the job removed by proven ownership.
+  // A source and job 4.1.1 itself created: loaded unchanged; the job is left for the operator's kernel removal.
   {const f=fixture(t);const s=old.sources.register(f.home),bytes=fs.readFileSync(s.file);assert.equal(s.bindings.cron,'*/15 * * * *');assert.ok(readJSON(join(f.dir,'schedules.json'))[`okf-${s.id}`]);
-    assert.equal(loadSource(s.file).bindingFingerprint,s.bindingFingerprint);assert.deepEqual(removeSchedules().removed,[`okf-${s.id}`]);assert.deepEqual(fs.readFileSync(s.file),bytes);
+    assert.equal(loadSource(s.file).bindingFingerprint,s.bindingFingerprint);assert.deepEqual(fs.readFileSync(s.file),bytes);
   }
   // The rollback boundary: no outstanding row of any kind, reviews included.
   const blockers=s=>outstanding(s,loadStatus(s)).map(o=>o.kind);
@@ -3176,7 +3132,7 @@ test('4.2.0 every printed operator recovery hint names the source\'s soul',t=>{
   const f=fixture(t);const s=f.source();
   const raw=deploymentCli(f,'run-source',['--source',s.file]);assert.equal(raw.out.error.code,'E_HARVEST_SCHEDULE_REMOVED');
   assert.ok(raw.out.error.message.endsWith(`For explicit recovery of this source run: cd ${f.context} && oats okf run-source --source ${s.file} --manual --soul source --json`),raw.out.error.message);
-  const removed=deploymentCli(f,'setup',['--enable']);assert.match(removed.out.error.message,/setup --harvest on\|off --soul <soul>.*setup --remove-schedules --soul <soul>/);
+  const removed=deploymentCli(f,'setup',['--enable']);assert.match(removed.out.error.message,/setup --harvest on\|off --soul <soul>.*oats schedule remove <id> --dir <deployment>/);
 });
 
 test('4.2.0 the call observer checks a timeout against the clock reading its budget was taken from, not a later one',()=>{
@@ -3187,4 +3143,15 @@ test('4.2.0 the call observer checks a timeout against the clock reading its bud
   assert.ok(call.timeout<=call.remaining,`budget ${call.timeout} within the ${call.remaining} ms its reading left`);
   assert.equal(call.timeout,call.remaining,'the budget is exactly what was left at its reading');
   assert.ok(call.timeout>call.dispatchRemaining,'a later reading (the old observer\'s) reports the same call as over budget');
+});
+test('4.2.0 no oats.okf code manages a scheduler job; the review trigger and its host-tick step stay',()=>{
+  // Every module and binary of every capability: no `oats schedule` call of any kind (add, enable,
+  // disable, remove, list, show, host). Removing the jobs 4.1 created is the operator's, with the kernel.
+  const caps=join(ROOT,'oats-package/capabilities'),code=[];
+  for(const cap of fs.readdirSync(caps)) for(const sub of ['bin','lib']) {const d=join(caps,cap,sub);if(fs.existsSync(d)) for(const n of fs.readdirSync(d)) if(n.endsWith('.mjs')) code.push(join(d,n));}
+  assert.ok(code.length>5);for(const file of code) assert.doesNotMatch(fs.readFileSync(file,'utf8'),/\[\s*['"]schedule['"]\s*,/,`${file} builds no oats schedule argv`);
+  assert.equal(fs.existsSync(join(CAP,'lib/schedule-migration.mjs')),false);
+  assert.ok(JSON.parse(fs.readFileSync(join(ROOT,'oats-package/triggers/harvest-review.json'),'utf8')),'the harvest-review trigger template stays');
+  const skill=fs.readFileSync(join(ROOT,'oats-package/capabilities/oats-okf-maintenance/skills/okf-trigger-setup/SKILL.md'),'utf8');
+  assert.match(skill,/oats schedule host install/);assert.match(skill,/polls PR triggers[\s\S]*for this review trigger only[\s\S]*harvest\s+needs no timer/);
 });

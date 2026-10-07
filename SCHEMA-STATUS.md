@@ -22,8 +22,8 @@ coordinated, still-unreleased **OATS >=0.24.0** framework. The package/version
 and compatibility declarations intentionally remain unchanged until coordinated
 publication; therefore the current 0.23.x consumer probe does not certify the
 new binding manifest/wire. Focused fixtures validate the provider codec,
-private snapshots, captured registration, source-independent worker path and v2
-schedule shape without claiming a published consumer release.
+private snapshots, captured registration and source-independent worker path
+without claiming a published consumer release.
 
 ## What `npm test` and default CI check
 
@@ -87,8 +87,8 @@ Three tests skip by default, with explicit Node test skip output:
 2. The native capture/recall test in `test/oats-okf.test.mjs` transports sixty
    synthetic 350 kB Claude records through the actual public kernel into durable
    bounded input, then exercises fixture completion after source removal.
-3. The native scheduler test checks registration idempotence and disabled-job
-   preservation without installing a host timer.
+3. The native scheduler test checks that registration adds no scheduler job
+   and installs no host timer (okf 4.2.0 manages no job).
 
 4. The real home-dispatch tests (`test/real-home-dispatch.test.mjs`, okf
    4.2.0) spawn sources in a disposable v2 workspace of file:// repositories

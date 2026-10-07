@@ -498,13 +498,3 @@ function captureLocked(source,{final,deadline},enter) {
     }
   });
 }
-/** okf <= 4.1 gave every registered source one scheduler command job,
- *  `okf-<source id>`, running this argv in the source's deployment. okf 4.2
- *  creates none; `setup --remove-schedules` (schedule-migration.mjs) proves a
- *  job is a source's own by this definition before it disables and removes it. */
-export const legacyScheduleId=source=>`okf-${source.id}`;
-export function legacyScheduleArgv(source) {
-  const captured=source.registration?.schemaVersion===1 && source.registration.kind==='captured';
-  return captured?['oats','okf','run-source','--source',source.file,'--deployment',source.executionBinding.deployment,'--resolution',source.executionBinding.resolution.id,'--json']
-    :['oats','okf','run-source','--source',source.file,'--soul',source.agent,'--json'];
-}

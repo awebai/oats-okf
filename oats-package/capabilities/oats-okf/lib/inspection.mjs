@@ -1,4 +1,4 @@
-import { fs, join, dirname, safePath, fail, oats } from './io.mjs';
+import { fs, join, dirname, safePath, fail } from './io.mjs';
 import { markerPath, loadStatus } from './sources.mjs';
 import { qualifiedSoulIdentity } from './source-contract.mjs';
 
@@ -114,17 +114,16 @@ export function legacyLocalView(source,status=loadStatus(source)) {
 }
 export function inspect(source) {
   const status=loadStatus(source),working=workingDocuments(source,status),legacy=legacyLocalView(source,status);
-  let health;try {health=oats(['schedule','list','--dir',source.context,'--json'],source.context).scheduler;} catch(e) {health={active:false,error:e.message};}
   const documents=[...working.documents,{label:'Durable processing receipts',kind:'text',path:join(dirname(source.file),'status.json'),text:JSON.stringify(status,null,2)}];
   return {
     summary:`OKF ${source.id}: ${status.captured.inputs.length-status.processed.length} unprocessed inputs; ${status.retired?'source retired':'source not retired'}; ${working.liveMemory.available?`${working.documents.length} working-memory documents`:`live memory unavailable (${working.liveMemory.reason})`}${legacy?'; legacy-local-view ./knowledge/ (ignored, safe to delete)':''}`,
     source:source.file,owns:source.decl.owns,reads:source.decl.reads,bases:source.bindings.bases,authority:capturedAuthority(source),
-    acceptedView:source.acceptedView,legacyLocalView:legacy,status,scheduler:health,liveMemory:working.liveMemory,documents
+    acceptedView:source.acceptedView,legacyLocalView:legacy,status,liveMemory:working.liveMemory,documents
   };
 }
 /** okf 4.0.3: inspect a harvest-off home (consultSource): its declaration, the
  *  bases it reads, and its own working memory. There is no source, custody or
- *  schedule to report; `oats okf bases` shows the accepted state it reads. */
+ *  harvest to report; `oats okf bases` shows the accepted state it reads. */
 export function inspectConsultOnly(source) {
   const {documents,error}=homeDocuments(source.home),observedAt=new Date().toISOString();
   if(error) fail(error.code==='E_PATH'?'E_PATH':'E_INSPECT_FAILED',error.message);
@@ -133,6 +132,6 @@ export function inspectConsultOnly(source) {
   return {
     summary:`OKF harvest off for this instance (${source.harvest.reason}): no source is registered and nothing is captured; ${documents.length} working-memory documents${legacy?'; legacy-local-view ./knowledge/ (ignored, safe to delete)':''}`,
     source:null,harvest:source.harvest,owns:source.decl.owns,reads:source.decl.reads,bases:source.bindings.bases,
-    acceptedView:null,legacyLocalView:legacy,status:null,scheduler:null,liveMemory:{available:true,reason:'live',observedAt},documents
+    acceptedView:null,legacyLocalView:legacy,status:null,liveMemory:{available:true,reason:'live',observedAt},documents
   };
 }

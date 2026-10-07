@@ -123,5 +123,5 @@ or source. Captured owner-registry rows are versioned qualified identities; lega
 owner-to-path evidence returns migration-required rather than converting. Since
 okf 4.2.0 no source receives a schedule; a job registered earlier (a v2
 `capture` command with saved deployment/resolution selectors, or a legacy
-`--soul` command) is removed only by `setup --remove-schedules`. Worker
+`--soul` command) is removed by the operator with the kernel's `oats schedule remove`. Worker
 staging/judgment/delivery remains the existing engine.

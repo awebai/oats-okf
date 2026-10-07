@@ -24,7 +24,7 @@ function registeredSources(soul, seat) {
     // command. A retired source's delivered PRs are its operator's to settle.
     const file = join(dir, id, 'source.json');
     let owed; try { owed = outstanding({ ...source, file }, status); } catch (e) { owed = [{ kind: 'unreadable', error: `${e.code || 'E_OKF'}: ${e.message}` }]; }
-    rows.push({ id, soul: source.agent, instance: source.instance, created: source.created, retired: status.retired === true, activeRun: status.activeRun || null, ...(status.schedule?.id && status.schedule.removed !== true ? { legacySchedule: status.schedule.id } : {}), outstanding: owed, file });
+    rows.push({ id, soul: source.agent, instance: source.instance, created: source.created, retired: status.retired === true, activeRun: status.activeRun || null, outstanding: owed, file });
   }
   return { stateDir: bindings.stateDir, sources: rows, once };
 }
@@ -49,7 +49,7 @@ export function harvestStatus({ home, flags = {} }) {
   const harvest = unknown ? 'unknown' : sw.effective;
   const reason = unknown ? `the soul's opt-out could not be read (${soulRow.why}); capture treats it as off` : sw.reason;
   return { harvest, reason, rows: sw.rows, warnings: sw.warnings, soul, instance, ...registeredSources(soul, flags.home ? resolve(flags.home) : null), // a retired seat's home may be gone; its one-shots still list
-    note: 'harvest applies from the next spawn: switching it on never captures earlier sessions, and switching it off (or a soul opting out) stops every later checkpoint, retirement capture and drain of registered sources. Harvest runs at checkpoints (`oats okf harvest`), never on a schedule; legacySchedule names a job okf <= 4.1 left, which `oats okf setup --remove-schedules` removes.' };
+    note: 'harvest applies from the next spawn: switching it on never captures earlier sessions, and switching it off (or a soul opting out) stops every later checkpoint, retirement capture and drain of registered sources. Harvest runs at checkpoints (`oats okf harvest`), never on a schedule; oats.okf manages no scheduler job (README#upgrading-from-41 removes the ones 4.1 created).' };
 }
 
 /** Find the deployment's oats-local.yaml: OATS_WORKSPACE, else up from cwd. */
