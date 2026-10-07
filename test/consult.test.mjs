@@ -66,7 +66,7 @@ else {console.error('unexpected fixture call '+JSON.stringify(a));process.exit(9
   fs.mkdirSync(join(home, 'work'), { recursive: true }); fs.mkdirSync(soul);
   put(join(soul, 'AGENTS.md'), '# Expert\n'); put(join(soul, 'soul.yaml'), 'name: soul\nwork: directory\n'); save(join(soul, 'okf.json'), { version: 1, owner: 'owner-1', owns: ['project/expert'], reads: ['project/peer'] });
   save(join(home, 'instance.json'), { instance: 'source-one', agent: 'source', repo: context, work: 'directory', launched: true });
-  Object.assign(process.env, { OATS_HOME: home, OATS_INSTANCE_HOME: home, OATS_INSTANCE: 'source-one', OATS_AGENT: 'source', OATS_SOUL: soul, OATS_CONTEXT: context });
+  Object.assign(process.env, { OATS_HOME: home, OATS_INSTANCE_HOME: home, OATS_INSTANCE: 'source-one', OATS_AGENT: 'source', OATS_SOUL: soul, OATS_CONTEXT: context, OATS_WORKSPACE: context });
   const cli = (cmd, args = [], env = {}) => {
     const r = spawnSync(process.execPath, [CLI, cmd, ...args], { cwd: home, env: { ...process.env, ...env }, encoding: 'utf8', timeout: 60000, maxBuffer: 16 * 1024 * 1024 });
     let out; try { out = JSON.parse(r.stdout); } catch { /* text mode */ } return { ...r, out };

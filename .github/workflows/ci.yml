@@ -28,9 +28,42 @@ jobs:
       - name: Report default coverage limits (not a consumer probe)
         run: |
           echo "npm test covers the exported v2 payload, schema parity/mutations and disposable Git/directory custody."
-          echo "SKIPPED by default: public CLI scaffold and native capture/scheduler probes (3 opt-in tests)."
+          echo "SKIPPED in this standalone step: public CLI scaffold and native probes."
+          echo "The separate schedule-deployment-041 job qualifies the external-repo regression on released OATS 0.41.0."
           echo "NOT COVERED: OKF acquire/lock/restore/trust, remote GitHub PRs or fresh real-model learning."
           echo "Use workflow_dispatch with an exact published consumer_version for the optional public CLI job; see SCHEMA-STATUS.md."
+
+  schedule-deployment-041:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install the released OATS 0.41.0 kernel in a disposable prefix
+        run: |
+          npm install --prefix "$RUNNER_TEMP/okf-schedule-kernel" --ignore-scripts --no-audit --no-fund --package-lock=false @awebai/oats@0.41.0
+          echo "OATS_OKF_SCHEDULE_CLI=$RUNNER_TEMP/okf-schedule-kernel/node_modules/@awebai/oats/bin/oats.mjs" >> "$GITHUB_ENV"
+      - name: Released v4.1.1 negative control must reproduce the external-repo scope defect
+        run: |
+          mkdir -p "$RUNNER_TEMP/okf-schedule-baseline"
+          git archive e1d604f70c5e4cdc39602095f139383e61f69323 oats-package | tar -x -C "$RUNNER_TEMP/okf-schedule-baseline"
+          if OATS_OKF_SCHEDULE_PAYLOAD="$RUNNER_TEMP/okf-schedule-baseline/oats-package" node --test --test-reporter=spec test/schedule-deployment-consumer.test.mjs > "$RUNNER_TEMP/okf-schedule-baseline.log" 2>&1; then
+            echo 'Baseline unexpectedly passed'; exit 1
+          fi
+          grep -F 'schedules belong to a workspace deployment' "$RUNNER_TEMP/okf-schedule-baseline.log"
+      - name: Real external-repo spawn, scheduler and retire regression
+        run: |
+          set -o pipefail
+          node "$OATS_OKF_SCHEDULE_CLI" --version
+          node --test --test-reporter=spec test/schedule-deployment-consumer.test.mjs | tee "$RUNNER_TEMP/okf-schedule-result.txt"
+          grep -F 'ℹ skipped 0' "$RUNNER_TEMP/okf-schedule-result.txt"
+      - name: Evidence boundary
+        run: |
+          echo 'Real released 0.41.0 CLI; isolated file-Git workspace and external worktree; provider payload from this exact checkout.'
+          echo 'No model, host timer, messaging cleanup, GitHub publication or production deployment is qualified by this fixture.'
 
   public-consumer:
     if: github.event_name == 'workflow_dispatch' && inputs.consumer_version != ''

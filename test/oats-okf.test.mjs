@@ -15,7 +15,7 @@ const CLI=join(CAP,'bin/oats-okf.mjs');
 const mod=p=>import(new URL(`../oats-package/capabilities/oats-okf/lib/${p}.mjs`,import.meta.url));
 const {loadBindings,metadata,validateBindings,validateDeclaration}=await mod('config');
 const {tree,save,readJSON,atomic,digest,withLock,baseLock:unused,quote,command,hash}=await mod('io');
-const {register,registerCaptured,capture,input,loadStatus,loadSource,saveStatus,scheduleSource,settleRetiredSchedule,pinOwner}=await mod('sources');
+const {register,registerCaptured,capture,input,loadStatus,loadSource,saveStatus,scheduleSource,scheduleDeployment,settleRetiredSchedule,pinOwner}=await mod('sources');
 const {cat:consultCat,acceptedResolution}=await mod('consult');
 /** An okf 3.0.0 consult read of one accepted file (no local view). */
 const readAccepted=(s,path='/expert/index.md',alias=Object.keys(s.bindings.bases)[0])=>consultCat(s,{base:alias},[path]).result;
@@ -58,10 +58,11 @@ else if(a[0]==='session') {console.error('NO MODEL SESSIONS IN FIXTURES');proces
 else if(a[0]==='schedule') {
   if(a.includes('install')) {console.error('NO HOST TIMERS IN FIXTURES');process.exit(92);}
   const error=(code,message)=>{console.log(JSON.stringify({schemaVersion:1,ok:false,error:{code,message}}));process.exit(1);};
+  if(val('--dir')!==process.env.FIXTURE_DEPLOYMENT || process.cwd()!==process.env.FIXTURE_DEPLOYMENT) error('E_LOCAL_MISSING','wrong deployment scope');
   if(fs.existsSync(join(root,'schedule-fail'))) error('E_SCHEDULE_FIXTURE','scheduler unavailable');
   const p=join(root,'schedules.json'),jobs=fs.existsSync(p)?JSON.parse(fs.readFileSync(p,'utf8')):{};
   const persist=()=>fs.writeFileSync(p,JSON.stringify(jobs));
-  if(a[1]==='add') {if(jobs[a[2]]) error('E_SCHEDULE_EXISTS','already exists');jobs[a[2]]=JSON.parse(fs.readFileSync(val('--file'),'utf8'));persist();out({schedule:jobs[a[2]]});}
+  if(a[1]==='add') {if(jobs[a[2]]) error('E_SCHEDULE_EXISTS','already exists');const spec=JSON.parse(fs.readFileSync(val('--file'),'utf8'));if(spec.cwd!==process.env.FIXTURE_DEPLOYMENT && !spec.cwd.startsWith(process.env.FIXTURE_DEPLOYMENT+'/')) error('E_SCHEDULE_INVALID','cwd outside deployment');jobs[a[2]]=spec;persist();out({schedule:jobs[a[2]]});}
   else if(a[1]==='show') {if(!jobs[a[2]]) error('E_SCHEDULE_UNKNOWN','missing');out({schedule:jobs[a[2]]});}
   else if(['enable','disable'].includes(a[1])) {if(!jobs[a[2]]) error('E_SCHEDULE_UNKNOWN','missing');jobs[a[2]].enabled=a[1]==='enable';persist();out({schedule:jobs[a[2]]});}
   else if(a[1]==='remove') {if(!jobs[a[2]]) error('E_SCHEDULE_UNKNOWN','missing');if(fs.existsSync(join(root,'schedule-running-'+a[2]))) error('E_SCHEDULE_RUNNING','running');delete jobs[a[2]];persist();out({removed:a[2]});}
@@ -97,7 +98,7 @@ else process.exit(44);
   put(join(soul,'AGENTS.md'),'# Expert\nOwn domain rationale and hard-won limitations.\n');
   put(join(soul,'soul.yaml'),'name: source\nwork: directory\n');save(join(soul,'okf.json'),{version:1,owner:'owner-1',owns:['project/expert'],reads:['project/peer']});
   fs.symlinkSync(soul,join(home,'soul'));save(join(home,'instance.json'),{instance:'source-one',agent:'source',repo:context,work:'directory',launched:true});
-  Object.assign(process.env,{OATS_HOME:home,OATS_INSTANCE_HOME:home,OATS_INSTANCE:'source-one',OATS_AGENT:'source',OATS_SOUL:soul,OATS_CONTEXT:context});
+  Object.assign(process.env,{OATS_HOME:home,OATS_INSTANCE_HOME:home,OATS_INSTANCE:'source-one',OATS_AGENT:'source',OATS_SOUL:soul,OATS_CONTEXT:context,OATS_WORKSPACE:context,FIXTURE_DEPLOYMENT:context});
   const source=()=>register(home);
   const cli=(cmd,args=[],env={})=>{const r=spawnSync(process.execPath,[CLI,cmd,...args,'--json'],{cwd:home,env:{...process.env,...env},encoding:'utf8',timeout:30000,maxBuffer:16*1024*1024});let out;try{out=JSON.parse(r.stdout);}catch{}return {...r,out};};
   return {dir,home,soul,bindings,bindingFile,repo,source,cli,calls,context,base:bindings.bases.project};
@@ -153,7 +154,7 @@ test('exported payload version, floor, required hooks and complete command inven
   assert.equal(fs.existsSync(join(CAP,'agents')),false,'the harvester is the package soul oats.okf/knowledge-harvester, not a capability agent');
   assert.ok(fs.statSync(join(ROOT,'oats-package/souls/knowledge-harvester/AGENTS.md')).isFile(),'the harvester soul keeps its one canonical instruction file');
   const m=readJSON(join(CAP,'oats.json')),distribution=readJSON(join(ROOT,'oats-package/oats-package.json'));
-  for(const manifest of [readJSON(join(ROOT,'package.json')),distribution,m])assert.equal(manifest.version,'4.1.1');
+  for(const manifest of [readJSON(join(ROOT,'package.json')),distribution,m])assert.equal(manifest.version,'4.1.2');
   for(const manifest of [distribution,m])assert.equal(manifest.compatibility.oats,'>=0.29.0');
   assert.equal(m.hooks.spawn.required,true);
   for(const c of ['harvest','inspect','setup','run-source','complete','retry','migrate','read','refresh','init','bases','index','cat','ls','links','search','harvest-status']) assert.ok(m.commands[c]);
@@ -897,6 +898,33 @@ test('R1 individually oversize records fail closed after making durable progress
 test('R1 near-limit legal compact input is not rejected merely for pretty-print overhead',t=>{
   const f=fixture(t),s=f.source(),turns=records(f,1,1024*1024-500);
   assert.equal(capture(s,{final:true}).complete,true);assert.deepEqual(capturedTurns(s),turns);
+});
+
+for(const external of [true,false]) test(`4.1.2 schedule scope keeps ${external?'external':'in-deployment'} source context and routes every scheduler call to the deployment`,t=>{
+  const f=fixture(t),repo=join(external?f.dir:f.context,'work-repo');fs.mkdirSync(repo);
+  process.env.OATS_CONTEXT=repo;process.env.OATS_TEAM_SCOPE=join(f.dir,'foreign-scope');
+  const spawned=f.cli('spawn');assert.equal(spawned.status,0,spawned.stdout+spawned.stderr);
+  const s=loadSource(spawned.out.meta.source),before=fs.readFileSync(s.file);assert.equal(s.context,repo);
+  const spec=readJSON(join(dirname(s.file),'schedule.json'));assert.equal(spec.cwd,external?f.context:repo);
+  for(const flag of ['--disable','--enable']) {const r=f.cli('setup',['--source',s.file,flag]);assert.equal(r.status,0,r.stdout+r.stderr);}
+  const inspect=f.cli('inspect',['--source',s.file]);assert.equal(inspect.status,0,inspect.stdout);assert.equal(inspect.out.result.scheduler.error,undefined);
+  // Host installation stays forbidden by the fixture; even its attempted CLI
+  // call must target the deployment, never the external repository.
+  assert.equal(f.cli('setup',['--source',s.file,'--install-host']).status,1);
+  delete process.env.OATS_WORKSPACE;process.env.OATS_TEAM_SCOPE=f.context;
+  const retired=f.cli('retire');assert.equal(retired.status,0,retired.stdout);assert.equal(retired.out.meta.schedule.status,'removed');
+  assert.deepEqual(fs.readFileSync(s.file),before,'frozen repository context is not rewritten');
+  const calls=callsOf(f).filter(c=>c.a[0]==='schedule');
+  assert.ok(calls.every(c=>c.a[c.a.indexOf('--dir')+1]===f.context && c.cwd===f.context));
+  for(const verb of ['add','show','enable','disable','list','remove','host']) assert.ok(calls.some(c=>c.a[1]===verb),verb);
+});
+test('4.1.2 schedule scope refuses missing or relative deployment before scheduler calls',t=>{
+  const f=fixture(t),s=f.source(),before=callsOf(f).length;
+  assert.equal(scheduleDeployment({OATS_TEAM_SCOPE:f.context}),f.context);
+  assert.throws(()=>scheduleDeployment({OATS_WORKSPACE:'relative',OATS_TEAM_SCOPE:f.context}),{code:'E_SCHEDULE_SCOPE'});
+  const r=f.cli('setup',['--source',s.file],{OATS_WORKSPACE:undefined,OATS_TEAM_SCOPE:undefined});
+  assert.equal(r.status,1);assert.equal(r.out.error.code,'E_SCHEDULE_SCOPE');assert.match(r.out.error.message,/OATS_WORKSPACE.*OATS_TEAM_SCOPE/);
+  assert.equal(callsOf(f).length,before);
 });
 
 test('R1 registration schedules idempotently, recreates missing jobs and preserves explicit disable',t=>{

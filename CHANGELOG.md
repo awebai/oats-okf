@@ -1,5 +1,22 @@
 # Changelog
 
+## 4.1.2 — 2026-10-07
+
+### Fixed
+
+- **Scheduler deployment scope for external `--repo` sources** (#55).
+  Registration, setup, inspection and retirement pass the kernel's
+  `OATS_WORKSPACE` (fallback `OATS_TEAM_SCOPE`) to every scheduler operation,
+  not the source repository context. Missing scope refuses explicitly with
+  `E_SCHEDULE_SCOPE`. External-source command jobs run from the deployment,
+  satisfying the kernel's in-scope cwd requirement; existing in-deployment
+  definitions and frozen source contexts remain unchanged.
+- Keep the package floor **OATS >=0.29.0**, including OATS 0.41 compatibility.
+  The real-CLI CI regression covers spawn/setup/inspect/retire on released
+  0.41.0, with the released v4.1.1 payload as a failing negative control.
+  No host timer or model is launched; other providers' cleanup is not claimed.
+  #54's higher-floor identity feature and #52's checkpoint change are separate.
+
 ## 4.1.1 — 2026-10-01
 
 ### Fixed

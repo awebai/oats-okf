@@ -1,5 +1,5 @@
 import { fs, join, dirname, safePath, fail, oats } from './io.mjs';
-import { markerPath, loadStatus } from './sources.mjs';
+import { markerPath, loadStatus, scheduleDeployment } from './sources.mjs';
 import { qualifiedSoulIdentity } from './source-contract.mjs';
 
 // Keep the v1 labeled-document contract, including its explicit per-document
@@ -114,7 +114,7 @@ export function legacyLocalView(source,status=loadStatus(source)) {
 }
 export function inspect(source) {
   const status=loadStatus(source),working=workingDocuments(source,status),legacy=legacyLocalView(source,status);
-  let health;try {health=oats(['schedule','list','--dir',source.context,'--json'],source.context).scheduler;} catch(e) {health={active:false,error:e.message};}
+  let health;try {const deployment=scheduleDeployment();health=oats(['schedule','list','--dir',deployment,'--json'],deployment).scheduler;} catch(e) {health={active:false,error:e.message};}
   const documents=[...working.documents,{label:'Durable processing receipts',kind:'text',path:join(dirname(source.file),'status.json'),text:JSON.stringify(status,null,2)}];
   return {
     summary:`OKF ${source.id}: ${status.captured.inputs.length-status.processed.length} unprocessed inputs; ${status.retired?'source retired':'source not retired'}; ${working.liveMemory.available?`${working.documents.length} working-memory documents`:`live memory unavailable (${working.liveMemory.reason})`}${legacy?'; legacy-local-view ./knowledge/ (ignored, safe to delete)':''}`,

@@ -356,6 +356,14 @@ export function retireHarvestOff(source, sw) {
   });
   return { retired: true, reason: 'harvest-off', switch: sw.reason, source: source.file, schedule: settleRetiredSchedule(source) };
 }
+/** Schedules belong to the kernel-selected deployment, not OATS_CONTEXT
+ * (which can be an external --repo). Never search from the repository or
+ * substitute a caller home when neither deployment variable was supplied. */
+export function scheduleDeployment(env=process.env) {
+  const value=env.OATS_WORKSPACE || env.OATS_TEAM_SCOPE;
+  if(typeof value!=='string' || !value || resolve(value)!==value) fail('E_SCHEDULE_SCOPE','schedule operations require the deployment in OATS_WORKSPACE (or OATS_TEAM_SCOPE); invoke oats okf from the deployment with an explicit --soul, not directly from the external repository');
+  return fs.realpathSync(value);
+}
 export function settleRetiredSchedule(source) {
   const status=loadStatus(source);
   if(status.schedule?.removed===true) return {status:'already-removed',id:status.schedule.id};
@@ -364,14 +372,16 @@ export function settleRetiredSchedule(source) {
   const mark=(patch)=>updateStatus(source,current=>{current.schedule={...current.schedule,...patch};});
   try {
     if(status.schedule.settled!==true) {
-      oats(['schedule','disable',id,'--dir',source.context,'--json'],source.context);
+      const deployment=scheduleDeployment();
+      oats(['schedule','disable',id,'--dir',deployment,'--json'],deployment);
       mark({settled:true,settledAt:new Date().toISOString(),settleError:undefined});
     }
   } catch(e) {
     if(e.code!=='E_SCHEDULE_UNKNOWN') {mark({settled:false,settleError:e.message});return {status:'disable-failed',id};}
   }
   try {
-    oats(['schedule','remove',id,'--dir',source.context,'--json'],source.context);
+    const deployment=scheduleDeployment();
+    oats(['schedule','remove',id,'--dir',deployment,'--json'],deployment);
     mark({removed:true,removedAt:new Date().toISOString(),removeError:undefined});
     return {status:'removed',id};
   } catch(e) {
@@ -473,22 +483,27 @@ export function scheduleSource(source) {
   // has nothing left to run: do not recreate the job (retire is re-entrant).
   const current=loadStatus(source);
   if(current.retired && current.schedule?.removed===true) return current.schedule.result;
+  const deployment=scheduleDeployment();
+  // Kernel 0.41 also requires command-job cwd inside the deployment. Keep
+  // existing in-deployment cwd definitions unchanged; external repos dispatch
+  // from the deployment while the frozen source.context remains the repo.
+  const cwd=source.context===deployment || source.context.startsWith(deployment+'/') ? source.context : deployment;
   const captured=source.registration?.schemaVersion===1 && source.registration.kind==='captured';
   const argv=captured?['oats','okf','run-source','--source',source.file,'--deployment',source.executionBinding.deployment,'--resolution',source.executionBinding.resolution.id,'--json']
     :['oats','okf','run-source','--source',source.file,'--soul',source.agent,'--json'];
-  const spec={id:`okf-${source.id}`,kind:'command',enabled:current.auto,cron:source.bindings.cron,tz:source.bindings.tz,cwd:source.context,argv,
+  const spec={id:`okf-${source.id}`,kind:'command',enabled:current.auto,cron:source.bindings.cron,tz:source.bindings.tz,cwd,argv,
     ...(captured?{definitionVersion:2,recurrencePolicy:'capture',responsibleHuman:source.responsibleHuman}: {})};
   const file=join(dirname(source.file),'schedule.json');
   try {
     save(file,spec);
     let result;
-    try {result=oats(['schedule','add',spec.id,'--file',file,'--dir',source.context,'--json'],source.context);}
+    try {result=oats(['schedule','add',spec.id,'--file',file,'--dir',deployment,'--json'],deployment);}
     catch(e) {
       // Never overwrite a colliding job or re-enable an operator-disabled job.
       // Retry after an uncertain add must verify the actual definition, not a
       // local receipt. A deleted definition is recreated by the add above.
       if(e.code!=='E_SCHEDULE_EXISTS') throw e;
-      result=oats(['schedule','show',spec.id,'--dir',source.context,'--json'],source.context);
+      result=oats(['schedule','show',spec.id,'--dir',deployment,'--json'],deployment);
     }
     const actual=result?.schedule;
     if(!actual || typeof actual.enabled!=='boolean' || ['id','kind','cron','tz','cwd','argv','definitionVersion','recurrencePolicy'].some(k=>JSON.stringify(actual[k])!==JSON.stringify(spec[k]))) fail('E_SCHEDULE','source schedule definition differs; inspect and repair explicitly');

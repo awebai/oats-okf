@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { fs, join, resolve, readJSON, safePath, oats, fail, unlock, redactUrls } from '../lib/io.mjs';
 import { loadBindings } from '../lib/config.mjs';
-import { register, registerCaptured, loadInvocationSourceReceipt, homeSource, loadSource, loadStatus, saveStatus, updateStatus, capture, scheduleSource, settleRetiredSchedule, service, markerPath, harvestOffRecord, sourceSwitch, retireHarvestOff, consultSource } from '../lib/sources.mjs';
+import { register, registerCaptured, loadInvocationSourceReceipt, homeSource, loadSource, loadStatus, saveStatus, updateStatus, capture, scheduleSource, scheduleDeployment, settleRetiredSchedule, service, markerPath, harvestOffRecord, sourceSwitch, retireHarvestOff, consultSource } from '../lib/sources.mjs';
 import { harvestStatus, setupHarvest } from '../lib/harvest-status.mjs';
 import { settings } from '../lib/config.mjs';
 import { CONSULT } from '../lib/consult.mjs';
@@ -201,10 +201,11 @@ else {
     }
     else if(event==='setup') {
       const s=src();if(flags.enable && flags.disable) fail('E_USAGE','choose enable or disable');
+      const deployment=scheduleDeployment();
       scheduleSource(s);
-      if(flags.enable || flags.disable) {oats(['schedule',flags.enable?'enable':'disable',`okf-${s.id}`,'--dir',s.context,'--json'],s.context);updateStatus(s,current=>{current.auto=!!flags.enable;});}
-      if(flags['install-host']) oats(['schedule','host','install','--dir',s.context,'--json'],s.context);
-      result={source:s.file,scheduler:oats(['schedule','list','--dir',s.context,'--json'],s.context).scheduler};
+      if(flags.enable || flags.disable) {oats(['schedule',flags.enable?'enable':'disable',`okf-${s.id}`,'--dir',deployment,'--json'],deployment);updateStatus(s,current=>{current.auto=!!flags.enable;});}
+      if(flags['install-host']) oats(['schedule','host','install','--dir',deployment,'--json'],deployment);
+      result={source:s.file,scheduler:oats(['schedule','list','--dir',deployment,'--json'],deployment).scheduler};
     } else if(event==='init') result=initBase(loadBindings(),flags.base,flags.nodes,flags.output,{confirm:!!flags.confirm});
     else if(event==='migrate') {
       if(flags['source-home']) result=migrateSource(loadBindings(),flags['source-home']);

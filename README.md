@@ -1,6 +1,39 @@
 # oats.okf 4 — external knowledge, consulted remotely, independent judgment
 
-The official OKF knowledge capability: **4.1.1**, requiring **OATS >=0.29.0**.
+The official OKF knowledge capability: **4.1.2**, requiring **OATS >=0.29.0**.
+
+## 4.1.2 — scheduler scope for an external repository (#55)
+
+An instance spawned with `--repo` outside the deployment keeps that repository
+as its source context. Scheduler operations instead use the deployment handed
+by the kernel in `OATS_WORKSPACE` (fallback: `OATS_TEAM_SCOPE`). Without either,
+they refuse with `E_SCHEDULE_SCOPE`; they never search for a deployment from
+the external repository. This applies to registration, `okf setup`, inspection
+and retirement. The package floor is unchanged; this patch supports OATS 0.41.
+
+The kernel also requires a command job's working directory inside its
+scheduler scope. External-repository jobs therefore dispatch from the
+deployment; existing in-deployment job working directories remain unchanged.
+Frozen source descriptors, owner pins, input custody, explicit job disablement
+and foreign-definition collision refusals are not rewritten or bypassed.
+Use the existing `oats okf setup --source FILE --enable|--disable --soul SOUL`
+operator path; there is no `oats okf schedule` command.
+
+Pin/sync does not update code already copied into running homes. Qualify new
+4.1.2 homes; use the operator's supported recovery/retirement plan for an old
+failed home, never an in-place module rewrite. An OKF retire-hook failure does
+**not** mean another provider's cleanup rolled back: preserve the kernel's
+retention record and each provider's cleanup receipts. In particular, an aweb
+self-delete may already have completed; do not blindly repeat it or report it
+undone. Cross-provider cleanup/idempotency is tracked separately (oats-aweb#37).
+
+CI has a dedicated released-OATS-0.41.0 external-`--repo` test for the real spawn
+hook, home/operator setup, inspection and drained retirement. It first requires
+the same fixture to reproduce the scope failure with the released v4.1.1
+payload. The fixture launches no model, installs no host timer and does not
+qualify messaging cleanup, GitHub publication or a production deployment.
+This patch does not include #54's identity/rebind feature or #52's checkpoint
+harvest changes.
 
 ## 4.1.1 — fixes to complete and harvest --once
 
@@ -289,7 +322,7 @@ compatibility is declared by the manifests and this guide.
 
 ## Configuration and ownership
 
-A workspace declares the package (`packages: { oats.okf: v4.1.1 }`) and selects
+A workspace declares the package (`packages: { oats.okf: v4.1.2 }`) and selects
 it as the knowledge capability (`defaults: { knowledge: { oats.okf: { from:
 package } } }`, or per soul). Each deployment points it at its bindings file
 in its own `oats-local.yaml`:
