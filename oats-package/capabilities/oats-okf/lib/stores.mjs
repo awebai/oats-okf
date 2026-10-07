@@ -545,4 +545,3 @@ export function gitPublish(base, stage, proposal, receipt, persist, {beforePubli
   if(pr.mergedAt) acceptMerged(base,cwd,branch,receipt,pr,persist,fetchAccepted(base,cwd));
   return receipt;
 }
-

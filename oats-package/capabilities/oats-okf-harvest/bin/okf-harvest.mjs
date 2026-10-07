@@ -9,8 +9,8 @@
 // and refuses a source whose recorded soul opts out (knowledge: { harvest: off })
 // or whose record cannot be established. Instructions alone are not
 // enforcement. A matching record proves consistency, not authorship.
-import { lstatSync, readFileSync, readdirSync } from 'node:fs';
-import { isAbsolute, join, resolve } from 'node:path';
+import { lstatSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HELP = `oats.okf-harvest 5.0 has no commands of its own: a harvester follows the
@@ -21,6 +21,7 @@ oats okf-harvest complete | harvest-status   removed in 5.0 (E_REMOVED)
 export const REMOVED = 'was removed in oats.okf 5.0: there are no harvest runs, custody or delivery to complete. A 5.0 harvester judges the proposal in its TASK.md and opens the PR itself (skill knowledge-harvest). A 4.x TASK (one naming a source descriptor and a run) cannot be processed by 5.0: report it to your operator and retire; nothing was delivered';
 const fail = (code, message) => { throw Object.assign(new Error(message), { code }); };
 const NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+const real = (p) => { try { return realpathSync(String(p)); } catch { return null; } };
 const file = (p) => { try { const s = lstatSync(p); return s.isFile() && !s.isSymbolicLink(); } catch { return false; } };
 
 /** The proposal's source, checked against the deployment's record. → { instance, soul, agent }. */
@@ -35,7 +36,7 @@ export function checkSource({ task = '', deployment } = {}) {
   const records = agents.map((a) => ({ agent: a, path: join(deployment, 'agents', a, 'instances', instance, 'instance.json') })).filter((r) => file(r.path));
   if (records.length !== 1) fail('E_SOURCE', records.length ? `more than one record names source instance ${instance}; its authority cannot be established` : `no record of source instance ${instance} in this deployment (retired?); its authority cannot be established`);
   let record; try { record = JSON.parse(readFileSync(records[0].path, 'utf8')); } catch { fail('E_SOURCE', `the record of source instance ${instance} is unreadable`); }
-  if (record?.instance !== instance || resolve(String(record.home)) !== resolve(home)) fail('E_SOURCE', `the record of source instance ${instance} does not match the proposal's home`);
+  if (record?.instance !== instance || resolve(String(record.home)) !== resolve(home) || real(record.home) !== real(dirname(records[0].path))) fail('E_SOURCE', `the record of source instance ${instance} does not match the proposal's home`);
   if (typeof record.soulDir !== 'string' || !isAbsolute(record.soulDir) || !file(join(record.soulDir, 'soul.yaml'))) fail('E_SOURCE', `the recorded soul of source instance ${instance} is unreadable`);
   const soulYaml = readFileSync(join(record.soulDir, 'soul.yaml'), 'utf8');
   if (/^name:\s*['"]?([^'"\s#]+)/m.exec(soulYaml)?.[1] !== soul) fail('E_SOURCE', `the recorded soul of source instance ${instance} is not ${soul}`);
@@ -43,7 +44,7 @@ export function checkSource({ task = '', deployment } = {}) {
   if (!okf || typeof okf !== 'object') fail('E_SOURCE', `source instance ${instance} has no oats.okf knowledge slot`);
   // The recorded soul's opt-out, from what the kernel handed oats.okf and from
   // the recorded soul itself (any `harvest: off` there refuses: fail closed).
-  if (okf.harvest === 'off' || /\bharvest\s*:\s*['"]?off\b/.test(soulYaml)) fail('E_OPTED_OUT', `the soul of source instance ${instance} opts out of harvest (knowledge: { harvest: off }): its knowledge is not harvested`);
+  if (okf.harvest === 'off' || /\bharvest\s*:\s*['"]?off\b/.test(soulYaml)) fail('E_OPTED_OUT', `the soul of source instance ${instance} opts out of harvest (knowledge: { harvest: off }, or a "harvest: off" anywhere in its soul.yaml): its knowledge is not harvested`);
   return { instance, soul, agent: records[0].agent };
 }
 
@@ -51,12 +52,15 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   const args = process.argv.slice(2), event = process.env.OATS_EVENT || args[0];
   if (event === 'spawn') {
     // Hook answer: JSON on stdout; a failure exits 1, and the required hook refuses the spawn.
+    // No meta either way: the check reads files and creates nothing, and the
+    // kernel keeps meta as the receipt of external state (a spawn rolled back
+    // after this capability, which has no retire hook, reported meta is
+    // quarantined). The record keeps no source name: no link to the proposer.
     try {
-      // The record keeps no source name: an unrelated harvester has no link to its proposer.
       checkSource({ task: process.env.OATS_TASK, deployment: process.env.OATS_WORKSPACE });
-      process.stdout.write(JSON.stringify({ meta: { sourceChecked: true } }) + '\n');
+      process.stdout.write('{}\n');
     } catch (e) {
-      process.stdout.write(JSON.stringify({ meta: {}, warning: `oats-okf-harvest ${e.code || 'E_SOURCE'}: ${e.message}` }) + '\n');
+      process.stdout.write(JSON.stringify({ warning: `oats-okf-harvest ${e.code || 'E_SOURCE'}: ${e.message}` }) + '\n');
       process.exitCode = 1;
     }
   } else if (!event || args.includes('--help') || args.includes('-h')) process.stdout.write(HELP);

@@ -68,7 +68,7 @@ test('spawn hook creates instance knowledge and briefs the proposal + harvester 
   const f=fixture(t);
   const r=hook(f,'spawn');
   assert.equal(r.status,0,r.stdout+r.stderr);
-  assert.deepEqual(r.out.meta,{memory:'okf-v2',knowledge:'proposal'});
+  assert.equal(r.out.meta,undefined,'no meta: the kernel keeps meta as the receipt of external state');
   assert.ok(r.out.brief.includes(SPAWN),r.out.brief);
   assert.ok(!r.out.brief.includes('--relative-to'));
   assert.match(r.out.brief,/owns: project\/expert; reads: project\/peer/);
@@ -83,7 +83,7 @@ test('a soul that opts out (knowledge: { harvest: off }) keeps consultation and 
   const f=fixture(t);
   const r=hook(f,'spawn',{extra:{OATS_SETTINGS:JSON.stringify({'bindings-file':f.bindingsFile,harvest:'off'}),OATS_SETTINGS_ORIGINS:JSON.stringify({'/harvest':{kind:'soul',at:'soul.yaml#/knowledge'}})}});
   assert.equal(r.status,0,r.stdout+r.stderr);
-  assert.deepEqual(r.out.meta,{memory:'okf-v2',knowledge:'opted-out'});
+  assert.equal(r.out.meta,undefined,'no meta: the kernel keeps meta as the receipt of external state');
   assert.match(r.out.brief,/oats okf index/);assert.match(r.out.brief,/okf-consultation and okf-instance-knowledge/);
   assert.match(r.out.brief,/never propose knowledge or spawn a knowledge harvester/);
   assert.doesNotMatch(r.out.brief,/oats spawn|--task-file|proposals\//);
@@ -113,7 +113,7 @@ test('spawn hook skips a capability (service) home',t=>{
   const f=fixture(t,{instance:{name:'svc',kind:'capability'}});
   const r=hook(f,'spawn');
   assert.equal(r.status,0);
-  assert.deepEqual(r.out.meta,{memory:'none'});
+  assert.equal(r.out.meta,undefined,'no meta: the kernel keeps meta as the receipt of external state');
   assert.equal(fs.existsSync(join(f.home,'STATE.md')),false);
   assert.equal(fs.existsSync(join(f.home,'notes')),false);
 });
@@ -122,7 +122,7 @@ test('spawn hook fails with E_CONFIG when the soul has no okf.json',t=>{
   const f=fixture(t,{okf:false});
   const r=hook(f,'spawn');
   assert.equal(r.status,1);
-  assert.deepEqual(r.out.meta,{});
+  assert.deepEqual(Object.keys(r.out),['warning'],'a refusal reports no meta: nothing to undo');
   assert.match(r.out.warning,/^oats-okf E_CONFIG: soul has no okf\.json/);
   assert.equal(fs.existsSync(join(f.home,'STATE.md')),false);
 });
@@ -131,7 +131,7 @@ test('spawn hook fails without OATS_SOUL',t=>{
   const f=fixture(t);
   const r=hook(f,'spawn',{drop:['OATS_SOUL']});
   assert.equal(r.status,1);
-  assert.deepEqual(r.out.meta,{});
+  assert.deepEqual(Object.keys(r.out),['warning'],'a refusal reports no meta: nothing to undo');
   assert.match(r.out.warning,/^oats-okf E_OATS_SOUL_MISSING: /);
   assert.equal(fs.existsSync(join(f.home,'STATE.md')),false);
 });

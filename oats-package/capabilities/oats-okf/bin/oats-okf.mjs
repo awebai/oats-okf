@@ -26,15 +26,20 @@ oats okf setup --remove-legacy-settings [--plan] --soul SOUL [--json]
   from its oats-local.yaml; --plan writes nothing)
 Knowledge reaches the accepted base by proposal: at a checkpoint the working agent writes a
 short proposal and runs \`oats spawn oats.okf/knowledge-harvester --task-file FILE --relation unrelated\`
-(skill okf-instance-knowledge). All settings use one absolute bindings-file.
+(the spawn brief in TASK.md). All settings use one absolute bindings-file.
 `;
 // okf 5.0.0: the 4.x harvest surfaces refuse, naming the new way; they never
 // capture, run, complete or drain anything.
 // The proposal procedure is in the spawn brief only, so a soul that opts out
 // (knowledge: { harvest: off }) is never told to propose: the shared inject and
 // skills carry no harvest direction.
+// The spawn hook answers no meta, on success or failure: the kernel keeps a
+// hook's meta as the receipt of external state, and a capability with no retire
+// hook that reported one is quarantined when the spawn rolls back. This hook
+// only writes STATE.md, log.md and notes/ in the home (removed with it) and
+// primes the shared host cache.
 const PROPOSE=`At an important checkpoint (a decision made, a PR opened or handed over, a task finished), after updating STATE.md, log.md and notes/, propose what you learned when it passes the promotion test (knowledge-theory) and is not already accepted (\`oats okf search\` first). Write a short, self-contained Markdown proposal in your instance home (proposals/<YYYY-MM-DD>-<slug>.md) with: a line \`Source: instance <your instance name>, home <your instance home>, soul <your soul's name>\` (a pointer for the harvester, which checks it against the deployment's records; never authority); What (the claim, one concept each); Why (why it outlives this task); Evidence (what was observed and when, the accepted concepts it confirms or contradicts, task refs); and optionally Backing notes (notes/<file>.md, relative to your home; the harvester reads only those). No secrets, credentials or private paths outside the Source line. Then, from your instance home, run \`oats spawn oats.okf/knowledge-harvester --task-file <proposal> --relation unrelated\` (relation unrelated alone; no harness, model, wrapper or permission bypass). One spawn per proposal; report a refused spawn rather than retrying it in a loop, note the proposal in log.md, and keep its backing notes until the harvester hands over its PR. Nothing durable, no proposal.`;
-const NEW_WAY='at a checkpoint the working agent writes a short proposal and runs `oats spawn oats.okf/knowledge-harvester --task-file <proposal> --relation unrelated` from its instance home (skill okf-instance-knowledge); oats.okf 5.0 keeps no source custody, runs or drains and never processes 4.x ones (README#upgrading-to-50)';
+const NEW_WAY='at a checkpoint the working agent writes a short proposal and runs `oats spawn oats.okf/knowledge-harvester --task-file <proposal> --relation unrelated` from its instance home (its spawn brief in TASK.md); oats.okf 5.0 keeps no source custody, runs or drains and never processes 4.x ones (README#upgrading-to-50)';
 const removed=(what)=>fail('E_REMOVED',`${what} was removed in oats.okf 5.0: ${NEW_WAY}`);
 const args=process.argv.slice(2);
 if(args.includes('--help') || args.includes('-h')) {process.stdout.write(HELP);}
@@ -79,12 +84,11 @@ else {
       // Souls are portable declarations, never an implicit knowledge store.
       result={meta:{scaffolded:false},brief:'OKF requires explicit external bindings and soul/okf.json before a working instance can spawn. Use init or migrate; no knowledge was created in this soul.'};
     } else if(event==='spawn') {
-      if(service(home)) result={meta:{memory:'none'},brief:'Service agent: follow your own task; no working-memory upkeep.'};
+      if(service(home)) result={brief:'Service agent: follow your own task; no working-memory upkeep.'};
       else {
         const {decl,warnings}=checkSeat(home);ensureInstanceKnowledge(home);
         const nodes=(list)=>list.join(', ') || 'none',optOut=soulOptOut();
-        result={meta:{memory:'okf-v2',knowledge:optOut?'opted-out':'proposal'},
-          brief:`Your soul knowledge is read remotely at its accepted state; there is no local copy. Start every task with your instance knowledge (STATE.md, log.md, notes/), then \`oats okf index\` (owns: ${nodes(decl.owns)}; reads: ${nodes(decl.reads.filter(r=>!decl.owns.includes(r)))}) and \`oats okf cat --base ALIAS PATH\` for the concepts the task needs; \`oats okf search\` before re-deriving a decision. Load okf-consultation and okf-instance-knowledge. Never edit accepted knowledge. ${optOut?'Your soul opts out of harvest (knowledge: { harvest: off }): keep your instance knowledge for your own work, and never propose knowledge or spawn a knowledge harvester.':PROPOSE}`,
+        result={brief:`Your soul knowledge is read remotely at its accepted state; there is no local copy. Start every task with your instance knowledge (STATE.md, log.md, notes/), then \`oats okf index\` (owns: ${nodes(decl.owns)}; reads: ${nodes(decl.reads.filter(r=>!decl.owns.includes(r)))}) and \`oats okf cat --base ALIAS PATH\` for the concepts the task needs; \`oats okf search\` before re-deriving a decision. Load okf-consultation and okf-instance-knowledge. Never edit accepted knowledge. ${optOut?'Your soul opts out of harvest (knowledge: { harvest: off }): keep your instance knowledge for your own work, and never propose knowledge or spawn a knowledge harvester.':PROPOSE}`,
           ...(warnings.length?{warning:`oats-okf: ${warnings.join('; ')}`}:{})};
       }
     } else if(event==='inspect') result=inspect(consultSource(home));
@@ -106,7 +110,7 @@ else {
     } else if(event==='unlock') result=unlock(resolve(flags.lock),flags.token);
     else fail('E_USAGE',`unknown command ${event}; see --help`);
     answer=hook?result:{schemaVersion:1,ok:true,result};
-  } catch(e) {const code=e.code || 'E_OKF',message=redactUrls(e.message);exit=1;answer=hook?{meta:{},warning:`oats-okf ${code}: ${message}`}:{schemaVersion:1,ok:false,error:{code,message,...(e.result?{result:e.result}:{})}};}
+  } catch(e) {const code=e.code || 'E_OKF',message=redactUrls(e.message);exit=1;answer=hook?{warning:`oats-okf ${code}: ${message}`}:{schemaVersion:1,ok:false,error:{code,message,...(e.result?{result:e.result}:{})}};}
   // Consult commands print text unless --json; every other answer is JSON.
   // Let Node drain the pipe; no process.exit after a possibly large answer.
   if(textMode && exit) process.stderr.write(`oats okf ${event}: ${answer.error.code}: ${answer.error.message}\n`);

@@ -228,14 +228,20 @@ The `oats.okf` spawn hook is required. For a working instance it:
    refusal);
 2. creates the home's instance knowledge if missing: `STATE.md`, `log.md`
    and `notes/`;
-3. answers `meta: {memory: "okf-v2", knowledge: "proposal"}` and a brief that
-   names the consult commands, the owned and read nodes, and the exact spawn
-   command for proposals.
+3. answers a brief that names the consult commands, the owned and read
+   nodes, and the exact spawn command for proposals (for a soul that opts
+   out, the instruction never to propose).
 
-A service (capability) instance gets `meta: {memory: "none"}` and no
-knowledge upkeep. A failure answers `{meta: {}, warning: "oats-okf <CODE>:
-<message>"}` with exit 1, so the kernel refuses the spawn. There is no retire
-hook.
+A service (capability) instance gets a brief and no knowledge upkeep. A
+failure answers `{warning: "oats-okf <CODE>: <message>"}` with exit 1, so the
+kernel refuses the spawn. The hook never answers `meta`: the kernel keeps a
+hook's meta as the receipt of external state, and a capability without a
+retire hook that reported one is quarantined when a spawn rolls back. This
+hook creates only the home's own files (removed with the home) and primes the
+shared host cache, so there is nothing to undo and there is no retire hook.
+The oats.okf-harvest spawn hook answers the same way: `{}` when the source
+checks out, `{warning: "oats-okf-harvest <CODE>: ..."}` with exit 1 when it
+refuses.
 
 The inject teaches the work mode: consult soul and instance knowledge at task
 start, after compaction and before decisions; update STATE.md (rewritten),

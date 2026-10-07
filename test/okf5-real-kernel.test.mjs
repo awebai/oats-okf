@@ -146,7 +146,7 @@ test(`5.0.0 real OATS ${KERNEL}: legacy-key cleanup, a source spawn, its checkpo
     for (const p of ['STATE.md', 'log.md']) assert.ok(fs.statSync(join(src, p)).isFile(), `${p} seeded by the spawn hook`);
     assert.ok(fs.statSync(join(src, 'notes')).isDirectory());
     const srcRecord = json(join(src, 'instance.json'));
-    assert.deepEqual(srcRecord.capabilityMeta?.['oats.okf'], { memory: 'okf-v2', knowledge: 'proposal' });
+    assert.equal(srcRecord.capabilityMeta?.['oats.okf'], undefined, 'no meta: the hook creates no external state for the kernel to keep');
     assert.ok(fs.readFileSync(join(src, 'TASK.md'), 'utf8').includes(SPAWN_LINE), 'the spawn brief (TASK.md) names the exact harvester spawn');
     const srcAgents = fs.readFileSync(join(src, 'AGENTS.md'), 'utf8');
     assert.ok(srcAgents.includes('## Knowledge: OKF'), 'the okf inject is composed');
@@ -170,6 +170,13 @@ test(`5.0.0 real OATS ${KERNEL}: legacy-key cleanup, a source spawn, its checkpo
     assert.match(bad.message, /--relation unrelated takes no --relative-to/);
     assert.deepEqual(harvesterHomes(), []);
 
+    // The required oats.okf-harvest spawn hook enforces in code: a task that is not a proposal is refused and no home is kept.
+    write(join(src, 'proposals/not-a-proposal.md'), '# Notes\n\nNo Source line.\n');
+    const nap = run(['spawn', 'oats.okf/knowledge-harvester', '--task-file', 'proposals/not-a-proposal.md', '--relation', 'unrelated', '--no-launch'], { cwd: src, as });
+    assert.notEqual(nap.status, 0, nap.text);
+    assert.match(nap.text, /oats-okf-harvest E_SOURCE/, nap.text);
+    assert.deepEqual(harvesterHomes(), [], 'a refused harvester spawn keeps no home (the hook reported no meta to quarantine)');
+
     // The real spawn, from the source home, exactly as the skill writes it (the task file relative to the home).
     const h = ok(['spawn', 'oats.okf/knowledge-harvester', '--task-file', 'proposals/2026-10-07-retry-budget.md', '--relation', 'unrelated', '--no-launch'], { cwd: src, as }).result;
     assert.equal(h.launched, false);
@@ -183,7 +190,7 @@ test(`5.0.0 real OATS ${KERNEL}: legacy-key cleanup, a source spawn, its checkpo
     for (const k of ['parentInstance', 'siblingInstance', 'relation', 'relativeTo']) assert.equal(hRecord[k], undefined, `${k}: ${JSON.stringify(hRecord[k])}`);
     assert.equal(hRecord.spawnOrigin, 'operator', 'not an instance-origin (child) spawn: ambient OATS_INSTANCE is not parentage');
     assert.ok(!strings(hRecord).some(v => v === 'src' || v.includes(src)), 'nothing in the harvester record names the source');
-    assert.deepEqual(hRecord.capabilityMeta?.['oats.okf-harvest'], { sourceChecked: true }, 'the required oats.okf-harvest spawn hook checked the recorded source');
+    assert.equal(hRecord.capabilityMeta?.['oats.okf-harvest'], undefined, 'the source check reports no meta (it creates nothing); its enforcement is the refusal above and in f)');
     assert.deepEqual(fs.readFileSync(join(src, 'instance.json')), srcBefore, 'the source record gained no child or lineage');
 
     // Composition: oats.okf-harvest only, knowledge: none (no oats.okf, its hook, skills or instance knowledge).
@@ -309,7 +316,7 @@ test(`5.0.0 real OATS ${KERNEL}: legacy-key cleanup, a source spawn, its checkpo
   await t.test('f) a soul that opts out (knowledge: { harvest: off }) spawns and consults with no proposal instruction, and the harvester spawn hook refuses it in code', () => {
     const quiet = ok(['spawn', 'quiet', '--name', 'quiet-1', '--no-launch']).result.home;
     const record = json(join(quiet, 'instance.json'));
-    assert.deepEqual(record.capabilityMeta?.['oats.okf'], { memory: 'okf-v2', knowledge: 'opted-out' }, 'the kernel forwards the soul opt-out and oats.okf accepts it');
+    assert.equal(record.capabilityMeta?.['oats.okf'], undefined, 'the soul opt-out is accepted (the spawn succeeded); the hook reports no meta');
     const task = fs.readFileSync(join(quiet, 'TASK.md'), 'utf8');
     assert.ok(!task.includes('oats spawn') && task.includes('never propose knowledge'), 'no proposal instruction for an opted-out soul');
     assert.ok(fs.statSync(join(quiet, 'STATE.md')).isFile());

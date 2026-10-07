@@ -67,6 +67,17 @@ test('the two limits and the directory-base refusal are stated',()=>{
   assert.match(skill,/directory base <alias> is unsupported for harvest in oats\.okf 5\.0/);
 });
 
+test('the skill\'s publish commands name the pushed branch as the PR head (gh runs outside the clone)',()=>{
+  const md=read('capabilities/oats-okf-harvest/skills/knowledge-harvest/SKILL.md');
+  const block=/^```sh\n(branch=[\s\S]*?)\n```$/m.exec(md)?.[1];assert.ok(block,'step 8 publish block');
+  const lines=block.split('\n');
+  assert.match(lines[0],/^branch=okf-harvest\/<source instance>-<YYYYMMDD-HHMM>$/);
+  assert.ok(lines.includes('git -C ./work/<alias> switch -c "$branch"'));
+  assert.ok(lines.includes('git -C ./work/<alias> push -u origin "$branch"'));
+  const create=lines.find(l=>l.startsWith('gh pr create '));
+  for(const arg of ['--repo <owner>/<repo>','--base <acceptedBranch>','--head "$branch"','--label okf-harvest']) assert.ok(create.includes(arg),`${arg} in: ${create}`);
+});
+
 test('the skill\'s v2 provenance example parses once its placeholders are filled',()=>{
   const md=read('capabilities/oats-okf-harvest/skills/knowledge-harvest/SKILL.md');
   const [example]=/^```okf-harvest\n[\s\S]*?\n```$/m.exec(md);
@@ -106,13 +117,13 @@ function spawnHook(task,deploymentDir) {
     return {status:r.status,out:JSON.parse(r.stdout||'null'),left:fs.readdirSync(cwd)};
   } finally {fs.rmSync(cwd,{recursive:true,force:true});}
 }
-const refused=(r,code,pattern)=>{assert.equal(r.status,1,JSON.stringify(r.out));assert.deepEqual(r.out.meta,{});assert.match(r.out.warning,new RegExp(`^oats-okf-harvest ${code}: `));if(pattern) assert.match(r.out.warning,pattern);assert.deepEqual(r.left,[]);};
+const refused=(r,code,pattern)=>{assert.equal(r.status,1,JSON.stringify(r.out));assert.deepEqual(Object.keys(r.out),['warning'],'a refusal reports no meta: the kernel would keep it as external state');assert.match(r.out.warning,new RegExp(`^oats-okf-harvest ${code}: `));if(pattern) assert.match(r.out.warning,pattern);assert.deepEqual(r.left,[]);};
 
 test('the harvester spawn hook is declared required and admits a recorded source that has not opted out',t=>{
   const m=JSON.parse(read('capabilities/oats-okf-harvest/oats.json'));
   assert.deepEqual(m.hooks,{spawn:{command:'bin/okf-harvest.mjs spawn',required:true}});
   const f=deployment(t),r=spawnHook(proposal(f.home),f.d);
-  assert.equal(r.status,0,JSON.stringify(r.out));assert.deepEqual(r.out,{meta:{sourceChecked:true}},'no source name is recorded: no proposer link');assert.deepEqual(r.left,[]);
+  assert.equal(r.status,0,JSON.stringify(r.out));assert.deepEqual(r.out,{},'no meta (it creates nothing) and no source name: no proposer link');assert.deepEqual(r.left,[]);
 });
 
 test('the harvester spawn hook refuses a source whose RECORDED soul opts out, whatever the proposal says',t=>{
@@ -132,6 +143,9 @@ test('the harvester spawn hook fails closed when the source cannot be establishe
   refused(spawnHook(proposal('/elsewhere/src'),f.d),'E_SOURCE',/does not match the proposal's home/);
   refused(spawnHook(proposal(f.home,{soul:'other'}),f.d),'E_SOURCE',/is not other/);
   refused(spawnHook(proposal(f.home)),'E_SOURCE',/deployment is unknown/);
+  const moved=deployment(t),rec=JSON.parse(fs.readFileSync(join(moved.home,'instance.json'),'utf8'));
+  fs.writeFileSync(join(moved.home,'instance.json'),JSON.stringify({...rec,home:'/elsewhere/src'}));
+  refused(spawnHook(proposal('/elsewhere/src'),moved.d),'E_SOURCE',/does not match the proposal's home/);
   const two=deployment(t,{records:['a1','a2']});
   refused(spawnHook(proposal(two.home),two.d),'E_SOURCE',/more than one record/);
   const noSlot=deployment(t,{okf:null});

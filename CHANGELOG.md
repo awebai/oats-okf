@@ -47,10 +47,12 @@ the README's "Upgrading to 5.0". The kernel floor is unchanged
   reports its failure as `declaration:unresolved`. `binding.reasons` holds
   24 strings. The declaration contract stays `oats.okf.locations@1`.
 - **The spawn hook** checks the soul's declared nodes, creates STATE.md,
-  log.md and notes/, and answers `meta: {memory: "okf-v2", knowledge:
-  "proposal"}` with a brief naming the proposal spawn command. It no longer
-  registers a source, takes no `sourceReceipt` input, and reports no
-  `harvest` or `checkpoint` meta.
+  log.md and notes/, and answers a brief naming the proposal spawn command.
+  It answers no `meta` at all, on success or failure (4.x answered
+  `memory`, `harvest` and `checkpoint` meta): with no retire hook, a
+  reported meta would make the kernel quarantine a rolled-back spawn's home
+  as outstanding external state. It no longer registers a source and takes
+  no `sourceReceipt` input.
 - **`oats okf inspect`** reports the declaration, the bound bases and the
   home's working memory; there is no source, custody or harvest state.
 - **`knowledge-theory`** now also ships in `oats.okf`, so working souls load

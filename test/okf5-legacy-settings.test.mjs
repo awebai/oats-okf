@@ -214,7 +214,7 @@ test('with a host legacy key, inspect/bases/init and the spawn hook refuse E_REM
     assert.equal(r.status,1,`${args[0]}: no effect was attempted\n${r.stdout}${r.stderr}`);assert.equal(r.out.error.code,'E_REMOVED');assert.match(r.out.error.message,/settings\.oats\.okf\.harvest from host/);
   }
   const hook=run([],{...env,OATS_EVENT:'spawn'},home);
-  assert.equal(hook.status,1,hook.stdout+hook.stderr);assert.deepEqual(hook.out.meta,{});assert.match(hook.out.warning,/^oats-okf E_REMOVED: settings\.oats\.okf\.harvest from host/);
+  assert.equal(hook.status,1,hook.stdout+hook.stderr);assert.deepEqual(Object.keys(hook.out),['warning'],'a refusal before effects reports no meta');assert.match(hook.out.warning,/^oats-okf E_REMOVED: settings\.oats\.okf\.harvest from host/);
   for(const f of ['STATE.md','log.md','notes']) assert.equal(fs.existsSync(join(home,f)),false,`spawn wrote no ${f}`);
   assert.deepEqual(inventory(root),before);
   const help=run(['--help'],envFor(['harvest']),home);

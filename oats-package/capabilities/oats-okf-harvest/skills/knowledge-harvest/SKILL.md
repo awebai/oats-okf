@@ -158,12 +158,16 @@ why it was dropped, then retire.
 Otherwise, per base with changes:
 
 ```sh
-git -C ./work/<alias> switch -c okf-harvest/<source instance>-<YYYYMMDD-HHMM>
+branch=okf-harvest/<source instance>-<YYYYMMDD-HHMM>
+git -C ./work/<alias> switch -c "$branch"
 git -C ./work/<alias> add -A <owned paths> && git -C ./work/<alias> commit -m "okf-harvest: <claim>"
-git -C ./work/<alias> push -u origin HEAD
+git -C ./work/<alias> push -u origin "$branch"
 gh label create okf-harvest --repo <owner>/<repo> --force --color 0E8A16 --description "OKF harvest PR (oats.okf)"
-gh pr create --repo <owner>/<repo> --base <acceptedBranch> --label okf-harvest --title "okf-harvest: <claim>" --body-file <body.md>
+gh pr create --repo <owner>/<repo> --base <acceptedBranch> --head "$branch" --label okf-harvest --title "okf-harvest: <claim>" --body-file <body.md>
 ```
+
+`gh` runs from your home, not the clone, so it cannot infer the branch:
+always pass `--head` with the exact branch you created and pushed.
 
 The PR body says, per claim, what was promoted, merged or dropped and why,
 names the duplicates and missing notes, and ends with one fenced provenance
