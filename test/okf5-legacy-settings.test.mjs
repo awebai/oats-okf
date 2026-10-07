@@ -124,6 +124,27 @@ test('an emptied oats.okf map stays a map ({}) and a rerun is a no-op',t=>{
   assert.equal(again.status,0,again.stdout);assert.deepEqual(again.out.result.removed,[]);assert.equal(again.out.result.written,false);assert.deepEqual(inventory(dep),before);
 });
 
+test('an oats.okf map nested under another settings key is never edited: refused before writing, with or without a forwarded key',t=>{
+  const text='settings:\n  other:\n    oats.okf:\n      harvest: off\n  oats.aweb:\n    value: keep\n';
+  for(const [name,env,preview] of [['no forwarded key',{OATS_SETTINGS:'{}'},false],['plan',{OATS_SETTINGS:'{}'},true],['host harvest',envFor(['harvest']),false]]) {
+    const dep=deployment(t,text),before=inventory(dep);
+    const r=cleanup(dep,env,preview);
+    assert.equal(r.status,1,`${name}: ${r.stdout}`);assert.equal(r.out.error.code,'E_UNSUPPORTED',name);
+    assert.match(r.out.error.message,/oats\.okf appears nested under another settings key.*nothing was written/);
+    assert.deepEqual(inventory(dep),before,`${name}: the other key's nested map keeps every byte`);
+  }
+});
+
+test('an emptied oats.okf map with an inline comment becomes {} before the comment, and reads back as an empty map',t=>{
+  const dep=deployment(t,'settings:\n  oats.okf: # keep comment (old harvest switch)\n    harvest: off\nworkspace: x\n'),file=join(dep,'oats-local.yaml');
+  const r=cleanup(dep,envFor(['harvest']));
+  assert.equal(r.status,0,r.stdout);assert.deepEqual(r.out.result.removed,['settings.oats.okf.harvest']);assert.equal(r.out.result.written,true);
+  assert.equal(fs.readFileSync(file,'utf8'),'settings:\n  oats.okf: {} # keep comment (old harvest switch)\nworkspace: x\n','{} is the value, not part of the comment (never a null map)');
+  // Read back by the same reader (the comment names harvest, so the full reader runs): an empty map, nothing to remove.
+  const before=inventory(dep),again=cleanup(dep,{OATS_SETTINGS:'{}'});
+  assert.equal(again.status,0,again.stdout);assert.deepEqual(again.out.result,{file,removed:[],written:false});assert.deepEqual(inventory(dep),before);
+});
+
 test('shapes the line reader does not edit refuse E_UNSUPPORTED before writing',t=>{
   const shapes={
     tabs:'settings:\n  oats.okf:\n\tharvest: on\n',

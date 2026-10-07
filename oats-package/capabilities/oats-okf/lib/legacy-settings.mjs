@@ -71,14 +71,17 @@ export function deployment(env = process.env) {
 }
 
 // The deployment's explicit host keys, from a small line reader that only
-// accepts block style: `settings:` → `oats.okf:` → `<key>: <scalar>`. Any
-// other shape that might hold a legacy key is refused before a write.
+// accepts block style: `settings:` → `oats.okf:` (a DIRECT child) →
+// `<key>: <scalar>`. Any other shape that might hold a legacy key, an
+// `oats.okf` nested under another key included, is refused before a write.
+// The edited text is read again before it is written: it must still be one
+// settings.oats.okf map (block or `{}`, never null) with no legacy key.
 const KEY = /^(\s+)(['"]?)([A-Za-z0-9._-]+)\2\s*:(.*)$/;
 const value = (rest) => rest.replace(/\s+#.*$/, '').trim();
-function plan(text) {
+function plan(text, { verify = false } = {}) {
   const refuse = (why) => fail('E_UNSUPPORTED', `oats-local.yaml: ${why}, which this cleanup does not edit; nothing was written. Report it to the deployment's owner`);
   const lines = text.split('\n');
-  if (!/harvest/.test(text)) return { lines, keys: [] }; // nothing to remove: any shape will do
+  if (!verify && !/harvest/.test(text)) return { lines, keys: [] }; // nothing to remove: any shape will do
   if (/\t/.test(text)) refuse('tab indentation is not edited');
   if (lines.some((l) => /^(---|\.\.\.)\s*$/.test(l))) refuse('a multi-document file is not edited');
   const s = lines.findIndex((l) => /^settings\s*:/.test(l));
@@ -87,19 +90,23 @@ function plan(text) {
   if (value(lines[s].replace(/^settings\s*:/, '')) !== '') refuse('settings: is not a block mapping');
   let end = lines.length;
   for (let i = s + 1; i < lines.length; i++) if (/^\S/.test(lines[i]) && !/^#/.test(lines[i])) { end = i; break; }
+  const blank = (l) => /^\s*(#.*)?$/.test(l), lead = (l) => /^(\s*)/.exec(l)[1].length;
+  const entries = lines.slice(s + 1, end).filter((l) => !blank(l)), direct = entries.length ? lead(entries[0]) : 0;
+  if (entries.some((l) => lead(l) < direct)) refuse('the settings: entries are not consistently indented');
   const owners = lines.slice(s + 1, end).map((l, j) => [KEY.exec(l), s + 1 + j]).filter(([m]) => m && m[3] === 'oats.okf');
+  if (owners.some(([m]) => m[1].length !== direct)) refuse('oats.okf appears nested under another settings key');
   if (!owners.length) { if (lines.slice(s + 1, end).some((l) => /oats\.okf/.test(l))) refuse('oats.okf is not a plain block key under settings:'); return { lines, keys: [] }; }
   if (owners.length > 1) refuse('settings.oats.okf appears twice');
   const [[m, o]] = owners, childIndent = m[1].length;
-  if (value(m[4]) === '{}') return { lines, keys: [] }; // what an earlier cleanup leaves
+  if (value(m[4]) === '{}') return { lines, keys: [], owner: 'empty' }; // what an earlier cleanup leaves
   if (value(m[4]) !== '') refuse('settings.oats.okf is not a block mapping');
   let keyIndent = null, blockEnd = end; const remove = [], seen = new Set();
   for (let i = o + 1; i < end; i++) {
-    if (/^\s*(#.*)?$/.test(lines[i])) continue;
-    const lead = /^(\s*)/.exec(lines[i])[1].length;
-    if (lead <= childIndent) { blockEnd = i; break; }
-    if (keyIndent === null) keyIndent = lead;
-    if (lead !== keyIndent) continue; // a nested value of another key
+    if (blank(lines[i])) continue;
+    const at = lead(lines[i]);
+    if (at <= childIndent) { blockEnd = i; break; }
+    if (keyIndent === null) keyIndent = at;
+    if (at !== keyIndent) continue; // a nested value of another key
     const k = KEY.exec(lines[i]);
     if (!k) refuse('a settings.oats.okf entry is not key: value');
     if (seen.has(k[3])) refuse(`settings.oats.okf.${k[3]} appears twice`); seen.add(k[3]);
@@ -110,9 +117,11 @@ function plan(text) {
     if (next && /^(\s*)/.exec(next)[1].length > keyIndent) refuse(`settings.oats.okf.${k[3]} continues on the next line`);
     remove.push(i);
   }
-  const kept = lines.slice(o + 1, blockEnd).filter((l, j) => !remove.includes(o + 1 + j) && !/^\s*(#.*)?$/.test(l));
-  if (remove.length && !kept.length) lines[o] = `${lines[o].replace(/\s+$/, '')} {}`; // an empty map stays a map
-  return { lines: lines.filter((_, i) => !remove.includes(i)), keys: remove.map((i) => KEY.exec(lines[i])[3]) };
+  const kept = lines.slice(o + 1, blockEnd).filter((l, j) => !remove.includes(o + 1 + j) && !blank(l));
+  const keys = remove.map((i) => KEY.exec(lines[i])[3]);
+  // An emptied map stays a map: `{}` goes before any inline comment, never into it.
+  if (remove.length && !kept.length) lines[o] = `${lines[o].slice(0, lines[o].length - m[4].length)} {}${/\s+#.*$/.exec(m[4])?.[0] ?? ''}`;
+  return { lines: lines.filter((_, i) => !remove.includes(i)), keys, owner: kept.length ? 'block' : 'null' };
 }
 /** `oats okf setup --remove-legacy-settings [--plan]` in the dispatching deployment. */
 export function removeLegacySettings({ plan: preview = false } = {}) {
@@ -120,6 +129,10 @@ export function removeLegacySettings({ plan: preview = false } = {}) {
   let stat; try { stat = fs.lstatSync(file); } catch { fail('E_CONFIG', `no oats-local.yaml in the deployment (${file}); nothing was written`); }
   if (!stat.isFile() || stat.nlink !== 1 || (typeof process.getuid === 'function' && stat.uid !== process.getuid())) fail('E_UNSUPPORTED', `${file} is not a single-link regular file owned by this user; nothing was written`);
   const text = fs.readFileSync(file, 'utf8'), out = plan(text), removed = out.keys.map((k) => `settings.oats.okf.${k}`);
+  if (removed.length) {
+    let again; try { again = plan(out.lines.join('\n'), { verify: true }); } catch { again = null; }
+    if (!again || again.keys.length || !['block', 'empty'].includes(again.owner)) fail('E_UNSUPPORTED', `${file}: removing ${removed.join(', ')} would not leave settings.oats.okf a valid map, so this cleanup does not edit it; nothing was written. Report it to the deployment's owner`);
+  }
   const found = legacySettings(), others = found.filter((f) => f.kind !== 'host');
   // The kernel says the host set a key this reader did not find: not this file's shape, so nothing is written.
   const missed = found.filter((f) => f.kind === 'host' && !out.keys.includes(f.key)).map((f) => f.key);

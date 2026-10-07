@@ -548,9 +548,12 @@ unknown operation.
   `oats-local.yaml` with
   `oats okf setup --remove-legacy-settings --soul <soul> [--plan] --json`,
   run from the deployment. It only deletes `settings.oats.okf.harvest`,
-  `harvest-runtime` and `harvest-model` (`--plan` writes nothing), refuses
-  with `E_UNSUPPORTED` on YAML it cannot edit line by line (report that to
-  the deployment's owner), and never touches a soul: a soul's
+  `harvest-runtime` and `harvest-model` (`--plan` writes nothing), and only
+  from the `oats.okf` map directly under `settings:` (an emptied map stays
+  `{}`, before any inline comment). It refuses with `E_UNSUPPORTED`, before
+  writing, on YAML it cannot edit line by line, an `oats.okf` nested under
+  another key included (report that to the deployment's owner), and never
+  touches a soul: a soul's
   `knowledge: { harvest: off }` stays valid. Until the host keys are gone,
   every command and the spawn hook refuse.
 - 5.0 neither reads nor deletes 4.x custody (`<stateDir>/sources/`,
@@ -595,8 +598,8 @@ directories and the package's CLI:
   from a home, `init`, `migrate --legacy/--deliver/--cutover`, and the
   removed surfaces and `harvest` operation answering `E_REMOVED`;
 - `okf5-legacy-settings`: the removal sentence for each origin and key, and
-  `setup --remove-legacy-settings` (plan, removal, `{}`, idempotence, the
-  refused shapes and files, the deployment scope, soul-origin keys);
+  `setup --remove-legacy-settings` (plan, removal, `{}` before an inline
+  comment, idempotence, the refused shapes and files, a nested `oats.okf`, the deployment scope, soul-origin keys);
 - `okf5-provenance`: the version 1 and 2 parser, `review-context` and
   `notify-harvester`.
 

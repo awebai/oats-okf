@@ -160,14 +160,17 @@ Otherwise, per base with changes:
 ```sh
 branch=okf-harvest/<source instance>-<YYYYMMDD-HHMM>
 git -C ./work/<alias> switch -c "$branch"
-git -C ./work/<alias> add -A <owned paths> && git -C ./work/<alias> commit -m "okf-harvest: <claim>"
+git -C ./work/<alias> add -A <owned paths> && git -c user.name='OKF harvest' -c user.email='okf@localhost' -C ./work/<alias> commit -m "okf-harvest: <claim>"
 git -C ./work/<alias> push -u origin "$branch"
 gh label create okf-harvest --repo <owner>/<repo> --force --color 0E8A16 --description "OKF harvest PR (oats.okf)"
 gh pr create --repo <owner>/<repo> --base <acceptedBranch> --head "$branch" --label okf-harvest --title "okf-harvest: <claim>" --body-file <body.md>
 ```
 
 `gh` runs from your home, not the clone, so it cannot infer the branch:
-always pass `--head` with the exact branch you created and pushed.
+always pass `--head` with the exact branch you created and pushed. The
+commit names its author per command (`-c user.name=... -c user.email=...`):
+a fresh harvester never depends on an ambient Git identity, and never
+changes Git configuration.
 
 The PR body says, per claim, what was promoted, merged or dropped and why,
 names the duplicates and missing notes, and ends with one fenced provenance

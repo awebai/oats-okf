@@ -71,12 +71,14 @@ the README's "Upgrading to 5.0". The kernel floor is unchanged
   run from the deployment, the one command exempt from the guard. It deletes
   only `settings.oats.okf.harvest`, `harvest-runtime` and `harvest-model`
   lines from `<deployment>/oats-local.yaml` (the deployment from
-  `OATS_WORKSPACE` or `OATS_TEAM_SCOPE`, else `E_DEPLOYMENT_SCOPE`); a map
-  left empty becomes `oats.okf: {}`. It refuses before writing
+  `OATS_WORKSPACE` or `OATS_TEAM_SCOPE`, else `E_DEPLOYMENT_SCOPE`), and only
+  from the `oats.okf` map directly under `settings:`; a map left empty
+  becomes `oats.okf: {}`, before any inline comment, and the edited text is
+  read again before it is written. It refuses before writing
   (`E_UNSUPPORTED`) on a file that is not a single-link regular file owned by
-  the user, tabs, multiple documents, flow or nested values, block scalars or
-  duplicate keys, and when the kernel reports a host key the file does not
-  hold plainly; a concurrent change is `E_CONFLICT`, an unconfirmed write
+  the user, tabs, multiple documents, flow or nested values, an `oats.okf`
+  nested under another settings key, block scalars or duplicate keys, and
+  when the kernel reports a host key the file does not hold plainly; a concurrent change is `E_CONFLICT`, an unconfirmed write
   `E_UNCERTAIN`. A soul or spawn key it cannot remove answers `E_REMOVED`
   after the host write, with the write's result. `--plan` writes nothing;
   a rerun is a no-op.

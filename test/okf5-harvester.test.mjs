@@ -67,13 +67,14 @@ test('the two limits and the directory-base refusal are stated',()=>{
   assert.match(skill,/directory base <alias> is unsupported for harvest in oats\.okf 5\.0/);
 });
 
-test('the skill\'s publish commands name the pushed branch as the PR head (gh runs outside the clone)',()=>{
+test('the skill\'s publish commands name the pushed branch as the PR head (gh runs outside the clone) and the commit author per command',()=>{
   const md=read('capabilities/oats-okf-harvest/skills/knowledge-harvest/SKILL.md');
   const block=/^```sh\n(branch=[\s\S]*?)\n```$/m.exec(md)?.[1];assert.ok(block,'step 8 publish block');
   const lines=block.split('\n');
   assert.match(lines[0],/^branch=okf-harvest\/<source instance>-<YYYYMMDD-HHMM>$/);
   assert.ok(lines.includes('git -C ./work/<alias> switch -c "$branch"'));
   assert.ok(lines.includes('git -C ./work/<alias> push -u origin "$branch"'));
+  assert.ok(lines.some(l=>l.includes(`git -c user.name='OKF harvest' -c user.email='okf@localhost' -C ./work/<alias> commit -m `)),'the commit names its author per command, never an ambient identity');
   const create=lines.find(l=>l.startsWith('gh pr create '));
   for(const arg of ['--repo <owner>/<repo>','--base <acceptedBranch>','--head "$branch"','--label okf-harvest']) assert.ok(create.includes(arg),`${arg} in: ${create}`);
 });
