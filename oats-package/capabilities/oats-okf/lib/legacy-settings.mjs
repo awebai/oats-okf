@@ -6,6 +6,9 @@
 // and hook refuses any other: a host or spawn harvest, even `off`, harvest-
 // runtime and harvest-model anywhere, naming where it was set and the fix. A
 // host key masks the soul's, so it must go before the soul opt-out shows.
+// A key the kernel filled in from the 4.x manifest default (origin
+// manifest-default: harvest off, harvest-runtime pi) was nobody's decision, so
+// it is ignored everywhere, as if absent: a home spawned under 4.x replays it.
 // `setup --remove-legacy-settings` deletes the host's own explicit keys from
 // the deployment's oats-local.yaml, and nothing else; it never touches a soul.
 import { fs, join, resolve, atomic, fail } from './io.mjs';
@@ -23,12 +26,19 @@ export const removedSentence = (parts) => REMOVED_TEMPLATE.replace(/<([a-z]+)>/g
 export function parseOrigins(text = process.env.OATS_SETTINGS_ORIGINS) {
   try { const o = JSON.parse(text || '{}'); return o && typeof o === 'object' && !Array.isArray(o) ? o : {}; } catch { return {}; }
 }
-/** The forwarded legacy keys → [{ key, kind, at, message }] (no values). */
+const defaulted = (origins, key) => origins[`/${key}`]?.kind === 'manifest-default';
+/** `settings` without the legacy keys a 4.x manifest default filled in. */
+export function withoutDefaults(settings, env = process.env) {
+  if (!settings || typeof settings !== 'object' || Array.isArray(settings)) return settings;
+  const origins = parseOrigins(env.OATS_SETTINGS_ORIGINS);
+  return Object.fromEntries(Object.entries(settings).filter(([k]) => !(LEGACY_KEYS.includes(k) && defaulted(origins, k))));
+}
+/** The forwarded legacy keys, 4.x defaults aside → [{ key, kind, at, message }] (no values). */
 export function legacySettings(env = process.env) {
   let settings; try { settings = JSON.parse(env.OATS_SETTINGS || '{}'); } catch { return []; }
   if (!settings || typeof settings !== 'object') return [];
   const origins = parseOrigins(env.OATS_SETTINGS_ORIGINS);
-  return LEGACY_KEYS.filter((key) => Object.hasOwn(settings, key) && !(key === 'harvest' && soulOptOut(env))).map((key) => {
+  return LEGACY_KEYS.filter((key) => Object.hasOwn(settings, key) && !defaulted(origins, key) && !(key === 'harvest' && soulOptOut(env))).map((key) => {
     const layer = origins[`/${key}`], kind = typeof layer?.kind === 'string' ? layer.kind : null, at = typeof layer?.at === 'string' ? layer.at : null;
     const origin = kind ? `from ${kind}${at ? ` (${at})` : ''}` : 'from an unknown origin';
     let setting = key, remedy;

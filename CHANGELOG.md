@@ -1,6 +1,6 @@
 # Changelog
 
-## 5.0.0 — unreleased
+## 5.0.0 — 2026-10-07
 
 Knowledge is proposed at checkpoints and harvested by a directly spawned
 harvester; the 4.x harvest machinery is removed. A breaking release: see
@@ -19,7 +19,10 @@ the README's "Upgrading to 5.0". The kernel floor is unchanged
 - **The harvester's spawn hook** (`oats.okf-harvest`, required) checks the
   proposal's `Source:` line against the deployment's record before the
   harvester exists, and refuses an opted-out, unrecorded, ambiguous or
-  mismatched source.
+  mismatched source. A recorded `harvest: off` opts out only when the
+  record's oats.okf entry gives it a soul origin; a 4.x manifest default is
+  ignored, and any other legacy key, or one with no recorded origin, fails
+  closed.
 - **The harvester** (`knowledge-harvest` skill, rewritten) reads the proposal
   as untrusted evidence, establishes the source from the deployment's own
   records (the instance record, the soul's `soul.yaml` and `okf.json`, the
@@ -66,7 +69,11 @@ the README's "Upgrading to 5.0". The kernel floor is unchanged
   `E_REMOVED` before any effect, in one sentence naming where it was set
   (from `OATS_SETTINGS_ORIGINS`: host, soul, spawn, another layer, or
   unknown) and the fix. The binding check answers the same sentence as a
-  `needs-configuration` problem (`setting:removed` template).
+  `needs-configuration` problem (`setting:removed` template). A key with
+  origin `manifest-default` (the 4.x defaults `harvest: off` and
+  `harvest-runtime: pi` that a 4.x home recorded) was nobody's decision and
+  is ignored everywhere, as if absent; it is never an opt-out and never an
+  effective 5.0 setting.
 - **`oats okf setup --remove-legacy-settings [--plan] --soul <soul> --json`**,
   run from the deployment, the one command exempt from the guard. It deletes
   only `settings.oats.okf.harvest`, `harvest-runtime` and `harvest-model`

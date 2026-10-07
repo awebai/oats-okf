@@ -16,7 +16,7 @@ import {
 import { declaration as soulDeclaration, loadBindings, validateBindings, validateDeclaration, resolveNodes } from './config.mjs';
 import { gitEnv, validateBase } from './stores.mjs';
 import { acceptedCommit, cacheDir, usableCache, verdict } from './consult.mjs';
-import { legacySettings, REMOVED_TEMPLATE } from './legacy-settings.mjs';
+import { legacySettings, withoutDefaults, REMOVED_TEMPLATE } from './legacy-settings.mjs';
 
 export const BINDING_WIRE_LIMITS=Object.freeze({bytes:1024*1024,depth:32,entries:16384});
 const CAPABILITY='oats.okf',SLOT='knowledge';
@@ -123,7 +123,8 @@ function contract(value,{required=false}={}) {
 }
 function runtimeSettings(settings) {
   if(obj(settings)) {const removed=removedMessage(settings);if(removed) removedError(removed);}
-  // `harvest` can only be the soul's own opt-out (off) once removedMessage passed.
+  // A 4.x manifest default is dropped; `harvest` left can only be the soul's own opt-out (off).
+  settings=withoutDefaults(settings);
   keys(settings,['bindings-file','state-dir','harvest'],[], 'OKF settings');
   const descriptorFile=settings['bindings-file'],stateDir=settings['state-dir'];
   for(const name of ['bindings-file','state-dir']) {

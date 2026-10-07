@@ -1,5 +1,5 @@
 import { isAbsolute } from 'node:path';
-import { refuseLegacySettings } from './legacy-settings.mjs';
+import { refuseLegacySettings, withoutDefaults } from './legacy-settings.mjs';
 import { fs, join, resolve, dirname, fail, readJSON, safePath, relPath, identifier, overlaps, hash, embedsCredential } from './io.mjs';
 const obj = v => v && typeof v === 'object' && !Array.isArray(v);
 function keys(value, allowed, label, code='E_CONFIG') {
@@ -8,8 +8,9 @@ function keys(value, allowed, label, code='E_CONFIG') {
 }
 export function settings() {
   refuseLegacySettings(); // okf 5.0: a forwarded harvest/harvest-runtime/harvest-model names its fix first
-  const s = JSON.parse(process.env.OATS_SETTINGS || '{}');
-  // `harvest` here can only be the soul's own opt-out (off): refuseLegacySettings refused any other.
+  // A 4.x manifest default (harvest off, harvest-runtime pi) is dropped, never a 5.0 setting;
+  // `harvest` left here can only be the soul's own opt-out (off): refuseLegacySettings refused any other.
+  const s = withoutDefaults(JSON.parse(process.env.OATS_SETTINGS || '{}'));
   keys(s,['bindings-file','state-dir','git-timeout','consult-max-age','harvest'],'OATS_SETTINGS');
   if(s['git-timeout']!==undefined && (!Number.isInteger(s['git-timeout']) || s['git-timeout']<1)) fail('E_CONFIG','git-timeout must be a positive integer number of seconds');
   if(s['consult-max-age']!==undefined && (!Number.isInteger(s['consult-max-age']) || s['consult-max-age']<0)) fail('E_CONFIG','consult-max-age must be a non-negative integer number of seconds');

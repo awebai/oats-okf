@@ -145,6 +145,18 @@ test('an emptied oats.okf map with an inline comment becomes {} before the comme
   assert.equal(again.status,0,again.stdout);assert.deepEqual(again.out.result,{file,removed:[],written:false});assert.deepEqual(inventory(dep),before);
 });
 
+test('a 4.x manifest default (origin manifest-default) is no legacy setting: ignored by the guard, and the cleanup removes only the host key',t=>{
+  const DEFAULT=k=>({kind:'manifest-default',at:`oats.json#/settings/${k}/default`});
+  assert.deepEqual(legacySettings(envFor(['harvest','harvest-runtime'],DEFAULT)),[]);
+  assert.doesNotThrow(()=>refuseLegacySettings(envFor(['harvest','harvest-runtime'],DEFAULT)));
+  assert.equal(soulOptOut({OATS_SETTINGS:JSON.stringify({harvest:'off'}),OATS_SETTINGS_ORIGINS:JSON.stringify({'/harvest':DEFAULT('harvest')})}),false,'a default off is no opt-out');
+  // The host key still needs the cleanup; the defaulted harvest-runtime, absent from the file, is not "missed".
+  const dep=deployment(t,'settings:\n  oats.okf:\n    bindings-file: /b.json\n    harvest: on\n'),file=join(dep,'oats-local.yaml');
+  const r=cleanup(dep,envFor(['harvest','harvest-runtime'],k=>k==='harvest'?HOST:DEFAULT(k)));
+  assert.equal(r.status,0,r.stdout+r.stderr);assert.deepEqual(r.out.result,{file,removed:['settings.oats.okf.harvest'],written:true});
+  assert.equal(fs.readFileSync(file,'utf8'),'settings:\n  oats.okf:\n    bindings-file: /b.json\n');
+});
+
 test('shapes the line reader does not edit refuse E_UNSUPPORTED before writing',t=>{
   const shapes={
     tabs:'settings:\n  oats.okf:\n\tharvest: on\n',

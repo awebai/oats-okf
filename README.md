@@ -70,9 +70,12 @@ public soul is reachable from outside, and its notes must not be harvested.
 5.0 removes the HOST harvest switch, not this author's safety opt-out. Absent
 means the normal 5.0 proposal flow.
 
-Every other 4.x harvest key is removed: a host or spawn `harvest` (even
-`off`; a host value also masks the soul's opt-out), and `harvest-runtime` and
-`harvest-model` in any layer. Wherever one is set, every
+Every other 4.x harvest key is removed when someone SET it: a host or spawn
+`harvest` (even `off`; a host value also masks the soul's opt-out), and
+`harvest-runtime` and `harvest-model` in any layer. (A value the kernel
+filled in from the 4.x manifest default, origin `manifest-default`, was
+nobody's decision and is ignored: see [Upgrading to 5.0](#upgrading-to-50).)
+Wherever one is set, every
 `oats okf` command and hook (except the cleanup below) refuses with
 `E_REMOVED` before doing anything, in one sentence that names the layer that
 set it, for example:
@@ -542,10 +545,24 @@ unknown operation.
 
 ## Upgrading to 5.0
 
-- The commands, settings and hooks in [Removed in 5.0](#removed-in-50) are
-  gone; each answers `E_REMOVED` naming the proposal flow.
-- After pinning 5.0, remove the 4.x settings from the deployment's
-  `oats-local.yaml` with
+Pinning 5.0 changes the package a deployment resolves; it does not rewrite
+what an existing home already holds. Four separate things:
+
+- **Default data: nothing to do.** A home spawned under 4.x recorded the 4.x
+  manifest defaults (`harvest: off`, `harvest-runtime: pi`) in its
+  instance.json, with origin `manifest-default`. Where 5.0 code meets those
+  recorded settings (the deployment's readiness or binding check of that
+  home, or the harvester reading the record of a proposal's source), it
+  ignores a legacy key with that origin, as if absent: the home binds, and
+  its proposal is admitted. (An `oats okf` command run inside that home
+  still runs the 4.x modules the home was spawned with; see below.) Do not
+  respawn merely for these defaults. (A `harvest: off` default is not an
+  opt-out; only a soul's own is.)
+- **Explicitly set removed keys: clean up.** The commands, settings and hooks
+  in [Removed in 5.0](#removed-in-50) are gone; each answers `E_REMOVED`
+  naming the proposal flow. A key someone set (host, spawn, or a soul value
+  other than `off`), or one whose origin is not recorded, refuses until it is
+  removed. Remove the host ones from the deployment's `oats-local.yaml` with
   `oats okf setup --remove-legacy-settings --soul <soul> [--plan] --json`,
   run from the deployment. It only deletes `settings.oats.okf.harvest`,
   `harvest-runtime` and `harvest-model` (`--plan` writes nothing), and only
@@ -555,8 +572,15 @@ unknown operation.
   another key included (report that to the deployment's owner), and never
   touches a soul: a soul's
   `knowledge: { harvest: off }` stays valid. Until the host keys are gone,
-  every command and the spawn hook refuse.
-- 5.0 neither reads nor deletes 4.x custody (`<stateDir>/sources/`,
+  every command and the spawn hook refuse. A spawn key is dropped from the
+  spawn command; a soul key is changed in the soul's reviewed source.
+- **Old instructions: respawn when the 5.0 brief is wanted.** A running home
+  keeps the modules, skills, AGENTS.md and TASK.md brief it was spawned with;
+  pinning 5.0 does not replace them. A 4.x home is told about the 4.x harvest
+  until it is respawned, and only a home spawned under 5.0 gets the proposal
+  brief. Respawn the homes that should propose.
+- **Registered 4.x sources: the pre-pin cutover is unchanged.** 5.0 neither
+  reads nor deletes 4.x custody (`<stateDir>/sources/`,
   `owners.json`); finish or dispose of it under 4.x. A registered 4.x home
   retired after the pin is kept with `E_HARVEST_CONSENT_UNKNOWN` from its
   copied retire hook. 4.x harvest PRs (provenance version 1) stay

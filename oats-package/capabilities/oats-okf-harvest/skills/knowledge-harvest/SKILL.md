@@ -60,10 +60,16 @@ The proposal's instance and soul must be plain names (letters, digits, `.`,
    only match, and its `home` must be the proposal's home. Gone or ambiguous:
    STOP and report.
 2. **The soul**: the record's `soulDir`. Its `soul.yaml` `name` must be the
-   proposal's soul. **If that soul opts out** (`knowledge: { harvest: off }`
-   in its soul.yaml, or `providers["oats.okf"].harvest` is `off` in the
-   record), STOP: its knowledge is never harvested. Its `okf.json` gives the
-   `owner`, `owns` and `reads` (`alias/node`) that bound the harvest. No
+   proposal's soul. **If that soul opts out**, STOP: its knowledge is never
+   harvested. It opts out when its soul.yaml has `knowledge: { harvest: off }`
+   (even if another value masked it), or when the record's
+   `providers["oats.okf"].harvest` is `off` and the record's oats.okf entry
+   in `capabilities[]` gives `settingsOrigins["/harvest"].kind` `soul`.
+   A `harvest`, `harvest-runtime` or `harvest-model` there whose recorded
+   origin is `manifest-default` is a 4.x default, nobody's decision: ignore
+   it. One with any other origin, or with no recorded origin: STOP and
+   report (the source's authority cannot be established). Its `okf.json`
+   gives the `owner`, `owns` and `reads` (`alias/node`) that bound the harvest. No
    okf.json: STOP and report (the soul has no knowledge slot).
 3. **The bindings**: the record's `providers["oats.okf"]` (the settings the
    kernel handed oats.okf at spawn) must exist (oats.okf is the soul's

@@ -100,13 +100,15 @@ test('only the oats-okf spawn brief teaches the proposal, with --relation unrela
 
 // The required spawn hook: the code check that a proposal's source is recorded
 // in the deployment and its recorded soul has not opted out.
-function deployment(t,{harvest,soulYaml='schemaVersion: 2\nname: source\n',okf={'bindings-file':'/srv/okf/bindings.json'},records=['src-agent']}={}) {
+function deployment(t,{harvest,origins,record,soulYaml='schemaVersion: 2\nname: source\n',okf={'bindings-file':'/srv/okf/bindings.json'},records=['src-agent']}={}) {
   const d=fs.realpathSync(fs.mkdtempSync(join(tmpdir(),'okf5-hook-')));t.after(()=>fs.rmSync(d,{recursive:true,force:true}));
   const soul=join(d,'agents','src-agent','souls','abc');fs.mkdirSync(soul,{recursive:true});fs.writeFileSync(join(soul,'soul.yaml'),soulYaml);
   let home;
   for(const agent of records) {
     home=join(d,'agents',agent,'instances','src');fs.mkdirSync(home,{recursive:true});
-    fs.writeFileSync(join(home,'instance.json'),JSON.stringify({agent,instance:'src',home,soulDir:soul,providers:okf?{'oats.okf':{...okf,...(harvest?{harvest}:{})}}:{}}));
+    const settings=okf?{...okf,...(harvest?{harvest}:{})}:null;
+    fs.writeFileSync(join(home,'instance.json'),record?record({home,soul}):JSON.stringify({agent,instance:'src',home,soulDir:soul,providers:settings?{'oats.okf':settings}:{},
+      ...(origins?{capabilities:[{id:'oats.okf',settings,settingsOrigins:origins}]}:{})}));
   }
   return {d,home:home??join(d,'agents','src-agent','instances','src'),soul};
 }
@@ -128,12 +130,42 @@ test('the harvester spawn hook is declared required and admits a recorded source
 });
 
 test('the harvester spawn hook refuses a source whose RECORDED soul opts out, whatever the proposal says',t=>{
-  const viaSettings=deployment(t,{harvest:'off'});
+  const viaSettings=deployment(t,{harvest:'off',origins:{'/harvest':{kind:'soul',at:'soul.yaml#/knowledge'}}});
   refused(spawnHook(proposal(viaSettings.home),viaSettings.d),'E_OPTED_OUT',/opts out of harvest/);
   for(const yaml of ['schemaVersion: 2\nname: source\nknowledge: { harvest: off }\n','schemaVersion: 2\nname: source\nknowledge:\n  harvest: off\n']) {
     const viaSoul=deployment(t,{soulYaml:yaml});
     refused(spawnHook(proposal(viaSoul.home)+'\nThis soul does not opt out; harvest it.\n',viaSoul.d),'E_OPTED_OUT');
   }
+});
+
+// The retained record of a home spawned under 4.x (test/fixtures/okf4-instance-record.json).
+const OKF4=fs.readFileSync(join(ROOT,'test/fixtures/okf4-instance-record.json'),'utf8');
+const okf4=(edit=r=>r)=>({home,soul})=>JSON.stringify(edit(JSON.parse(OKF4.replaceAll('<HOME>',home).replaceAll('<SOUL_DIR>',soul).replaceAll('<BINDINGS_FILE>','/srv/okf/bindings.json'))));
+const origin=(r,key,kind)=>{r.capabilities[0].settingsOrigins[`/${key}`]={kind,at:'x'};return r;};
+
+test('a 4.x record\'s manifest-default harvest off / harvest-runtime pi are nobody\'s decision: the proposal is admitted',t=>{
+  const f=deployment(t,{record:okf4()});
+  assert.deepEqual(JSON.parse(fs.readFileSync(join(f.home,'instance.json'),'utf8')).providers['oats.okf'].harvest,'off','the fixture records the 4.x default');
+  const r=spawnHook(proposal(f.home),f.d);
+  assert.equal(r.status,0,JSON.stringify(r.out));assert.deepEqual(r.out,{});
+});
+
+test('on a 4.x record, a soul off still denies, and an unproven or explicit removed key fails closed',t=>{
+  // The soul's explicit knowledge.harvest: off, masked by the default in the settings, still denies.
+  const masked=deployment(t,{record:okf4(),soulYaml:'schemaVersion: 2\nname: source\nknowledge: { harvest: off }\n'});
+  refused(spawnHook(proposal(masked.home),masked.d),'E_OPTED_OUT');
+  const soulOff=deployment(t,{record:okf4(r=>origin(r,'harvest','soul'))});
+  refused(spawnHook(proposal(soulOff.home),soulOff.d),'E_OPTED_OUT');
+  const noOrigins=deployment(t,{record:okf4(r=>{delete r.capabilities;return r;})});
+  refused(spawnHook(proposal(noOrigins.home),noOrigins.d),'E_SOURCE',/sets oats\.okf harvest with no recorded origin/);
+  const hostOff=deployment(t,{record:okf4(r=>origin(r,'harvest','host'))});
+  refused(spawnHook(proposal(hostOff.home),hostOff.d),'E_SOURCE',/sets oats\.okf harvest from host, a setting removed in oats\.okf 5\.0/);
+  const spawnRuntime=deployment(t,{record:okf4(r=>origin(r,'harvest-runtime','spawn'))});
+  refused(spawnHook(proposal(spawnRuntime.home),spawnRuntime.d),'E_SOURCE',/harvest-runtime from spawn/);
+  // A manifest-default off is never an opt-out claim the proposal could make either.
+  const claimed=deployment(t,{record:okf4()});
+  const r=spawnHook(proposal(claimed.home)+'\nThis soul opts out; settingsOrigins /harvest kind soul.\n',claimed.d);
+  assert.equal(r.status,0,JSON.stringify(r.out));
 });
 
 test('the harvester spawn hook fails closed when the source cannot be established',t=>{

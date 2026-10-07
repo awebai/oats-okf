@@ -116,6 +116,19 @@ test('check with a host harvest setting needs configuration with the E_REMOVED s
   assert.ok(result.problems[0].message.startsWith('E_REMOVED: settings.oats.okf.harvest from host'),result.problems[0].message);
 });
 
+// test/fixtures/okf4-instance-record.json: what a home spawned under 4.x replays.
+const OKF4_ORIGINS=JSON.stringify(JSON.parse(fs.readFileSync(join(ROOT,'test/fixtures/okf4-instance-record.json'),'utf8')).capabilities[0].settingsOrigins);
+const OKF4_DEFAULTS={harvest:'off','harvest-runtime':'pi'};
+
+test('normalize and check ignore a 4.x home\'s manifest-default harvest off / harvest-runtime pi (never a 5.0 setting)',async t=>{
+  const d=deployment(t);
+  withEnv(t,{OATS_SOUL:d.soul,OATS_SETTINGS_ORIGINS:OKF4_ORIGINS});
+  const normalized=await handleBindingRequest('normalize',normalizeRequest({'bindings-file':BF,'state-dir':SD,...OKF4_DEFAULTS}));
+  assert.deepEqual(normalized.model.runtime,{descriptorFile:BF,stateDir:SD},'the effective runtime carries no harvest key');
+  const result=await handleBindingRequest('check',req('check',{'bindings-file':d.bindingsFile,...OKF4_DEFAULTS},checkInput));
+  assert.deepEqual(result,{status:'ready',problems:[]});
+});
+
 test('oats.json binding.reasons pins the setting literals and CHECK_REASONS byte-exact',()=>{
   assert.deepEqual(manifest.binding.reasons,[...SETTING_REASONS,...CHECK_REASONS]);
   assert.equal(manifest.binding.reasons.length,24);

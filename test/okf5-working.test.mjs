@@ -93,6 +93,34 @@ test('a soul that opts out (knowledge: { harvest: off }) keeps consultation and 
   assert.equal(idx.status,0,idx.stdout+idx.stderr);
 });
 
+// A home spawned under 4.x replays what its record holds (test/fixtures/okf4-instance-record.json):
+// the 4.x manifest defaults harvest off and harvest-runtime pi, with origin manifest-default.
+function okf4Settings(f,edit=o=>o) {
+  const rec=JSON.parse(fs.readFileSync(join(ROOT,'test/fixtures/okf4-instance-record.json'),'utf8').replaceAll('<BINDINGS_FILE>',f.bindingsFile));
+  return {OATS_SETTINGS:JSON.stringify(rec.providers['oats.okf']),OATS_SETTINGS_ORIGINS:JSON.stringify(edit(rec.capabilities[0].settingsOrigins))};
+}
+
+test('a 4.x home\'s recorded manifest defaults (harvest off, harvest-runtime pi) are ignored: spawn, inspect and consult work',t=>{
+  const f=fixture(t),extra=okf4Settings(f);
+  const r=hook(f,'spawn',{extra});
+  assert.equal(r.status,0,r.stdout+r.stderr);assert.equal(r.out.warning,undefined);
+  assert.ok(r.out.brief.includes(SPAWN),'a manifest-default off is no opt-out: the proposal brief');
+  for(const args of [['inspect','--json'],['bases','--json'],['index','--json'],['cat','--base','project','/expert/index.md','--json']]) {
+    const c=run(f,args,{extra});
+    assert.equal(c.status,0,`${args[0]}: ${c.stdout}${c.stderr}`);assert.equal(c.out.ok,true,args[0]);
+  }
+});
+
+test('on a 4.x home, an explicit host harvest key still refuses E_REMOVED with the cleanup, and one with no origin refuses too',t=>{
+  const f=fixture(t);
+  const host=run(f,['inspect','--json'],{extra:okf4Settings(f,o=>({...o,'/harvest':{kind:'host',at:'oats-local.yaml#/settings/oats.okf'}}))});
+  assert.equal(host.status,1);assert.equal(host.out.error.code,'E_REMOVED');
+  assert.match(host.out.error.message,/settings\.oats\.okf\.harvest from host .*oats okf setup --remove-legacy-settings/);
+  assert.doesNotMatch(host.out.error.message,/harvest-runtime/,'the defaulted harvest-runtime is not reported');
+  const unknown=run(f,['inspect','--json'],{extra:{...okf4Settings(f),OATS_SETTINGS_ORIGINS:'{}'}});
+  assert.equal(unknown.status,1);assert.equal(unknown.out.error.code,'E_REMOVED');assert.match(unknown.out.error.message,/from an unknown origin/);
+});
+
 test('the shared inject and skills carry no harvest direction (only the spawn brief does)',()=>{
   const cap=join(ROOT,'oats-package/capabilities/oats-okf');
   for(const file of ['injects/okf.md','skills/okf-consultation/SKILL.md','skills/okf-instance-knowledge/SKILL.md','skills/knowledge-theory/SKILL.md']) {

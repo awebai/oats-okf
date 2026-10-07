@@ -98,13 +98,17 @@ test('notify-harvester: a v2 notice has no harvest-status callback; the v1 notic
 });
 
 test('PR metadata strings are data, never executed',t=>{
-  // shell-looking text in every PR field must reach no shell: the marker file never appears
-  const dir=checkout(t),marker=join(dir,'marker'),sh=`$(touch ${marker})\`touch ${marker}\`;touch ${marker}`;
+  // shell-looking text in every PR field must reach no shell: the marker file never appears.
+  // A short fixed RELATIVE marker keeps the payload under the 128-character name cap
+  // whatever TMPDIR is (macOS's is long); a shell would create it in its cwd: the
+  // checkout git runs in, or this process's.
+  const dir=checkout(t),MARK='okf5-no-exec',sh=`$(touch ${MARK})\`touch ${MARK}\`;touch ${MARK}`;
+  assert.ok(sh.length<=128);
   const shaped={...V2,source:{...source,soul:sh},tasks:{provider:sh,refs:[sh]},harvester:{instance:sh,alias:sh}};
   const p=pr(`${sh}\n${block(shaped)}`,{headRefName:sh,labels:[{name:sh}]});
   const r=reviewContext({pr:URL_,checkout:dir},{},{view:view(p)});
   assert.equal(r.provenance.valid,true);assert.equal(r.harvester.alias,sh);
   assert.equal(notifyHarvester({pr:URL_,state:'question'},{},{view:view(p)}).to,sh);
   assert.throws(()=>reviewContext({pr:URL_,checkout:dir},{},{view:view({...p,baseRefName:sh})}),{code:'E_GIT'});
-  assert.equal(fs.existsSync(marker),false);
+  for(const where of [dir,process.cwd()]) assert.equal(fs.existsSync(join(where,MARK)),false,where);
 });

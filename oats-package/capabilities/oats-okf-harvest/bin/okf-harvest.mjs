@@ -42,9 +42,23 @@ export function checkSource({ task = '', deployment } = {}) {
   if (/^name:\s*['"]?([^'"\s#]+)/m.exec(soulYaml)?.[1] !== soul) fail('E_SOURCE', `the recorded soul of source instance ${instance} is not ${soul}`);
   const okf = record.providers?.['oats.okf'];
   if (!okf || typeof okf !== 'object') fail('E_SOURCE', `source instance ${instance} has no oats.okf knowledge slot`);
-  // The recorded soul's opt-out, from what the kernel handed oats.okf and from
-  // the recorded soul itself (any `harvest: off` there refuses: fail closed).
-  if (okf.harvest === 'off' || /\bharvest\s*:\s*['"]?off\b/.test(soulYaml)) fail('E_OPTED_OUT', `the soul of source instance ${instance} opts out of harvest (knowledge: { harvest: off }, or a "harvest: off" anywhere in its soul.yaml): its knowledge is not harvested`);
+  // The recorded soul itself: any `harvest: off` there refuses (fail closed),
+  // even when a host or default value masked it in the settings.
+  const optedOut = `the soul of source instance ${instance} opts out of harvest (knowledge: { harvest: off }, or a "harvest: off" anywhere in its soul.yaml): its knowledge is not harvested`;
+  if (/\bharvest\s*:\s*['"]?off\b/.test(soulYaml)) fail('E_OPTED_OUT', optedOut);
+  // What the kernel handed oats.okf, judged by its RECORDED origin (the record's
+  // capability entry): a 4.x manifest default (harvest off, harvest-runtime pi)
+  // is nobody's decision; a soul `off` is the opt-out; any other legacy key, or
+  // one with no recorded origin, means the source's authority is not established.
+  const origins = [record.capabilities, record.capabilityRuntime].flatMap((l) => (Array.isArray(l) ? l : [])).find((c) => c?.id === 'oats.okf')?.settingsOrigins;
+  for (const key of ['harvest', 'harvest-runtime', 'harvest-model'].filter((k) => Object.hasOwn(okf, k))) {
+    const kind = origins?.[`/${key}`]?.kind;
+    if (kind === 'manifest-default') continue;
+    if (key === 'harvest' && okf.harvest === 'off' && kind === 'soul') fail('E_OPTED_OUT', optedOut);
+    fail('E_SOURCE', typeof kind === 'string'
+      ? `the record of source instance ${instance} sets oats.okf ${key} from ${kind}, a setting removed in oats.okf 5.0 that the source itself refuses; its authority cannot be established`
+      : `the record of source instance ${instance} sets oats.okf ${key} with no recorded origin, so whether its soul opts out cannot be established`);
+  }
   return { instance, soul, agent: records[0].agent };
 }
 
