@@ -4,7 +4,7 @@
 // cannot import oats.okf's lib), and `complete` runs the source's frozen
 // `oats okf complete` from the source deployment, never from this home.
 import { spawnSync } from 'node:child_process';
-import { readFileSync, lstatSync } from 'node:fs';
+import { readFileSync, lstatSync, realpathSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,8 +13,10 @@ const HELP = `oats okf-harvest complete --source FILE --run ID --judgment ABS_FI
 oats okf-harvest harvest-status --source FILE --run ID [--json]
 complete runs the source's frozen \`oats okf complete\` in its deployment (the
 only delivery path): it persists the judgment, then delivers in the background,
-answering \`delivering\` when delivery outlasts the 30 s it waits. harvest-status reports each PR's state and what to do:
-stay, retire or max-age (setting harvester-max-age, default 7d).
+answering \`delivering\` when delivery outlasts the 30 s it waits. harvest-status reports each destination's
+receipt and what to do: stay (delivery not finished), retire (every destination
+delivered: hand over and retire; the PR's review is the maintainer's) or max-age
+(setting harvester-max-age, default 7d).
 `;
 const fail = (code, message, extra = {}) => { throw Object.assign(new Error(message), { code, ...extra }); };
 const IDENTITY = /^(OATS_(?!HOME_DIR$|PACKAGE_CATALOG$)|PI_AGENT|GIT_)/;
@@ -61,6 +63,23 @@ export function completionArgv(source, file, run, judgment) {
   }
   return [...tail, '--soul', source.agent, '--json'];
 }
+/** okf 4.2.0 (#55): the deployment the completion runs in, by oats.okf's own
+ *  rule (sourceDeployment; this module cannot import it): a captured
+ *  source's frozen execution binding, else the kernel's dispatch
+ *  (OATS_WORKSPACE, else OATS_TEAM_SCOPE). Never the source's context, which
+ *  is the repository an external --repo source works in. */
+export function deploymentOf(source, env = process.env) {
+  if (source.executionBinding !== undefined) return source.executionBinding.deployment;
+  const named = [['OATS_WORKSPACE', env.OATS_WORKSPACE], ['OATS_TEAM_SCOPE', env.OATS_TEAM_SCOPE]].filter(([, v]) => typeof v === 'string' && v);
+  const how = 'run oats okf-harvest through the kernel, from this harvester\'s home; nothing was published: report this to your operator, and stay';
+  if (!named.length) fail('E_DEPLOYMENT_SCOPE', `the kernel named no deployment (OATS_WORKSPACE or OATS_TEAM_SCOPE): ${how}`);
+  const real = named.map(([k, v]) => {
+    if (resolve(v) !== v) fail('E_DEPLOYMENT_SCOPE', `${k} is not an absolute deployment path: ${how}`);
+    try { return realpathSync(v); } catch { return fail('E_DEPLOYMENT_SCOPE', `${k} names no existing deployment (${v}): ${how}`); }
+  });
+  if (new Set(real).size > 1) fail('E_DEPLOYMENT_SCOPE', `OATS_WORKSPACE (${real[0]}) and OATS_TEAM_SCOPE (${real[1]}) name different deployments: ${how}`);
+  return real[0];
+}
 // A refusal meaning oats.okf cannot run for the source soul in its deployment.
 const INACTIVE = new Set(['E_CAPABILITY_INACTIVE', 'E_CAPABILITY_BLOCKED', 'E_CAPABILITY_MISSING', 'E_PACKAGE_MISSING', 'E_PACKAGE_INTEGRITY', 'E_SOUL_UNKNOWN', 'E_SOUL_DISABLED', 'E_UNKNOWN_COMMAND']);
 export function complete(flags, env = process.env) {
@@ -71,13 +90,13 @@ export function complete(flags, env = process.env) {
   const cli = env.OATS_CLI_BIN;
   if (!cli || !isAbsolute(cli)) fail('E_RUNTIME', 'absolute OATS_CLI_BIN required; never resolve oats on PATH');
   const clean = Object.fromEntries(Object.entries(env).filter(([k]) => !IDENTITY.test(k)));
-  const argv = completionArgv(source, flags.source, flags.run, flags.judgment);
-  const r = spawnSync(cli, argv, { cwd: source.context, env: clean, encoding: 'utf8', timeout: 30 * 60 * 1000, maxBuffer: 16 * 1024 * 1024 });
+  const argv = completionArgv(source, flags.source, flags.run, flags.judgment), deployment = deploymentOf(source, env);
+  const r = spawnSync(cli, argv, { cwd: deployment, env: clean, encoding: 'utf8', timeout: 30 * 60 * 1000, maxBuffer: 16 * 1024 * 1024 });
   let answer; try { answer = JSON.parse(r.stdout); } catch { /* below */ }
-  if (answer?.schemaVersion === 1 && answer.ok === true) return { deployment: source.context, ...answer.result };
+  if (answer?.schemaVersion === 1 && answer.ok === true) return { deployment, ...answer.result };
   const code = answer?.error?.code || 'E_COMPLETE', message = answer?.error?.message || (r.error?.message || r.stderr || `exit ${r.status}`).trim();
-  if (INACTIVE.has(code)) fail('E_SOURCE_INACTIVE', `oats.okf cannot run for source soul ${source.agent} in ${source.context} (${code}: ${message}). Nothing was published: report this to your operator, and stay.`, { cause: code });
-  fail(code, `${message} (completion ran in ${source.context}; keep your home and report)`);
+  if (INACTIVE.has(code)) fail('E_SOURCE_INACTIVE', `oats.okf cannot run for source soul ${source.agent} in ${deployment} (${code}: ${message}). Nothing was published: report this to your operator, and stay.`, { cause: code });
+  fail(code, `${message} (completion ran in ${deployment}; keep your home and report)`);
 }
 /** "7d" | "48h" | "90m" | seconds → milliseconds. */
 export function maxAgeMs(value) {
@@ -105,7 +124,7 @@ function deliveryReason(delivery, pending) {
   if (live) return `delivery in progress (${delivery.step || delivery.state})`;
   if (delivery?.state === 'failed') {
     const { code, message } = delivery.error ?? {};
-    return `delivery failed: ${code}: ${message}; ${code === 'E_BASELINE' ? 'the accepted base changed under your judgment: report it to your operator, who rejudges with oats okf retry --rejudge' : RESUME}`;
+    return `delivery failed: ${code}: ${message}; ${code === 'E_BASELINE' ? 'the accepted base changed under your judgment: report it to your operator, who rejudges with oats okf retry --source <source descriptor> --rejudge --soul <the source\'s soul>' : RESUME}`;
   }
   if (['starting', 'running'].includes(delivery?.state)) return `delivery stopped at "${delivery.step || delivery.state}"; ${RESUME}`;
   return `destinations not delivered: ${pending.join(', ')}; ${RESUME}`;
@@ -122,14 +141,20 @@ export function harvestStatus(flags, env = process.env, { now = Date.now(), view
   });
   const judged = !!run.judgment, delivery = run.delivery ?? null;
   let action, reason;
-  const open = destinations.filter((d) => d.pr && !['MERGED', 'CLOSED'].includes(d.pr.state));
-  // A judged destination gets its receipt only once delivery confirms its baseline.
-  const pending = [...destinations.filter((d) => !d.pr && !['no-change', 'accepted'].includes(d.receipt)).map((d) => d.alias),
+  // okf 4.2.0 (#47): the harvester's work ends with durable delivery. A
+  // destination is done once its receipt is delivered (a verified PR),
+  // accepted, no-change or rejected; the PR's review is the maintainer's,
+  // and the source's operator records its merge or close.
+  const DONE = ['delivered', 'accepted', 'no-change', 'rejected'];
+  const pending = [...destinations.filter((d) => !DONE.includes(d.receipt)).map((d) => d.alias),
     ...Object.keys(run.proposals ?? {}).filter((alias) => !Object.hasOwn(receipts, alias))];
   if (!judged || pending.length) { action = age >= limit ? 'max-age' : 'stay'; reason = !judged ? 'the run is not completed yet' : deliveryReason(delivery, pending); }
-  else if (open.length) { action = age >= limit ? 'max-age' : 'stay'; reason = `open PR: ${open.map((d) => d.pr.url).join(', ')}`; }
-  else { action = 'retire'; reason = destinations.some((d) => d.pr) ? 'every PR is merged or closed' : 'no PR was needed (no-change or directory publication)'; }
-  if (action === 'max-age') reason += `; older than harvester-max-age (${Math.round(limit / 3600000)}h): tell your operator and retire, never close the PR`;
+  else {
+    action = 'retire';
+    const prs = destinations.filter((d) => d.pr).map((d) => d.pr.url);
+    reason = prs.length ? `every destination is delivered: hand over (run ${run.id}, PR ${prs.join(', ')}) in your final reply, then retire; the knowledge maintainer reviews the PR and the source's operator records its merge or close` : 'every destination is delivered; no PR was needed (no-change or directory publication)';
+  }
+  if (action === 'max-age') reason += `; older than harvester-max-age (${Math.round(limit / 3600000)}h): tell your operator (your home and the run's custody are its recovery evidence) and retire`;
   return { run: run.id, status: run.status, ageSeconds: Math.round(age / 1000), maxAgeSeconds: limit / 1000, destinations, delivery, action, reason };
 }
 function text(event, r) {

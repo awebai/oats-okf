@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 import { fs, join, resolve, readJSON, safePath, oats, fail, unlock, redactUrls } from '../lib/io.mjs';
 import { loadBindings } from '../lib/config.mjs';
-import { register, registerCaptured, loadInvocationSourceReceipt, homeSource, loadSource, loadStatus, saveStatus, updateStatus, capture, scheduleSource, settleRetiredSchedule, service, markerPath, harvestOffRecord, sourceSwitch, retireHarvestOff, consultSource } from '../lib/sources.mjs';
+import { register, registerCaptured, loadInvocationSourceReceipt, homeSource, loadSource, loadStatus, capture, service, markerPath, harvestOffRecord, sourceSwitch, retireHarvestOff, consultSource } from '../lib/sources.mjs';
+import { SCHEDULE_REMOVED, JOBS_REMOVED } from '../lib/config.mjs';
 import { harvestStatus, setupHarvest } from '../lib/harvest-status.mjs';
 import { settings } from '../lib/config.mjs';
 import { CONSULT } from '../lib/consult.mjs';
-import { runSource, complete, completeInBackground, retry, readRun, requireQualifiedHelper } from '../lib/worker.mjs';
+import { runSource, complete, completeInBackground, retry, readRun, requireQualifiedHelper, checkpointHarvest, retireDrain, operatorCommand } from '../lib/worker.mjs';
 import { initBase, migrate, deliverMigration, cutoverMigration, migrateSource, forgetMigration } from '../lib/migration.mjs';
 import { inspect, inspectConsultOnly } from '../lib/inspection.mjs';
 import { harvestOnce } from '../lib/once.mjs';
@@ -13,11 +14,14 @@ import { loadInvocationKnowledgeBinding } from '../lib/binding-wire.mjs';
 import { loadCapturedOkfInvocation, loadOkfSourceReceiptInput, assertOkfInvocationAction, requireOkfAdmittedAction, assertOkfSourceContext, assertOkfRegisteredSourceReplay } from '../lib/invocation-context.mjs';
 const HELP=`oats okf inspect [--home PATH | --source FILE] [--json]
 oats okf harvest [--home PATH] [--no-launch] [--json]
+  (the working agent, from its instance home, at a checkpoint: settle earlier delivered PRs,
+  capture, and start the harvester on what was captured; already-running and empty need no action)
 oats okf harvest --once --home PATH --records MANIFEST [--override-opt-out] [--no-launch] [--json]
   (operator, from the deployment with --soul: one reviewed harvest of a seat from a hash-verified manifest; registers nothing)
-oats okf run-source --source FILE [--manual] [--no-launch] [--json]
-oats okf complete --source FILE --run ID --judgment FILE [--json]
-oats okf retry --source FILE [--run ID --rejudge | --rejudge | --launch | --adopt-home PATH] [--json]
+oats okf run-source --source FILE --manual [--no-launch] --soul SOUL [--json]   (operator recovery; no schedule)
+oats okf complete --source FILE --run ID [--judgment FILE] --soul SOUL [--json]
+oats okf retry --source FILE [--run ID --rejudge | --rejudge | --launch | --adopt-home PATH] --soul SOUL [--json]
+  (operator commands run from the deployment with --soul, the source's own soul)
 oats okf bases [--fresh] [--json]
 oats okf index [--base ALIAS] [NODE | ALIAS/NODE] [--fresh] [--json]
 oats okf cat --base ALIAS PATH [--from PATH] [--fresh] [--json]
@@ -27,9 +31,9 @@ oats okf search [--base ALIAS | --all] [--node NODE] [--regex] [--case-sensitive
 Consult commands read the accepted state remotely (host cache, no local copy);
 also accept --home PATH | --source FILE. PATH is /node/x.md from the base root,
 relative to --from's directory, or bare node/x.md from the root.
-oats okf setup --source FILE [--enable | --disable] [--install-host] [--json]
 oats okf setup --harvest on|off [--json]      (writes oats-local.yaml settings.oats.okf.harvest)
-oats okf harvest-status [--home PATH] [--soul NAME] [--json]  (the effective harvest switch, why, and the registered sources)
+oats okf harvest-status [--home PATH] [--soul NAME] [--json]  (the effective harvest switch, why, the registered
+  sources, and everything outstanding for each, with the exact command that settles it)
 oats okf init --base ALIAS --nodes FILE [--output PATH | --confirm] [--json]
 oats okf migrate --legacy PATH --base ALIAS --node NODE --output PATH [--json]
 oats okf migrate --deliver FILE | --cutover FILE --soul-dir PATH [--json]
@@ -43,8 +47,12 @@ Unknown scaffold/native outcomes are retained, never automatically re-scaffolded
 Explicit retry --run ID requires --rejudge; add --launch only for operator-approved launch.
 Closed-PR recovery uses retained evidence and a fresh run; complete its returned ID.
 Settled destinations and old proposals/receipts are preserved; another active run blocks recovery.
-All settings use one absolute bindings-file. Setup host installation is explicit.
+All settings use one absolute bindings-file. oats.okf 4.2 has no harvest schedules.
 `;
+// okf 4.2.0: one time budget per invocation, within the kernel's 120 s for a
+// lifecycle hook (and an agent's usual two-minute tool call for a checkpoint);
+// capture may use 85 s of it.
+const RETIRE_BUDGET_MS=110000,CAPTURE_BUDGET_MS=85000;
 const args=process.argv.slice(2);
 if(args.includes('--help') || args.includes('-h')) {process.stdout.write(HELP);}
 else {
@@ -53,7 +61,7 @@ else {
   const consult=Object.hasOwn(CONSULT,event);
   let exit=0,answer,text,textMode=(consult || (event==='harvest' && args.includes('--once'))) && !args.includes('--json');
   try {
-    const flags={},positionals=[]; const boolean=new Set(['json','no-launch','manual','rejudge','launch','enable','disable','install-host','confirm','fresh','all','regex','case-sensitive','once','override-opt-out']);
+    const flags={},positionals=[]; const boolean=new Set(['json','no-launch','manual','rejudge','launch','enable','disable','install-host','remove-schedules','confirm','fresh','all','regex','case-sensitive','once','override-opt-out']);
     for(let i=1;i<args.length;i++) {
       if(consult && args[i]==='--') {positionals.push(...args.slice(i+1));break;}
       if(!args[i].startsWith('--')) {if(!consult) fail('E_USAGE',`unexpected argument ${args[i]}`);positionals.push(args[i]);continue;}
@@ -68,7 +76,7 @@ else {
       retry:['source','run','rejudge','launch','adopt-home'],read:['home','source','base','path','fresh'],refresh:['home','source'],'harvest-status':['home'],
       bases:['home','source','fresh'],index:['home','source','base','fresh'],cat:['home','source','base','from','fresh'],ls:['home','source','base','fresh'],
       links:['home','source','base','fresh'],search:['home','source','base','all','node','regex','case-sensitive','fresh'],
-      setup:['source','enable','disable','install-host','harvest'],init:['base','nodes','output','confirm'],
+      setup:['source','enable','disable','install-host','harvest','remove-schedules'],init:['base','nodes','output','confirm'],
       migrate:['source-home','legacy','base','node','output','deliver','cutover','soul-dir'],unlock:['lock','token']
     };
     for(const k of Object.keys(flags)) if(!['json','soul',...(accepted[event] || [])].includes(k)) fail('E_USAGE',`unknown flag --${k} for ${event}`);
@@ -141,27 +149,41 @@ else {
       const nodes=(list)=>list.join(', ') || 'none';
       const brief=decl=>`Your soul knowledge is read remotely at its accepted state; there is no local copy. Start every task with your instance knowledge (STATE.md, log.md, notes/), then \`oats okf index\` (owns: ${nodes(decl.owns)}; reads: ${nodes(decl.reads.filter(r=>!decl.owns.includes(r)))}) and \`oats okf cat --base ALIAS PATH\` for the concepts the task needs; \`oats okf search\` before re-deriving a decision. Load okf-consultation and okf-instance-knowledge. Never edit accepted knowledge.`;
       if(s.skipped) result={meta:{memory:'none'},brief:'Service agent: follow your own task; no working-memory upkeep.'};
-      else if(s.harvestOff) result={meta:{memory:'okf-v2',harvest:'off',reason:s.switch.reason},brief:`${brief(s.decl)} Harvest is off for this instance: nothing of this session is captured.`,...(s.switch.warnings.length?{warning:`oats-okf: ${s.switch.warnings.join('; ')}`}:{})};
-      else {
-        const schedule=loadStatus(s).schedule.result;
-        result={meta:{memory:'okf-v2',harvest:'on',source:s.file,schedule},brief:`${brief(s.decl)} Harvest is on: your notes and session are captured for the knowledge harvester.`};
-      }
+      else if(s.harvestOff) result={meta:{memory:'okf-v2',harvest:'off',reason:s.switch.reason},brief:`${brief(s.decl)} Harvest is off for this instance: nothing of this session is captured; do not run \`oats okf harvest\`.`,...(s.switch.warnings.length?{warning:`oats-okf: ${s.switch.warnings.join('; ')}`}:{})};
+      // okf 4.2.0: no schedule; the working agent harvests at its checkpoints.
+      else result={meta:{memory:'okf-v2',harvest:'on',source:s.file,checkpoint:'oats okf harvest'},brief:`${brief(s.decl)} Harvest is on: at a checkpoint (after opening or handing over a PR, or finishing a task) update STATE.md, log.md and notes/, then run \`oats okf harvest\` from your instance home; already running or nothing new needs no action, and a failure is reported, not retried in a loop. Retirement takes the final checkpoint.`};
     } else if(event==='retire') {
       if(captured) {
         let s;
         if(sourceReceipt.mode==='captured') {s=registerCaptured(home,sourceReceipt.receipt);if(s.skipped) {result={meta:{retired:true,reason:'service'}};s=null;}}
         else {if(!fs.existsSync(markerPath(home))) fail('E_MIGRATION','captured retire requires a durable registered source or explicit helper receipt');s=src();}
-        if(s) {scheduleSource(s);const r=capture(s,{final:true});const schedule=settleRetiredSchedule(s);result={meta:{retired:r.complete===true,source:s.file,capture:r,schedule},brief:'Final input is in durable custody. Delivery remains asynchronous.'};}
+        // A captured source's worker needs its admitted operation: retirement
+        // certifies custody only, and its drain stays held.
+        if(s) {const r=capture(s,{final:true,deadline:Date.now()+CAPTURE_BUDGET_MS});result={meta:{retired:r.complete===true,source:s.file,capture:r,drain:{status:'held',reason:'a captured source drains only through its admitted knowledge:harvest operation'}},brief:'Final input is in durable custody. Delivery remains asynchronous.'};}
       } else if(service(home)) result={meta:{retired:true}};
       else if(!fs.existsSync(markerPath(home)) && harvestOffRecord(home)) result={meta:{retired:true,reason:'harvest-off'}};
       else if(!fs.existsSync(markerPath(home))) {
         if(['STATE.md','log.md','notes','.okf-harvest-record.json','.okf-harvest-record.next.json'].some(p=>fs.existsSync(join(home,p)))) fail('E_MIGRATION','unregistered/legacy source has memory; explicitly migrate/register before retirement');
         result={meta:{retired:true,reason:'nothing-to-delete'}};
       } else {
-        const s=src(),sw=sourceSwitch(s);
-        // okf 4.0.1 #6: harvest switched off since spawn (deployment or soul) → no final capture.
+        // ONE budget for the hook (the kernel allows it 120 s): the switch,
+        // the final capture, then the drain handoff with what is left.
+        const deadline=Date.now()+RETIRE_BUDGET_MS;
+        // okf 4.0.1 #6, 4.2.0: the deployment's switch NOW (not this home's
+        // spawn-time settings), or an explicit spawn override for this source:
+        // off since spawn (deployment or soul) → no final capture. Unreadable
+        // refuses the retirement (E_HARVEST_CONSENT_UNKNOWN), nothing captured.
+        const s=src(),sw=sourceSwitch(s,{firstBatch:true,deadline});
         if(sw.effective!=='on') result={meta:retireHarvestOff(s,sw),brief:`Harvest is now off (${sw.reason}): no final capture was taken; earlier inputs stay in custody.`};
-        else {scheduleSource(s);const r=capture(s,{final:true});const schedule=settleRetiredSchedule(s);result={meta:{retired:r.complete===true,source:s.file,capture:r,schedule},brief:'Final input is in durable custody. Delivery remains asynchronous.'};}
+        else {
+          // Only a certified capture lets the home go; the handoff's own
+          // failure is reported with its resume command and never
+          // un-certifies custody. The handoff's first batch acts on the
+          // switch read above.
+          const r=capture(s,{final:true,deadline:Math.min(deadline,Date.now()+CAPTURE_BUDGET_MS)});
+          const drain=retireDrain(s,{launched:loadStatus(s).launchObserved===true,deadline,consent:sw});
+          result={meta:{retired:r.complete===true,source:s.file,capture:r,drain},brief:`Final input is in durable custody. Drain: ${drain.status}${drain.next?` (resume: ${typeof drain.next==='string'?drain.next:JSON.stringify(drain.next)})`:''}. Delivery remains asynchronous.`};
+        }
       }
     } else if(event==='harvest' && flags.once) {
       // okf 4.1.0: the operator's one-shot harvest of one seat from a manifest.
@@ -180,32 +202,45 @@ else {
         if(fs.existsSync(markerPath(home))) requireQualifiedHelper(src());
         const s=register(home);
         if(s.harvestOff) fail('E_HARVEST_OFF',`harvest is off for this instance: ${s.switch.reason}. Nothing was captured.`);
-        result=s.skipped?{status:'skipped',reason:'service'}:runSource(s,{manual:true,noLaunch:!!flags['no-launch']});
+        if(s.skipped) result={status:'skipped',reason:'service'};
+        else {
+          // okf 4.2.0: the switch is re-read at every checkpoint, also for a
+          // source registered while it was on (deployment or soul opt-out),
+          // from the deployment as it is now, within the checkpoint's budget.
+          const deadline=Date.now()+RETIRE_BUDGET_MS,sw=sourceSwitch(s,{firstBatch:true,deadline});
+          if(sw.effective!=='on') fail('E_HARVEST_OFF',`harvest is off for this instance: ${sw.reason}. Nothing was captured.`);
+          result=checkpointHarvest(s,{noLaunch:!!flags['no-launch'],deadline});
+        }
       }
     } else if(event==='run-source') {
-      // The deployment can switch harvest off after a source registered: the
-      // job then captures and processes nothing (the soul's opt-out was already
-      // applied at registration). Nothing drains when it is switched back on.
+      // okf 4.2.0: run-source is the operator's explicit recovery only. Without
+      // --manual it is an okf <= 4.1 scheduler job firing: inert, and named.
+      if(!flags.manual) {
+        // The exact recovery, with the source's own soul selector when its descriptor is readable.
+        let recovery='oats okf run-source --source FILE --manual --soul <the source\'s soul> --json, from its deployment';
+        try {const s=src();recovery=operatorCommand(s,['run-source','--source',s.file,'--manual']);} catch { /* the descriptor is unreadable: the generic form */ }
+        fail('E_HARVEST_SCHEDULE_REMOVED',`run-source without --manual is the removed scheduled harvest; nothing was captured. ${SCHEDULE_REMOVED} For explicit recovery of this source run: ${recovery}`);
+      }
+      // The deployment can switch harvest off after a source registered: it
+      // then captures and processes nothing.
       const source=src(),sw=sourceSwitch(source);
       result=sw.effective!=='on'?{status:'harvest-off',source:source.file,reason:`${sw.reason}; nothing was captured`}
-        :runSource(source,{manual:!!flags.manual,noLaunch:!!flags['no-launch']});
+        :runSource(source,{manual:!!flags.manual,noLaunch:!!flags['no-launch'],consent:true});
     }
     // A captured completion's private binding file need not outlive this call,
     // so it delivers inline (and can exceed an agent's tool-call limit).
     else if(event==='complete') {const s=src(),judgment=flags.judgment && resolve(flags.judgment);if(captured) retainedRun(s);result=captured?complete(s,flags.run,judgment):await completeInBackground(s,flags.run,judgment);}
-    else if(event==='retry') {const s=src();if(captured && !flags.run && !flags.rejudge && !flags.launch && !flags['adopt-home']) retainedRun(s);result=retry(s,{run:flags.run,rejudge:!!flags.rejudge,launch:!!flags.launch,adoptHome:flags['adopt-home']});}
-    else if(event==='inspect') result=consultOnly?inspectConsultOnly(consultSource(home)):inspect(src());
-    else if(event==='setup' && flags.harvest!==undefined) {
-      if(flags.source || flags.enable || flags.disable || flags['install-host']) fail('E_USAGE','setup --harvest takes no other setup flag');
-      result=setupHarvest(flags.harvest);
+    else if(event==='retry') {
+      // okf 4.2.0: retry itself refuses new harvest work while harvest is off.
+      const s=src();if(captured && !flags.run && !flags.rejudge && !flags.launch && !flags['adopt-home']) retainedRun(s);
+      result=retry(s,{run:flags.run,rejudge:!!flags.rejudge,launch:!!flags.launch,adoptHome:flags['adopt-home']});
     }
-    else if(event==='setup') {
-      const s=src();if(flags.enable && flags.disable) fail('E_USAGE','choose enable or disable');
-      scheduleSource(s);
-      if(flags.enable || flags.disable) {oats(['schedule',flags.enable?'enable':'disable',`okf-${s.id}`,'--dir',s.context,'--json'],s.context);updateStatus(s,current=>{current.auto=!!flags.enable;});}
-      if(flags['install-host']) oats(['schedule','host','install','--dir',s.context,'--json'],s.context);
-      result={source:s.file,scheduler:oats(['schedule','list','--dir',s.context,'--json'],s.context).scheduler};
-    } else if(event==='init') result=initBase(loadBindings(),flags.base,flags.nodes,flags.output,{confirm:!!flags.confirm});
+    else if(event==='inspect') result=consultOnly?inspectConsultOnly(consultSource(home)):inspect(src());
+    // okf 4.2.0 manages no scheduler job; the removed setup flags stay
+    // recognized only to name the fix.
+    else if(event==='setup' && (flags.source || flags.enable || flags.disable || flags['install-host'] || flags['remove-schedules'])) fail('E_REMOVED',`oats.okf 4.2 harvests at checkpoints and manages no scheduler job, so setup --source/--enable/--disable/--install-host/--remove-schedules are gone: the working agent harvests at its checkpoints (\`oats okf harvest\`); \`oats okf setup --harvest on|off --soul <soul>\` switches harvest for the deployment (a soul opts out with knowledge: { harvest: off }). ${JOBS_REMOVED}`);
+    else if(event==='setup' && flags.harvest!==undefined) result=setupHarvest(flags.harvest);
+    else if(event==='setup') fail('E_USAGE','setup needs --harvest on|off'); else if(event==='init') result=initBase(loadBindings(),flags.base,flags.nodes,flags.output,{confirm:!!flags.confirm});
     else if(event==='migrate') {
       if(flags['source-home']) result=migrateSource(loadBindings(),flags['source-home']);
       else if(flags.forget) result=forgetMigration(loadBindings(),flags.forget);
@@ -215,7 +250,7 @@ else {
     } else if(event==='unlock') result=unlock(resolve(flags.lock),flags.token);
     else fail('E_USAGE',`unknown command ${event}; see --help`);
     answer=hook?result:{schemaVersion:1,ok:true,result};
-  } catch(e) {const code=e.code || 'E_OKF',message=redactUrls(e.message);exit=1;answer=hook?{meta:{...(event==='retire'?{retired:false,reason:message}:{})},warning:`oats-okf ${code}: ${message}`}:{schemaVersion:1,ok:false,error:{code,message}};}
+  } catch(e) {const code=e.code || 'E_OKF',message=redactUrls(e.message);exit=1;answer=hook?{meta:{...(event==='retire'?{retired:false,reason:message}:{})},warning:`oats-okf ${code}: ${message}`}:{schemaVersion:1,ok:false,error:{code,message,...(e.result?{result:e.result}:{})}};}
   // Consult commands print text unless --json; every other answer is JSON.
   // Let Node drain the pipe; no process.exit after a possibly large answer.
   if(textMode && exit) process.stderr.write(`oats okf ${event}: ${answer.error.code}: ${answer.error.message}\n`);

@@ -28,10 +28,23 @@ export function noGit(path) {
     if (dirname(p) === p) break;
   }
 }
-export function validateBindings(doc, file, { sourceHome, sourceWork } = {}) {
+/** okf 4.2.0: harvest runs at checkpoints, not on schedules, and oats.okf
+ *  manages no scheduler job: the kernel's own `oats schedule` removes the
+ *  jobs 4.1 created. The refusal a live bindings document with the old
+ *  cron/tz fields answers (and run-source without --manual), in one sentence. */
+export const JOBS_REMOVED = 'Remove each okf-<source id> job okf <= 4.1 created with the kernel: oats schedule list --dir <deployment> --json, then oats schedule remove <id> --dir <deployment> (README#upgrading-from-41).';
+export const SCHEDULE_REMOVED = 'oats.okf 4.2 harvests at checkpoints, not on schedules: remove cron/tz from the bindings file, and remove each okf-<source id> job okf <= 4.1 created with oats schedule remove <id> --dir <deployment> (README#upgrading-from-41).';
+/** A bindings document. A live one (the bindings file, a portable payload)
+ *  refuses cron/tz. A source descriptor frozen by okf <= 4.1 recorded them
+ *  (always: the defaults were written out): `frozen` reads them as inert
+ *  history, still shape-checked; nothing returns or uses them, and the
+ *  binding fingerprint never covered them. */
+export function validateBindings(doc, file, { sourceHome, sourceWork, frozen = false } = {}) {
   keys(doc,['version','stateDir','bases','cron','tz'],'bindings');
   if (!obj(doc) || doc.version !== 1 || !obj(doc.bases) || !Object.keys(doc.bases).length || (typeof doc.stateDir !== 'string' || !doc.stateDir)) fail('E_CONFIG', 'bindings require {version:1,stateDir,bases}');
-  for(const key of ['cron','tz']) if(doc[key]!==undefined && (typeof doc[key]!=='string' || !doc[key].trim())) fail('E_CONFIG', `${key} must be a nonempty string`);
+  const legacy = ['cron','tz'].filter(key => Object.hasOwn(doc, key));
+  if (legacy.length && !frozen) fail('E_HARVEST_SCHEDULE_REMOVED', `${file}: ${legacy.join(' and ')} ${legacy.length > 1 ? 'are' : 'is'} no longer supported. ${SCHEDULE_REMOVED}`);
+  for(const key of legacy) if(typeof doc[key]!=='string' || !doc[key].trim()) fail('E_CONFIG', `${key} must be a nonempty string`);
   const stateDir = safePath(resolve(dirname(file), doc.stateDir));
   const bases = {}; const ids = new Set(); const paths = [];
   for (const [alias, raw] of Object.entries(doc.bases)) {
@@ -68,7 +81,7 @@ export function validateBindings(doc, file, { sourceHome, sourceWork } = {}) {
   for(let i=0;i<gitBases.length;i++) for(let j=0;j<i;j++) if(gitBases[i].repository===gitBases[j].repository && overlaps(resolve('/',gitBases[i].root),resolve('/',gitBases[j].root))) fail('E_PATH','overlapping Git base namespaces');
   for (const p of [sourceHome,sourceWork].filter(Boolean)) if(overlaps(stateDir,p)) fail('E_PATH','state overlaps source home/work');
   if(overlaps(stateDir,file) || paths.some(p=>overlaps(p,file))) fail('E_PATH','bindings document must be outside state and bases');
-  return { version:1, stateDir, bases, cron:doc.cron?.trim() ?? '*/15 * * * *', tz:doc.tz?.trim() ?? 'UTC' };
+  return { version:1, stateDir, bases };
 }
 export function loadBindings(file = settings()['bindings-file'], opts = {}) {
   if(typeof file !== 'string' || !isAbsolute(file)) fail('E_CONFIG','set one absolute bindings-file; explicit provisioning/migration is required');
@@ -76,8 +89,8 @@ export function loadBindings(file = settings()['bindings-file'], opts = {}) {
 }
 export function declaration(soul) {
   if(fs.existsSync(join(soul,'.okf-cutover.json'))) fail('E_MIGRATION','incomplete explicit migration cutover: rerun its recorded migrate --cutover command');
-  if(fs.existsSync(join(soul,'knowledge'))) fail('E_MIGRATION','legacy soul/knowledge exists: use oats okf migrate to preserve and stage it, then explicit cutover; no automatic loss');
-  if(!fs.existsSync(join(soul,'okf.json'))) fail('E_CONFIG',`soul has no okf.json: this soul reads/owns no knowledge yet. Provision it explicitly (oats okf init, or oats okf migrate for a legacy soul), or deactivate oats.okf for this soul; nothing was created`);
+  if(fs.existsSync(join(soul,'knowledge'))) fail('E_MIGRATION','legacy soul/knowledge exists: use oats okf migrate --soul <soul> to preserve and stage it, then explicit cutover; no automatic loss');
+  if(!fs.existsSync(join(soul,'okf.json'))) fail('E_CONFIG',`soul has no okf.json: this soul reads/owns no knowledge yet. Provision it explicitly (oats okf init --soul <soul>, or oats okf migrate --soul <soul> for a legacy soul), or deactivate oats.okf for this soul; nothing was created`);
   return validateDeclaration(readJSON(join(soul,'okf.json')));
 }
 export function validateDeclaration(d) {

@@ -52,7 +52,7 @@ function baseFiles(doc) {
 }
 const directory={id:'base-1',kind:'directory',path:'accepted'};
 const git={id:'base-1',kind:'git',repository:'https://github.com/example/knowledge.git',root:'.',acceptedBranch:'main',pr:{repository:'example/knowledge'}};
-const bindings=base=>({version:1,stateDir:'state',bases:{project:base},cron:'*/15 * * * *',tz:'UTC'});
+const bindings=base=>({version:1,stateDir:'state',bases:{project:base}});
 const soul={version:1,owner:'owner-1',owns:['project/expert'],reads:['project/expert']};
 const base={version:1,id:'base-1',nodes:{expert:{path:'expert',owner:'owner-1'}}};
 
@@ -81,7 +81,14 @@ test('R1 configuration runtime and shipped schemas agree on accepted keys and ma
   expect('bindings',bindings({...git,pr:{...git.pr,branch:'typo'}}),false,'unknown PR key');
   expect('bindings',bindings({...directory,path:''}),false,'empty directory path');
   expect('bindings',{...bindings(directory),stateDir:''},false,'empty stateDir');
-  for(const key of ['cron','tz']) for(const value of [null,0,false,[],{},'','  ']) expect('bindings',{...bindings(directory),[key]:value},false,`invalid ${key}`);
+  // okf 4.2.0: a live bindings document refuses the removed schedule fields,
+  // valid or not, with the migration code (frozen descriptors read them inertly).
+  for(const extra of [{cron:'*/15 * * * *'},{tz:'UTC'},{cron:'*/15 * * * *',tz:'UTC'},{cron:''},{tz:null}]) {
+    expect('bindings',{...bindings(directory),...extra},false,`live ${Object.keys(extra).join('+')}`);
+    assert.throws(()=>validateBindings({...bindings(directory),...extra},join(dir,'bindings.json')),{code:'E_HARVEST_SCHEDULE_REMOVED',message:/remove cron\/tz from the bindings file, and remove each okf-<source id> job okf <= 4\.1 created with oats schedule remove <id> --dir <deployment> \(README#upgrading-from-41\)/});
+  }
+  assert.doesNotThrow(()=>validateBindings({...bindings(directory),cron:'*/15 * * * *',tz:'UTC'},join(dir,'bindings.json'),{frozen:true}),'a frozen pre-4.2 descriptor still reads');
+  for(const key of ['cron','tz']) for(const value of [null,0,false,[],{},'','  ']) assert.throws(()=>validateBindings({...bindings(directory),[key]:value},join(dir,'bindings.json'),{frozen:true}),{code:'E_CONFIG'},`frozen invalid ${key}`);
   expect('base',{...base,nodes:{expert:{...base.nodes.expert,readiness:'typo'}}},false,'unknown node key');
   for(const kind of ['soul','base']) expect(kind,{...(kind==='soul'?soul:base),[kind==='soul'?'owner':'id']:'valueOf'},false,'reserved identity');
   for(const ref of ['project/constructor','constructor/expert',`${'a'.repeat(97)}/expert`,`project/${'n'.repeat(97)}`]) expect('soul',{...soul,owns:[ref]},false,'invalid node reference');

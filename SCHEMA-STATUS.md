@@ -22,8 +22,8 @@ coordinated, still-unreleased **OATS >=0.24.0** framework. The package/version
 and compatibility declarations intentionally remain unchanged until coordinated
 publication; therefore the current 0.23.x consumer probe does not certify the
 new binding manifest/wire. Focused fixtures validate the provider codec,
-private snapshots, captured registration, source-independent worker path and v2
-schedule shape without claiming a published consumer release.
+private snapshots, captured registration and source-independent worker path
+without claiming a published consumer release.
 
 ## What `npm test` and default CI check
 
@@ -87,11 +87,28 @@ Three tests skip by default, with explicit Node test skip output:
 2. The native capture/recall test in `test/oats-okf.test.mjs` transports sixty
    synthetic 350 kB Claude records through the actual public kernel into durable
    bounded input, then exercises fixture completion after source removal.
-3. The native scheduler test checks registration idempotence and disabled-job
-   preservation without installing a host timer.
+3. The native scheduler test checks that registration adds no scheduler job
+   and installs no host timer (okf 4.2.0 manages no job).
+
+4. The real home-dispatch tests (`test/real-home-dispatch.test.mjs`, okf
+   4.2.0) spawn sources in a disposable v2 workspace of file:// repositories
+   with this package pinned by commit, switch only the deployment's harvest
+   setting, and check that the existing homes' checkpoint and retire hook
+   capture and start nothing; an explicit spawn override and a soul opt-out
+   are the controls, and an operator command dispatched as another soul reads
+   the source's own soul's policy. No model is launched. The optional
+   public-consumer CI job runs this file alone, before its full suite, and
+   fails if it is skipped (it needs the selected kernel at >= 0.43.0).
+5. The external-repo test (`test/external-repo-consumer.test.mjs`, okf 4.2.0,
+   #55) runs only in the default `external-repo-041` CI job, on released
+   OATS 0.41.0 (`OATS_OKF_EXTERNAL_CLI`): a source spawned on an external
+   `--repo`, its checkpoint to a real harvester spawn (`--no-launch`) and its
+   retirement, in the deployment, with no scheduler job and no model. The job
+   first requires the released v4.1.1 payload (`OATS_OKF_EXTERNAL_PAYLOAD`)
+   to fail the same fixture on the kernel's scope refusal.
 
 Native tests use `OATS_OKF_NATIVE_CLI`, falling back to
-`OATS_OKF_CONSUMER_CLI`. All three run with:
+`OATS_OKF_CONSUMER_CLI`. All of them run with:
 
 ```sh
 OATS_OKF_CONSUMER_CLI=/absolute/oats/bin/oats.mjs npm test

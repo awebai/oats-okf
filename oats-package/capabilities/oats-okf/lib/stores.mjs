@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { fs, join, dirname, safePath, readJSON, save, atomic, tree, materialize, digest, hash, withLock, exec, cleanEnv, fail, relPath, overlaps, resolve, within, redactUrls, displayRepo } from './io.mjs';
+import { fs, join, dirname, safePath, readJSON, save, atomic, tree, materialize, digest, hash, withLock, exec, bounded, cleanEnv, fail, relPath, overlaps, resolve, within, redactUrls, displayRepo } from './io.mjs';
 import { metadata, noGit, gitTimeoutMs } from './config.mjs';
 const validator = fileURLToPath(new URL('./okf-validate.mjs', import.meta.url));
 // Never let local replace refs reinterpret frozen OIDs, including inside Git's
@@ -67,7 +67,7 @@ function fetchBlobs(cwd,oids) {
  *  partial clone fetches a missing blob on its first read. */
 function writeBlob(cwd,oid,target,mode) {
   const fd=fs.openSync(target,'wx',mode);
-  let result; try { result=spawnSync('git',['--no-replace-objects','-c','core.hooksPath=/dev/null','-C',cwd,'cat-file','blob',oid],{cwd,env:noLazyFetch(),timeout:gitTimeoutMs(),stdio:['ignore',fd,'pipe']}); } finally { fs.closeSync(fd); }
+  let result; try { result=spawnSync('git',['--no-replace-objects','-c','core.hooksPath=/dev/null','-C',cwd,'cat-file','blob',oid],{cwd,env:noLazyFetch(),timeout:bounded(gitTimeoutMs()),stdio:['ignore',fd,'pipe']}); } finally { fs.closeSync(fd); }
   if(result.error || result.status!==0) fail('E_COMMAND','Git object read failed');
   fs.chmodSync(target,mode);
 }

@@ -3,6 +3,7 @@ import { fs, join, dirname, resolve, readJSON, atomic, fail } from './io.mjs';
 import { settings, loadBindings } from './config.mjs';
 import { harvestSwitch } from './harvest-switch.mjs';
 import { markerPath, harvestOffRecord, inputCounts } from './sources.mjs';
+import { outstanding } from './worker.mjs';
 
 const SOURCE_LIMIT = 500;
 /** The registered sources in the bound state directory, optionally for one soul. */
@@ -19,7 +20,11 @@ function registeredSources(soul, seat) {
     if (soul && source.agent !== soul) continue;
     // okf 4.1.0: a one-shot harvest is not a registered source; it is listed apart.
     if (source.once) { if (!seat || source.home === seat) once.push(onceRow(id, dir, source, status)); continue; }
-    rows.push({ id, soul: source.agent, instance: source.instance, created: source.created, retired: status.retired === true, auto: status.auto === true, activeRun: status.activeRun || null, schedule: status.schedule?.id || null, file: join(dir, id, 'source.json') });
+    // okf 4.2.0: everything still owed for the source, each with its exact
+    // command. A retired source's delivered PRs are its operator's to settle.
+    const file = join(dir, id, 'source.json');
+    let owed; try { owed = outstanding({ ...source, file }, status); } catch (e) { owed = [{ kind: 'unreadable', error: `${e.code || 'E_OKF'}: ${e.message}` }]; }
+    rows.push({ id, soul: source.agent, instance: source.instance, created: source.created, retired: status.retired === true, activeRun: status.activeRun || null, outstanding: owed, file });
   }
   return { stateDir: bindings.stateDir, sources: rows, once };
 }
@@ -44,7 +49,7 @@ export function harvestStatus({ home, flags = {} }) {
   const harvest = unknown ? 'unknown' : sw.effective;
   const reason = unknown ? `the soul's opt-out could not be read (${soulRow.why}); capture treats it as off` : sw.reason;
   return { harvest, reason, rows: sw.rows, warnings: sw.warnings, soul, instance, ...registeredSources(soul, flags.home ? resolve(flags.home) : null), // a retired seat's home may be gone; its one-shots still list
-    note: 'harvest applies from the next spawn: switching it on never captures earlier sessions, and switching it off stops run-source capture for registered sources. `oats schedule disable okf-<source>` is the per-source emergency brake.' };
+    note: 'harvest applies from the next spawn: switching it on never captures earlier sessions, and switching it off (or a soul opting out) stops every later checkpoint, retirement capture and drain of registered sources. Harvest runs at checkpoints (`oats okf harvest`), never on a schedule; oats.okf manages no scheduler job (README#upgrading-from-41 removes the ones 4.1 created).' };
 }
 
 /** Find the deployment's oats-local.yaml: OATS_WORKSPACE, else up from cwd. */
@@ -95,7 +100,7 @@ export function setupHarvest(value) {
   const line = `settings:\n  oats.okf:\n    harvest: ${value}`;
   const file = localFile();
   const note = value === 'on'
-    ? 'Harvest applies to new spawns of souls that do not opt out (knowledge: { harvest: off }). Earlier sessions are never captured. Run `oats okf harvest-status` to confirm.'
+    ? 'Harvest applies to new spawns of souls that do not opt out (knowledge: { harvest: off }). Earlier sessions are never captured. Run `oats okf harvest-status --soul <soul>` to confirm.'
     : 'New spawns register no source. Registered sources stop capturing at their next run-source. Nothing is deleted.';
   if (!file) return { written: false, harvest: value, reason: 'no oats-local.yaml found (OATS_WORKSPACE or up from the current directory)', add: line, note };
   const edited = editLocalYaml(fs.readFileSync(file, 'utf8'), value);

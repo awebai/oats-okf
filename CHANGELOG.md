@@ -1,5 +1,173 @@
 # Changelog
 
+## 4.2.0 — 2026-10-06
+
+Checkpoint harvest (#49); the harvester retires after delivery (#47). #46 and
+#48 are superseded. See the README's "Upgrading from 4.1". The external
+`--repo` fix of #55 (the unreleased 4.1.2, PR #56) is in this release instead;
+there is no 4.1.2.
+
+### Fixed
+
+- **External `--repo` sources run their `oats` calls in the deployment**
+  (#55). Such a source keeps the repository as its context; the harvester
+  spawn and its session start, the live consent read, every printed operator
+  and completion command, and the harvester's `okf-harvest complete` now run
+  in the deployment the kernel names (`OATS_WORKSPACE`, else
+  `OATS_TEAM_SCOPE`), or a captured source's frozen execution binding.
+  Neither named, or two different ones, is `E_DEPLOYMENT_SCOPE` before any
+  effect; nothing searches for a deployment from the repository. Frozen
+  descriptors are unchanged. The floor stays **OATS >=0.29.0**: CI's
+  `external-repo-041` job runs a real external-`--repo` checkpoint to a real
+  harvester spawn and retirement on released OATS 0.41.0, with the released
+  v4.1.1 payload as a failing negative control. 4.1.2's scheduler scoping is
+  not carried over: 4.2 manages no scheduler job.
+
+### Changed
+
+- **Harvest runs at checkpoints, not on schedules.** No registration, spawn,
+  retire, checkpoint or recovery creates, verifies or changes a scheduler job.
+  The working agent runs `oats okf harvest` from its home at a checkpoint
+  (after opening or handing over a PR, or finishing a task); the inject, the
+  `okf-instance-knowledge` skill and the harvest-on spawn brief say so, and a
+  harvest-off brief says not to.
+- **`oats okf harvest`** re-reads the switch and the soul opt-out
+  (`E_HARVEST_OFF`), takes the source's worker lock (a live holder:
+  `already-running`, with the run id or `preparing`; a dead one is
+  reclaimed), reports an active run (`already-running`, `deferred`, or
+  `needs-recovery` with exact commands) without settling history, so the
+  run's completion never waits behind a GitHub call; with no run active it
+  settles earlier delivered PRs through `complete`'s checks (`settled`:
+  accepted, rejected once and never rejudged, open, or unsettled with its
+  command), then captures and requests a finite drain (`started`, or
+  `empty`). Only a busy capture lock is reported as another capture
+  (`preparing`); a lock met inside the capture is an error.
+- **The switch is the deployment's now, for the source's own soul.** A
+  home's settings are its spawn's snapshot (the kernel dispatches its
+  commands and hooks with them), and an operator command's are those of the
+  soul it was dispatched as, so every switch read (checkpoint, retire,
+  retry, drain continuation, run-source, from a home or not) asks the
+  deployment through `oats okf harvest-status --soul <source soul> --json`
+  run from the source's deployment, without the invoking process's
+  identity or settings, within the invocation's budget, and its rows give
+  the soul's opt-out as the deployment resolves the soul now. Unknown consent
+  (a read that fails, times out or is malformed, or a switch reported
+  `unknown`) is `E_HARVEST_CONSENT_UNKNOWN`, never off: nothing captured or
+  started, a retirement refused with the home kept. The soul's opt-out stays
+  absolute. An explicit spawn override for the source (origin `spawn`)
+  stands in for the deployment's switch for its own first batch (a
+  checkpoint, its retirement), after the same read, never over the soul's
+  opt-out; a host value captured at spawn does not. An automatic
+  continuation (a completion's successor, also from a detached delivery) is
+  a new action: it reads the deployment's switch through that view at that
+  moment, with or without a home, never the settings its command was
+  dispatched with; the first batch's consent is not reused for it. Every
+  printed operator or recovery command names the source's soul (`--soul`).
+  Homes copied from earlier versions keep their copied modules: a pin does
+  not retrofit them (see the cutover). Its answer replaces the
+  run's status.
+- **Review settlement is per destination.** A run already processed settles
+  each destination on its own, through the same identity and ancestry
+  checks: a closed PR is recorded once and never read again, and never holds
+  back, or hides, another destination's merge, reviewed amended merge or
+  failure. A settlement that fails part way (a receipt left `pr-unknown`)
+  stays owed: every earlier run with a destination whose outcome is not
+  recorded is settled at each checkpoint and listed by `harvest-status`
+  until then. A newly recorded close still answers `E_PR`, now with every
+  destination's receipt in `error.result`; a repeat answers the recorded
+  outcomes.
+- **One deadline** bounds a checkpoint and a retire hook (110 s): every
+  `git`, `gh` and `oats` call gets at most what is left and none starts
+  once it is spent, and every lock wait ends with it (`E_DEADLINE`); settlement takes at most 30 s and capture 85 s. A
+  harvester is started only with its spawn's full 90 s timeout (and a
+  second for the records before it) left: otherwise it is `deferred` before
+  any effect, no run active, the drain kept, with `run-source --manual` to
+  resume. A worker
+  is never launched past it: with under 15 s left, or staging stopped by
+  it, the confirmed worker stays (`deferred`, `phase: ready` or
+  `scaffolded`, `launched: false`, `next: retry --source FILE --launch`),
+  and repeats never launch or spawn it again. Operator commands keep each
+  call's own timeout.
+- **An explicitly requested rejudgment goes first** on every path that starts
+  a run (checkpoint, drain continuation, retirement, `run-source --manual`),
+  with its inputs, lineage, guards and `previous.json`; while a PR of an
+  earlier attempt is open or merged again, nothing starts
+  (`needs-recovery`, `phase: pending-rejudgment`).
+- **Finite drain.** The captured input ids are persisted as the drain's
+  boundary before any effect. A run takes at most 192 KB of them; when it
+  becomes processed, its completion starts the next run from the boundary
+  without capturing again, re-reading the switch (off pauses the drain).
+  Automatic continuation needs the deployment's harvest switch on: a seat
+  switched on only at spawn starts its first run, then pauses visibly with
+  the deployment off; every promised handoff says so (`prerequisite`).
+  `--no-launch` requests no drain, and its run's completion launches
+  nothing, also over an earlier drain request: that drain is `held`. The
+  hold is durable (written with the processed status, so a crash right
+  after keeps it): later checkpoints and retirement add input to it but
+  start nothing, until an operator's explicit `retry --source FILE --launch`
+  (or `run-source --manual`) lifts it.
+- **Retirement** takes the final capture and then the same drain within one
+  110 s budget, reported in `meta.drain` apart from the certified capture:
+  started, already-running (the active run's completion hands on the final
+  tail, also after the source home is gone), empty, deferred and busy (the
+  worker lock held with no run active: no handoff is promised; the exact
+  `run-source --manual` resumes), not-launched (a source
+  that never launched a model launches no harvester), or needs-recovery /
+  deferred / failed with the exact resume command. Harvest off: no final
+  capture and no drain, as before. A captured source's drain stays held.
+- **The harvester retires once every destination is delivered** and hands
+  over the run and PR URLs; `okf-harvest harvest-status` answers `retire`
+  then, whatever the PR's state. A delivery in progress, failed or stopped
+  keeps it. The maintainer's review never waits for it (`knowledge-review`,
+  the maintainer inject and soul); `notify-harvester` is only for harvesters
+  spawned by 4.1.
+- **`harvest-status`** lists, per source, everything `outstanding` with its
+  exact command: every delivered run awaiting review (a retired source's
+  operator records the merge or close with `complete`), the active or stuck
+  run, and an unfinished drain.
+- **`retry --source FILE`** prepares again, in place, a confirmed worker whose
+  preparation was interrupted (persisted stages kept, a partial one redone);
+  nothing is spawned twice. **Retry re-reads consent**: while the deployment
+  switch is off, or the soul opts out, it answers `harvest-off` to anything
+  that would start new harvest work: a new run, `--launch`, `--rejudge`,
+  `--run ID --rejudge`, and any combination with `--launch`; a new run
+  re-reads consent under the worker lock, right before capture. It still
+  delivers a persisted judgment (whose completion pauses the drain), prepares
+  a confirmed worker without launching it, and adopts an already-created one.
+  `harvest --once` keeps its own contract. `--launch` of a prepared worker
+  clears its `--no-launch`.
+- **An interrupted rebuild** of a retired worker's checkout (deadline or
+  transport failure) is discarded and redone by the next settlement, never
+  left blocking it.
+- **Rollback boundary.** Retiring sources is not enough to re-pin 4.1: no
+  source of any soul or state namespace may list any `outstanding` row, a
+  review included. 4.1's `complete` hands no drain on, and it stops at a
+  destination recorded closed, never reaching a later merge of the same run.
+  See the README.
+- Every CI job that runs `npm test` checks out full history: a test runs
+  the released 4.1.1 code, and a test checks the workflow says so.
+
+### Removed
+
+- All scheduler-job management. No oats.okf code adds, enables, disables,
+  removes, lists or installs a scheduler job, or calls `oats schedule` at all:
+  the operator removes each job 4.1 created with the kernel's
+  `oats schedule list`/`remove` (README "Upgrading from 4.1"). The
+  `harvest-review` trigger and its skill stay.
+- `cron`/`tz` in a live bindings document: `E_HARVEST_SCHEDULE_REMOVED`, in
+  one sentence naming both fixes (remove cron/tz; remove each old job with
+  `oats schedule remove`) and the README section. Descriptors frozen by
+  earlier versions keep them as inert data. The bindings schema no longer
+  lists them.
+- `run-source` without `--manual` (a 4.1 job firing): `E_HARVEST_SCHEDULE_REMOVED`,
+  nothing captured.
+- `setup --source`, `--enable`, `--disable`, `--install-host` and the 4.2
+  candidates' `--remove-schedules`: `E_REMOVED`, naming the same fix.
+- `oats okf inspect`'s `scheduler` (health) field, and `harvest-status`'s
+  `legacySchedule`: oats.okf no longer observes scheduler jobs.
+- The spawn hook's `meta.schedule` (now `meta.checkpoint`), and the retire
+  hook's `meta.schedule` (now `meta.drain`).
+
 ## 4.1.1 — 2026-10-01
 
 ### Fixed

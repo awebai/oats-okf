@@ -19,6 +19,12 @@ The work mode:
   links; do not bulk-load.
 - **Before compaction and before a task boundary:** update STATE.md, log.md
   and notes/ first, so your future self can continue.
+- **At a checkpoint**—after opening or handing over a PR, or finishing a
+  task—first update STATE.md, log.md and relevant notes. If your TASK
+  briefing says harvest is on, run `oats okf harvest` from your instance
+  home. Already running or nothing new needs no action; report a failure
+  rather than repeatedly retrying. With harvest off, do not run it.
+  Retirement takes the final checkpoint.
 - **Every so often while working, and always before a design decision or
   before re-deriving something:** `oats okf search` / `cat` the relevant
   concepts and re-read your own notes. Consult prior decisions before

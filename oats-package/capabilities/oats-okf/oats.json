@@ -1,7 +1,7 @@
 {
   "capability": "oats.okf",
   "command": "okf",
-  "version": "4.1.1",
+  "version": "4.2.0",
   "compatibility": {
     "oats": ">=0.29.0"
   },
@@ -132,7 +132,7 @@
       "kind": "view",
       "command": "inspect",
       "context": "home",
-      "description": "Inspect matching live working-memory documents, durable receipts, bindings, the accepted resolution, any legacy local view and scheduler health."
+      "description": "Inspect matching live working-memory documents, durable receipts, bindings, the accepted resolution, and any legacy local view."
     },
     "harvest": {
       "kind": "action",

@@ -1,13 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { fs, join, dirname, resolve, safePath, readJSON, save, atomic, hash, withLock, oats, fail, tree, overlaps, identifier } from './io.mjs';
+import { basename } from 'node:path';
+import { fs, join, dirname, resolve, safePath, readJSON, save, atomic, hash, withLock, oats, fail, tree, overlaps, identifier, cleanEnv, quote, redactUrls } from './io.mjs';
 import { loadBindings, declaration, bindingFingerprint, settings, validateBindings, resolveNodes } from './config.mjs';
 import { acceptedResolution, short } from './consult.mjs';
 import { loadInvocationKnowledgeBinding, readPrivateInvocationJson, sourceRuntimeFromKnowledgeBinding } from './binding-wire.mjs';
 import { sameJson } from './portable-binding.mjs';
 import { qualifiedSoulIdentity } from './source-contract.mjs';
-import { harvestSwitch, instanceRecordPath } from './harvest-switch.mjs';
+import { harvestSwitch, instanceRecordPath, parseOrigins } from './harvest-switch.mjs';
 import { validateBase } from './stores.mjs';
 
 const primeBasesScript=fileURLToPath(new URL('./prime-bases.mjs',import.meta.url));
@@ -65,7 +66,7 @@ function saveCapture(source, status) {
     current.captured=status.captured;
     if(status.launchObserved!==undefined) current.launchObserved=status.launchObserved;
     if(status.lastCapture) current.lastCapture=status.lastCapture;
-    if(status.retired) {current.retired=true;current.retiredAt=status.retiredAt;current.auto=current.auto && status.auto;}
+    if(status.retired) {current.retired=true;current.retiredAt=status.retiredAt;}
   });
 }
 export const loadStatus = source => readJSON(statusPath(source));
@@ -73,7 +74,7 @@ export function loadSource(file) {
   safePath(file); const s=readJSON(file);
   if(s.version!==1 || !/^[0-9a-f-]{36}$/.test(s.id) || resolve(file)!==join(s.bindings.stateDir,'sources',s.id,'source.json')) fail('E_SOURCE','invalid source descriptor path/identity');
   const {file:bindingsFile,...bindingsDoc}=s.bindings;
-  const checked=validateBindings(bindingsDoc,bindingsFile,{sourceHome:s.home,sourceWork:s.work});
+  const checked=validateBindings(bindingsDoc,bindingsFile,{sourceHome:s.home,sourceWork:s.work,frozen:true});
   if(bindingFingerprint(checked)!==s.bindingFingerprint) fail('E_SOURCE','frozen bindings fingerprint mismatch');
   if(s.providerBinding!==undefined) {
     let frozen;try{frozen=sourceRuntimeFromKnowledgeBinding(s.providerBinding);}catch{fail('E_SOURCE','invalid frozen provider binding');}
@@ -109,10 +110,12 @@ export function ensureInstanceKnowledge(home) {
 function finishRegistration(source) {
   // A durable home pointer precedes publication. Failures after it was saved
   // resume this same source; they never reset captured evidence or IDs.
+  // okf 4.2.0: registration creates no scheduler job; harvest runs at the
+  // working agent's checkpoints (`oats okf harvest`) and at retirement.
   ensureInstanceKnowledge(source.home);
-  scheduleSource(source);return source;
+  return source;
 }
-/** Harvest off (okf 4.0.0): no source, no custody, no schedule. The home keeps
+/** Harvest off (okf 4.0.0): no source, no custody. The home keeps
  *  a small record so retire knows there is nothing to capture, and (4.0.3) the
  *  soul's declaration, so consultation works without a source. */
 function harvestOff(home,sw,extra={}) {
@@ -219,7 +222,7 @@ export function registerCaptured(home,receipt) {
   const file=join(dir,'source.json');fs.mkdirSync(dir,{recursive:true,mode:0o700});
   try {
     source.acceptedView=acceptedResolution(bindings,source.decl);source.acceptedNodes=acceptedNodes(source.acceptedView);
-    save(file,source);save(join(dir,'status.json'),{version:1,captured:{notes:[],threads:{},inputs:[]},processed:[],delivered:{},accepted:{},retired:false,auto:true,activeRun:null});
+    save(file,source);save(join(dir,'status.json'),{version:1,captured:{notes:[],threads:{},inputs:[]},processed:[],delivered:{},accepted:{},retired:false,activeRun:null});
     save(markerPath(home),{version:1,id,source:file});
   } catch(error) {
     if(!fs.existsSync(markerPath(home))) fs.rmSync(dir,{recursive:true,force:true});
@@ -237,7 +240,7 @@ export function register(home) {
   }
   if(service(home)) return {skipped:'service'};
   if(fs.existsSync(markerPath(home))) return finishRegistration(homeSource(home));
-  if(['.okf-harvest-record.json','.okf-harvest-record.next.json'].some(p=>fs.existsSync(join(home,p))) && !fs.existsSync(join(home,'.okf-v1-migration.json'))) fail('E_MIGRATION','legacy source watermarks require explicit oats okf migrate --source-home PATH before v2 registration; no cursor is silently trusted');
+  if(['.okf-harvest-record.json','.okf-harvest-record.next.json'].some(p=>fs.existsSync(join(home,p))) && !fs.existsSync(join(home,'.okf-v1-migration.json'))) fail('E_MIGRATION','legacy source watermarks require explicit oats okf migrate --source-home PATH --soul <soul> before v2 registration; no cursor is silently trusted');
   const seat=describeSeat(home);
   const sw=harvestSwitch({settings:settings(),soulDir:seat.soul});
   if(sw.effective!=='on') {const priming=primeGitBases(seat.bindings,seat.decl);validateHarvestOffRefs(seat.bindings,seat.decl,priming.primed);return harvestOff(home,{...sw,warnings:[...sw.warnings,...priming.warnings]},{decl:seat.decl});}
@@ -287,7 +290,7 @@ export function installSource(source,{marker,status={}}) {
     pinOwner(join(source.bindings.stateDir,'owners.json'),source.decl.owner,{id:source.soulId,soulName:source.agent,path:source.soulDir});
     descriptor.acceptedNodes=acceptedNodes(descriptor.acceptedView);
     save(file,descriptor);
-    save(join(dir,'status.json'),{version:1,captured:{notes:[],threads:{},inputs:[]},processed:[],delivered:{},accepted:{},retired:false,auto:true,activeRun:null,...status});
+    save(join(dir,'status.json'),{version:1,captured:{notes:[],threads:{},inputs:[]},processed:[],delivered:{},accepted:{},retired:false,activeRun:null,...status});
     if(marker) save(markerPath(source.home),{version:1,id:source.id,source:file});
   } catch(e) {
     // Until the pointer is durable no capture or schedule can reference these
@@ -332,61 +335,115 @@ export function input(source,id) {
   const value=readJSON(join(dirname(source.file),'inputs',`${id}.json`));
   if(hash(value)!==id) fail('E_INPUT','durable evidence hash mismatch');return value;
 }
-/** Take a drained, retired source's job out of the kernel scheduler. The job is
- *  first switched off, then removed: the definition it carried is kept as
- *  evidence in this source's own schedule.json, so nothing about the run is
- *  lost, and `oats schedule list` stops accumulating dead okf-<id> rows. A job
- *  that is still running (or has unresolved effects) stays disabled and is
- *  removed on the worker's next settle. Idempotent; a scheduler failure is
- *  recorded, never thrown — the evidence is already safe. */
-/** okf 4.0.1 #6: the switch for an already registered source, re-read now: the
- *  deployment setting AND the soul's opt-out (the current OATS_SOUL the kernel
- *  hands run-source/retire, else the soul directory recorded at registration). */
-export function sourceSwitch(source) {
-  const current = process.env.OATS_SOUL && fs.existsSync(process.env.OATS_SOUL) ? process.env.OATS_SOUL : null;
-  return harvestSwitch({ settings: settings(), soulDir: current || source.soulDir || undefined });
+/** The most this process waits for the deployment's current switch. */
+const CONSENT_READ_MS = 20000;
+/** The kernel dispatches an instance home's commands and hooks with the
+ *  settings captured at its spawn (OATS_INSTANCE_HOME or OATS_HOME, else the
+ *  home enclosing the working directory, as the kernel finds it). */
+function homeInvocation() {
+  const named = process.env.OATS_INSTANCE_HOME || process.env.OATS_HOME;
+  if (named) return resolve(named);
+  for (let d = resolve(process.cwd()); ; d = dirname(d)) {
+    if (basename(dirname(d)) === 'instances') { try { if (readJSON(join(d, 'instance.json')).instance === basename(d)) return d; } catch { /* not a home */ } }
+    if (dirname(d) === d) return null;
+  }
 }
-/** Retire a registered source whose harvest is now off: no final capture; the
- *  inputs already in custody stay; the schedule is settled as for any retire. */
+/** okf 4.2.0 (#55): the deployment a source's `oats` calls run in (the
+ *  harvester spawn, its session start, the live consent read, every printed
+ *  operator command). Never source.context: a source spawned with an external
+ *  --repo keeps that repository as its context, and the kernel resolves no
+ *  deployment from there. A captured source's frozen execution binding names
+ *  its deployment, and nothing ambient replaces it. Otherwise the kernel's
+ *  dispatch names it: OATS_WORKSPACE (hooks), else OATS_TEAM_SCOPE (command
+ *  dispatch). Neither, a relative one, or two that disagree is a refusal,
+ *  never a guess from the repository or a home. */
+export function sourceDeployment(source, env = process.env) {
+  if (source?.executionBinding) return source.executionBinding.deployment;
+  const named = [['OATS_WORKSPACE', env.OATS_WORKSPACE], ['OATS_TEAM_SCOPE', env.OATS_TEAM_SCOPE]].filter(([, v]) => typeof v === 'string' && v);
+  const how = 'run it through the kernel: from the deployment with --soul <soul>, or from the instance home; the source repository is never taken for the deployment';
+  if (!named.length) fail('E_DEPLOYMENT_SCOPE', `oats.okf needs the deployment the kernel dispatched it in (OATS_WORKSPACE or OATS_TEAM_SCOPE), and none was given: ${how}`);
+  const real = named.map(([k, v]) => {
+    if (resolve(v) !== v) fail('E_DEPLOYMENT_SCOPE', `${k} is not an absolute deployment path: ${how}`);
+    try { return fs.realpathSync(v); } catch { return fail('E_DEPLOYMENT_SCOPE', `${k} names no existing deployment (${v}): ${how}`); }
+  });
+  if (new Set(real).size > 1) fail('E_DEPLOYMENT_SCOPE', `OATS_WORKSPACE (${real[0]}) and OATS_TEAM_SCOPE (${real[1]}) name different deployments: ${how}`);
+  return real[0];
+}
+/** okf 4.0.1 #6, 4.2.0: the switch for an already registered source, as the
+ *  deployment holds it NOW for THIS source's soul, AND that soul's absolute
+ *  opt-out. It is always read from the deployment, by the provider's own
+ *  deployment-scoped view (`oats okf harvest-status --soul <source.agent>`
+ *  from the source's deployment, without this process's identity or
+ *  settings), never from this process's own: an instance home's settings and
+ *  soul copy are its spawn's; an operator command's are those of whichever
+ *  soul it was dispatched as, which need not be the source's; and a long
+ *  detached delivery's are those it was dispatched with. Its rows are
+ *  authoritative: the soul's opt-out as the deployment resolves the source's
+ *  soul now (never a frozen soul copy).
+ *  An explicit spawn override for this source (the kernel's origin kind
+ *  spawn; a host value captured at spawn is none) stands in for the
+ *  deployment's own switch for a first batch (a checkpoint, the retire hook)
+ *  taken in the source's own home: it never skips the read, and never
+ *  overrides the soul's opt-out.
+ *  Consent that is not known (the read fails, times out or is malformed, or
+ *  the soul's opt-out cannot be read while the switch would be on) is
+ *  E_HARVEST_CONSENT_UNKNOWN, never a confirmed off: nothing is captured or
+ *  started, and a retirement is refused. */
+export function sourceSwitch(source, { firstBatch = false, deadline } = {}) {
+  const q = v => /^[\w@%+=:,./-]+$/.test(String(v)) ? String(v) : quote(v);
+  const deployment = sourceDeployment(source), view = `cd ${q(deployment)} && oats okf harvest-status --soul ${q(source.agent)} --json`;
+  const unknown = why => fail('E_HARVEST_CONSENT_UNKNOWN', `the deployment's current harvest consent for soul ${source.agent} is not known (${why}), and unknown is not off: nothing was captured or started, and the source stays as it is. Check it: ${view}`);
+  const home = homeInvocation();
+  let live;
+  try {
+    const timeout = deadline === undefined ? CONSENT_READ_MS : Math.min(CONSENT_READ_MS, deadline - Date.now());
+    if (timeout <= 0) fail('E_DEADLINE', 'this invocation\'s time budget is spent');
+    live = oats(['okf', 'harvest-status', '--soul', source.agent, '--json'], deployment, { timeout, env: { ...cleanEnv(), PWD: deployment } });
+  } catch (e) {
+    unknown(`the read failed: ${e.code || 'E_OKF'}: ${redactUrls(e.message)}`);
+  }
+  const soul = Array.isArray(live?.rows) ? live.rows.find(row => row?.layer === 'soul') : undefined;
+  if (!['on', 'off', 'unknown'].includes(live?.harvest) || typeof live.reason !== 'string' || !soul || typeof soul.readable !== 'boolean' || ![null, 'on', 'off'].includes(soul.value)) unknown('the deployment\'s harvest-status answered no switch');
+  if (live.harvest === 'unknown' || !soul.readable) unknown(live.reason);
+  const answer = (effective, reason, consent) => ({ effective, reason, consent, rows: live.rows, warnings: live.warnings || [] });
+  const real = p => { try { return fs.realpathSync(p); } catch { return resolve(p); } };
+  if (home && firstBatch && real(home) === real(source.home) && parseOrigins()['/harvest']?.kind === 'spawn') {
+    if (settings().harvest !== 'on') return answer('off', 'this source\'s spawn switched harvest off for it', 'spawn-override');
+    if (soul.value === 'off') return answer('off', 'the soul opts out (knowledge: { harvest: off }), which no override or deployment can switch back on', 'spawn-override');
+    if (soul.value === 'on') return answer('off', `${live.reason}`, 'spawn-override');
+    return answer('on', 'an explicit spawn override for this source admits its first batch, and the soul does not opt out', 'spawn-override');
+  }
+  return live.harvest === 'on' ? answer('on', 'the deployment switches harvest on now and the soul does not opt out', 'deployment')
+    : answer('off', `the deployment's current switch is off for soul ${source.agent}: ${live.reason}`, 'deployment');
+}
+/** Retire a registered source whose harvest is now off: no final capture and
+ *  no new drain; the inputs already in custody stay. */
 export function retireHarvestOff(source, sw) {
   updateStatus(source, current => {
     current.retired = true; current.retiredAt = new Date().toISOString(); current.harvestOff = { reason: sw.reason, at: current.retiredAt };
-    // As a final capture would: the schedule stays only while earlier inputs await processing.
-    current.auto = current.auto && !current.captured.inputs.every(id => current.processed.includes(id));
   });
-  return { retired: true, reason: 'harvest-off', switch: sw.reason, source: source.file, schedule: settleRetiredSchedule(source) };
+  return { retired: true, reason: 'harvest-off', switch: sw.reason, source: source.file };
 }
-export function settleRetiredSchedule(source) {
-  const status=loadStatus(source);
-  if(status.schedule?.removed===true) return {status:'already-removed',id:status.schedule.id};
-  if(!status.retired || status.auto || status.schedule?.id===undefined) return {status:'kept'};
-  const id=status.schedule.id;
-  const mark=(patch)=>updateStatus(source,current=>{current.schedule={...current.schedule,...patch};});
-  try {
-    if(status.schedule.settled!==true) {
-      oats(['schedule','disable',id,'--dir',source.context,'--json'],source.context);
-      mark({settled:true,settledAt:new Date().toISOString(),settleError:undefined});
-    }
-  } catch(e) {
-    if(e.code!=='E_SCHEDULE_UNKNOWN') {mark({settled:false,settleError:e.message});return {status:'disable-failed',id};}
-  }
-  try {
-    oats(['schedule','remove',id,'--dir',source.context,'--json'],source.context);
-    mark({removed:true,removedAt:new Date().toISOString(),removeError:undefined});
-    return {status:'removed',id};
-  } catch(e) {
-    if(e.code==='E_SCHEDULE_UNKNOWN') {mark({removed:true,removedAt:new Date().toISOString(),removeError:undefined});return {status:'already-removed',id};}
-    mark({removed:false,removeError:e.message});
-    return {status:e.code==='E_SCHEDULE_RUNNING'?'disabled-pending-removal':'remove-failed',id};
-  }
+/** Capture the source's notes and session into custody. `deadline` (epoch ms)
+ *  is the caller's ONE invocation budget: every native call below gets what
+ *  is left of it, never a fresh timeout of its own. A busy capture lock is
+ *  E_LOCKED at once (another capture is in progress): the caller defers, and
+ *  a final capture is then simply not certified. */
+export function capture(source,{final=false,deadlineMs=85000,deadline=Date.now()+deadlineMs}={}) {
+  // A busy capture lock is marked captureBusy; an E_LOCKED from inside the
+  // capture (its status writes) is not another capture.
+  let entered=false;
+  try {return captureLocked(source,{final,deadline},()=>{entered=true;});}
+  catch(e) {if(!entered && e.code==='E_LOCKED') e.captureBusy=true;throw e;}
 }
-export function capture(source,{final=false,deadlineMs=85000}={}) {
+function captureLocked(source,{final,deadline},enter) {
   return withLock(join(dirname(source.file),'capture.lock'),()=>{
+    enter();
     const status=loadStatus(source);
     if(status.retired) return {status:'complete',complete:true,retired:true};
     if(!fs.existsSync(markerPath(source.home))) fail('E_SOURCE','source home gone without final capture; existing evidence is retained');
     if(homeSource(source.home).id!==source.id) fail('E_SOURCE','source name reused');
-    const start=Date.now(); const meta=fs.existsSync(join(source.home,'instance.json'))?readJSON(join(source.home,'instance.json')):{};
+    const meta=fs.existsSync(join(source.home,'instance.json'))?readJSON(join(source.home,'instance.json')):{};
     const noLaunch=meta.launched!==true;status.launchObserved=!noLaunch;
     // Notes AND record, every pass. Note content versions remain captured even
     // when the live file is rewritten while a worker is judging a prior version.
@@ -400,20 +457,20 @@ export function capture(source,{final=false,deadlineMs=85000}={}) {
     }
     let report;
     try {
-      report=oats(['capture','--home',source.home,'--quiet'],source.context,{native:true,timeout:Math.min(deadlineMs,60000)});
+      const remainingTime=()=>{
+        const remaining=deadline-Date.now();
+        if(remaining<=0) fail('E_CAPTURE','capture deadline: backlog preserved; retire must retry');
+        return remaining;
+      };
+      report=oats(['capture','--home',source.home,'--quiet'],source.context,{native:true,timeout:Math.min(remainingTime(),60000)});
       if(!Array.isArray(report.sessions)) fail('E_CAPTURE','capture response has no sessions');
       for(const session of report.sessions) {
         if(!session.thread || !session.lastTurnId) continue;
         let after=status.captured.threads[session.thread] || null;
         while(after!==session.lastTurnId) {
-          if(Date.now()-start>deadlineMs) fail('E_CAPTURE','capture deadline: backlog preserved; retire must retry');
+          remainingTime();
           const args=['recall','--thread',session.thread,'--until',session.lastTurnId,'--limit','60','--json','--ids-only'];
           if(after) args.push('--after',after);
-          const remainingTime=()=>{
-            const remaining=deadlineMs-(Date.now()-start);
-            if(remaining<=0) fail('E_CAPTURE','capture deadline: backlog preserved; retire must retry');
-            return Math.max(1000,remaining);
-          };
           let plan;
           try { plan=oats(args,source.context,{native:true,timeout:remainingTime()}); }
           catch(e) { if(after && /--after: no turn/.test(e.message)) {after=null;continue;} throw e; }
@@ -452,56 +509,13 @@ export function capture(source,{final=false,deadlineMs=85000}={}) {
       }
       status.lastCapture={status:report.status,complete:report.complete===true,ignored:report.ignored||0,at:new Date().toISOString()};
       if(report.complete!==true) fail('E_CAPTURE',`capture ${report.status || 'uncertified'}: retain source and retry`);
-      if(final) {
-        status.retired=true;status.retiredAt=new Date().toISOString();
-        // A retired source whose every captured input is already processed has
-        // no further work: its schedule is switched off and removed from the
-        // kernel scheduler (settleRetiredSchedule); the definition stays as
-        // evidence in this source's schedule.json. Anything still pending keeps
-        // the job enabled until the worker drains it (see worker.mjs).
-        const drained=status.captured.inputs.every(id=>status.processed.includes(id));
-        status.auto=status.auto && !noLaunch && !drained;
-      }
+      // The retire hook hands the final input to a drain (worker.mjs
+      // retireDrain, which records it with recordDrain); capture itself only
+      // certifies custody.
+      if(final) {status.retired=true;status.retiredAt=new Date().toISOString();}
       saveCapture(source,status);return {...status.lastCapture,inputs:status.captured.inputs.length};
     } catch(e) {
       status.lastCapture={status:'incomplete',complete:false,error:e.message,at:new Date().toISOString()}; saveCapture(source,status);throw e;
     }
   });
-}
-export function scheduleSource(source) {
-  // A retired, drained source whose job was already taken out of the scheduler
-  // has nothing left to run: do not recreate the job (retire is re-entrant).
-  const current=loadStatus(source);
-  if(current.retired && current.schedule?.removed===true) return current.schedule.result;
-  const captured=source.registration?.schemaVersion===1 && source.registration.kind==='captured';
-  const argv=captured?['oats','okf','run-source','--source',source.file,'--deployment',source.executionBinding.deployment,'--resolution',source.executionBinding.resolution.id,'--json']
-    :['oats','okf','run-source','--source',source.file,'--soul',source.agent,'--json'];
-  const spec={id:`okf-${source.id}`,kind:'command',enabled:current.auto,cron:source.bindings.cron,tz:source.bindings.tz,cwd:source.context,argv,
-    ...(captured?{definitionVersion:2,recurrencePolicy:'capture',responsibleHuman:source.responsibleHuman}: {})};
-  const file=join(dirname(source.file),'schedule.json');
-  try {
-    save(file,spec);
-    let result;
-    try {result=oats(['schedule','add',spec.id,'--file',file,'--dir',source.context,'--json'],source.context);}
-    catch(e) {
-      // Never overwrite a colliding job or re-enable an operator-disabled job.
-      // Retry after an uncertain add must verify the actual definition, not a
-      // local receipt. A deleted definition is recreated by the add above.
-      if(e.code!=='E_SCHEDULE_EXISTS') throw e;
-      result=oats(['schedule','show',spec.id,'--dir',source.context,'--json'],source.context);
-    }
-    const actual=result?.schedule;
-    if(!actual || typeof actual.enabled!=='boolean' || ['id','kind','cron','tz','cwd','argv','definitionVersion','recurrencePolicy'].some(k=>JSON.stringify(actual[k])!==JSON.stringify(spec[k]))) fail('E_SCHEDULE','source schedule definition differs; inspect and repair explicitly');
-    if(captured) {
-      const responsible=actual.execution && Object.hasOwn(actual.execution,'responsibleHuman')?actual.execution.responsibleHuman
-        :Object.hasOwn(actual,'responsibleHuman')?actual.responsibleHuman:undefined;
-      if(!sameJson(responsible,spec.responsibleHuman)) fail('E_SCHEDULE','captured source schedule responsible human differs');
-      if(actual.execution && (actual.execution.deployment!==source.executionBinding.deployment || actual.execution.resolution?.id!==source.executionBinding.resolution.id)) fail('E_SCHEDULE','captured source schedule execution binding differs');
-    }
-    // A job already settled off for a retired, drained source stays settled:
-    // registration re-verifies the definition but does not forget the switch-off.
-    updateStatus(source,status=>{const settled=status.schedule?.settled===true?{settled:true,settledAt:status.schedule.settledAt}:{};status.schedule={id:spec.id,status:'ready',result,...settled};});return result;
-  } catch(e) {
-    updateStatus(source,status=>{status.schedule={...(status.schedule || {}),id:spec.id,status:'failed',error:e.message};});throw e;
-  }
 }

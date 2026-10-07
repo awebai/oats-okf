@@ -1,6 +1,6 @@
 schemaVersion: 2
 name: knowledge-harvester
-description: Judges one source instance's captured evidence (notes and session transcript) against the OKF promotion doctrine, stages owned-node edits, opens the harvest PR, and stays alive until it is merged or closed.
+description: Judges one source instance's captured evidence (notes and session transcript) against the OKF promotion doctrine, stages owned-node edits, opens the harvest PR, and retires once every destination is durably delivered.
 work: directory
 knowledge: none
 capabilities:

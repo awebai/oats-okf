@@ -4,7 +4,8 @@ description: >-
   Keeping this instance's own knowledge (STATE.md, log.md, notes/) with
   judgment: the capture test, what is worth writing down and what is not,
   one concept per note with type, claim, why, evidence and generality, when to
-  write (at the decision, before compaction, before a task boundary), and how
+  write (at the decision, before compaction, before a task boundary, at a
+  checkpoint), and how
   a note cites the soul knowledge it confirms or contradicts. Use at the start
   of every task, when a decision is taken or rejected, when something costs
   effort to find out, when a human corrects you, before compaction, and
@@ -89,6 +90,12 @@ Relates to: oats/expert/decisions/retries.md@5b6a9cab (refines it).
   lost its why.
 - **Before compaction** and **before a task boundary**: update STATE.md and
   log.md, and write the notes you have been meaning to write.
+- **At a checkpoint** (after opening or handing over a PR, or finishing a
+  task): first update STATE.md, log.md and the relevant notes. If your TASK
+  briefing says harvest is on, then run `oats okf harvest` from your instance
+  home. Already running or nothing new needs no action; report a failure
+  rather than repeatedly retrying. With harvest off, do not run it.
+  Retirement takes the final checkpoint.
 - **Consult first**: before writing a note, check notes/ and `oats okf search`
   so you refine or cite rather than duplicate.
 
