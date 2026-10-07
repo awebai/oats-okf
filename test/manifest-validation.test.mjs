@@ -130,7 +130,7 @@ test("validator rejects a duplicate capability, a foreign capability id, a versi
   const g = fixture(t);
   g.manifest.capability = "acme.other"; g.manifest.version = "9.9.9"; g.manifest.agents = ["agents/x"];
   const r = rejected(g, /must be oats\.okf or oats\.okf-<role>/);
-  assert.match(r.stderr, /must match the package version 4\.1\.1/); assert.match(r.stderr, /capability agents are replaced by package souls/);
+  assert.match(r.stderr, /must match the package version 4\.1\.2/); assert.match(r.stderr, /capability agents are replaced by package souls/);
 });
 
 test("validator checks package souls and trigger templates", (t) => {
