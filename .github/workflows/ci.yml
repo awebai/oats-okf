@@ -31,9 +31,44 @@ jobs:
       - name: Report default coverage limits (not a consumer probe)
         run: |
           echo "npm test covers the exported v2 payload, schema parity/mutations and disposable Git/directory custody."
-          echo "SKIPPED by default: public CLI scaffold, native capture/scheduler and real home-dispatch probes (9 opt-in tests)."
+          echo "SKIPPED by default: public CLI scaffold, native capture/scheduler, real home-dispatch and external-repo probes (10 opt-in tests)."
+          echo "The separate external-repo-041 job runs the external-repo regression on released OATS 0.41.0."
           echo "NOT COVERED: OKF acquire/lock/restore/trust, remote GitHub PRs or fresh real-model learning."
           echo "Use workflow_dispatch with an exact published consumer_version for the optional public CLI job; see SCHEMA-STATUS.md."
+
+  external-repo-041:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The negative control archives the released v4.1.1 payload from history.
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install the released OATS 0.41.0 kernel in a disposable prefix
+        run: |
+          npm install --prefix "$RUNNER_TEMP/okf-external-kernel" --ignore-scripts --no-audit --no-fund --package-lock=false @awebai/oats@0.41.0
+          echo "OATS_OKF_EXTERNAL_CLI=$RUNNER_TEMP/okf-external-kernel/node_modules/@awebai/oats/bin/oats.mjs" >> "$GITHUB_ENV"
+      - name: Released v4.1.1 negative control must reproduce the external-repo scope defect
+        run: |
+          mkdir -p "$RUNNER_TEMP/okf-external-baseline"
+          git archive e1d604f70c5e4cdc39602095f139383e61f69323 oats-package | tar -x -C "$RUNNER_TEMP/okf-external-baseline"
+          if OATS_OKF_EXTERNAL_PAYLOAD="$RUNNER_TEMP/okf-external-baseline/oats-package" node --test --test-reporter=spec test/external-repo-consumer.test.mjs > "$RUNNER_TEMP/okf-external-baseline.log" 2>&1; then
+            echo 'Baseline unexpectedly passed'; exit 1
+          fi
+          grep -F 'schedules belong to a workspace deployment' "$RUNNER_TEMP/okf-external-baseline.log"
+      - name: Real external-repo spawn, checkpoint to the real harvester spawn, and retire
+        shell: bash
+        run: |
+          set -o pipefail
+          node "$OATS_OKF_EXTERNAL_CLI" --version
+          node --test --test-reporter=spec test/external-repo-consumer.test.mjs | tee "$RUNNER_TEMP/okf-external-result.txt"
+          grep -E '^ℹ skipped 0$' "$RUNNER_TEMP/okf-external-result.txt"
+      - name: Evidence boundary
+        run: |
+          echo 'Real released 0.41.0 CLI; isolated file-Git workspace and external clone; provider payload from this exact checkout.'
+          echo 'The harvester is spawned for real with --no-launch; no model, host timer, scheduler job, messaging cleanup, GitHub publication or production deployment.'
 
   public-consumer:
     if: github.event_name == 'workflow_dispatch' && inputs.consumer_version != ''

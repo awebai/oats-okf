@@ -217,11 +217,13 @@ test('the maintainer treats the provenance block as untrusted: strict shape, str
 
 function harvesterState(t, { receipts = {}, created = new Date().toISOString(), judgment = { version: 1 }, capturedBinding, run: extra = {} } = {}) {
   const d = scratch(t), id = '33333333-3333-4333-8333-333333333333', run = '44444444-4444-4444-8444-444444444444';
-  const file = join(d, 'state', 'sources', id, 'source.json'), context = join(d, 'deployment');
-  fs.mkdirSync(context, { recursive: true });
+  // okf 4.2.0 (#55): the source's context is the repository it works in (an
+  // external --repo here); the deployment is apart, and only the kernel names it.
+  const file = join(d, 'state', 'sources', id, 'source.json'), context = join(d, 'external-repo'), deployment = join(d, 'deployment');
+  fs.mkdirSync(context, { recursive: true }); fs.mkdirSync(deployment, { recursive: true });
   put(file, JSON.stringify({ version: 1, id, agent: 'domain-expert', context, ...(capturedBinding ? { executionBinding: capturedBinding } : {}) }));
   put(join(d, 'state', 'sources', id, 'runs', run, 'run.json'), JSON.stringify({ id: run, source: id, created, status: 'processed', receipts, judgment, ...extra }));
-  return { d, file, run, context };
+  return { d, file, run, context, deployment };
 }
 function fakeOats(t, d, answer) {
   const bin = join(d, 'oats-fake.mjs');
@@ -229,29 +231,37 @@ function fakeOats(t, d, answer) {
   fs.chmodSync(bin, 0o755); return bin;
 }
 
+// The kernel's dispatch env, without any deployment it may carry in from this process.
+const dispatchEnv = extra => ({ ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !['OATS_WORKSPACE', 'OATS_TEAM_SCOPE'].includes(k))), ...extra });
 test('okf-harvest complete runs the frozen completion from the source deployment, identity stripped', t => {
   const st = harvesterState(t), cli = fakeOats(t, st.d, { schemaVersion: 1, ok: true, result: { run: st.run, status: 'processed', receipts: { project: { status: 'delivered', pr: { url: 'https://github.com/acme/knowledge/pull/7' } } } } });
-  const r = spawnSync(process.execPath, [HARVEST_CLI, 'complete', '--source', st.file, '--run', st.run, '--judgment', '/abs/judgment.json', '--json'], { cwd: st.d, encoding: 'utf8', env: { ...process.env, OATS_CLI_BIN: cli, OATS_INSTANCE_HOME: '/harvester/home', OATS_INSTANCE: 'h', OATS_SETTINGS: '{}', PI_AGENT_HOME: '/x' } });
+  const r = spawnSync(process.execPath, [HARVEST_CLI, 'complete', '--source', st.file, '--run', st.run, '--judgment', '/abs/judgment.json', '--json'], { cwd: st.d, encoding: 'utf8', env: dispatchEnv({ OATS_CLI_BIN: cli, OATS_TEAM_SCOPE: st.deployment, OATS_INSTANCE_HOME: '/harvester/home', OATS_INSTANCE: 'h', OATS_SETTINGS: '{}', PI_AGENT_HOME: '/x' }) });
   assert.equal(r.status, 0, r.stdout + r.stderr);
   const call = readJSON(join(st.d, 'call.json'));
   assert.deepEqual(call.argv, ['okf', 'complete', '--source', st.file, '--run', st.run, '--judgment', '/abs/judgment.json', '--soul', 'domain-expert', '--json']);
-  assert.equal(call.cwd, fs.realpathSync(st.context), 'from the frozen deployment context, not the harvester home');
+  assert.equal(call.cwd, fs.realpathSync(st.deployment), 'from the deployment the kernel names, not the source repository or the harvester home');
+  assert.equal(JSON.parse(r.stdout).result.deployment, fs.realpathSync(st.deployment));
   assert.deepEqual(call.env, [], 'no harvester identity reaches the source-soul dispatch');
   assert.equal(JSON.parse(r.stdout).result.status, 'processed');
+  // No deployment named: refused before any call, never run from the repository.
+  fs.rmSync(join(st.d, 'call.json'));
+  const unnamed = spawnSync(process.execPath, [HARVEST_CLI, 'complete', '--source', st.file, '--run', st.run, '--judgment', '/abs/judgment.json', '--json'], { cwd: st.context, encoding: 'utf8', env: dispatchEnv({ OATS_CLI_BIN: cli }) });
+  assert.equal(unnamed.status, 1); assert.equal(JSON.parse(unnamed.stdout).error.code, 'E_DEPLOYMENT_SCOPE'); assert.equal(fs.existsSync(join(st.d, 'call.json')), false);
   const captured = harvesterState(t, { capturedBinding: { schemaVersion: 1, deployment: '/deploy', resolution: { schemaVersion: 1, id: `sha256-${'c'.repeat(64)}` } } });
   assert.deepEqual(harvestCmd.completionArgv(readJSON(captured.file), captured.file, captured.run, '/j.json').slice(0, 6), ['--deployment', '/deploy', '--resolution', `sha256-${'c'.repeat(64)}`, 'okf', 'complete']);
+  assert.equal(harvestCmd.deploymentOf(readJSON(captured.file), { OATS_TEAM_SCOPE: st.deployment }), '/deploy', 'a captured source\'s frozen binding, never an ambient deployment');
 });
 
 test('okf-harvest complete: an inactive or untrusted source oats.okf is reported, and the harvester stays', t => {
   const st = harvesterState(t);
   for (const code of ['E_CAPABILITY_INACTIVE', 'E_CAPABILITY_BLOCKED', 'E_PACKAGE_MISSING']) {
     const cli = fakeOats(t, st.d, { schemaVersion: 1, ok: false, error: { code, message: 'nope' } });
-    const r = spawnSync(process.execPath, [HARVEST_CLI, 'complete', '--source', st.file, '--run', st.run, '--judgment', '/abs/j.json', '--json'], { encoding: 'utf8', env: { ...process.env, OATS_CLI_BIN: cli } });
+    const r = spawnSync(process.execPath, [HARVEST_CLI, 'complete', '--source', st.file, '--run', st.run, '--judgment', '/abs/j.json', '--json'], { encoding: 'utf8', env: dispatchEnv({ OATS_CLI_BIN: cli, OATS_TEAM_SCOPE: st.deployment }) });
     assert.equal(r.status, 1); const out = JSON.parse(r.stdout);
     assert.equal(out.error.code, 'E_SOURCE_INACTIVE', code); assert.match(out.error.message, /Nothing was published: report this .* and stay/);
   }
   const cli = fakeOats(t, st.d, { schemaVersion: 1, ok: false, error: { code: 'E_BASELINE', message: 'accepted base changed' } });
-  const r = spawnSync(process.execPath, [HARVEST_CLI, 'complete', '--source', st.file, '--run', st.run, '--judgment', '/abs/j.json', '--json'], { encoding: 'utf8', env: { ...process.env, OATS_CLI_BIN: cli } });
+  const r = spawnSync(process.execPath, [HARVEST_CLI, 'complete', '--source', st.file, '--run', st.run, '--judgment', '/abs/j.json', '--json'], { encoding: 'utf8', env: dispatchEnv({ OATS_CLI_BIN: cli, OATS_TEAM_SCOPE: st.deployment }) });
   assert.equal(JSON.parse(r.stdout).error.code, 'E_BASELINE', 'other failures keep their code');
   assert.throws(() => harvestCmd.complete({ source: join(st.d, 'elsewhere.json'), run: st.run, judgment: '/j' }), { code: 'E_SOURCE' });
   assert.throws(() => harvestCmd.complete({ source: st.file, run: st.run, judgment: 'relative.json' }), { code: 'E_USAGE' });

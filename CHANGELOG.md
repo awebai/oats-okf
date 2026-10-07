@@ -3,7 +3,25 @@
 ## 4.2.0 — 2026-10-06
 
 Checkpoint harvest (#49); the harvester retires after delivery (#47). #46 and
-#48 are superseded. See the README's "Upgrading from 4.1".
+#48 are superseded. See the README's "Upgrading from 4.1". The external
+`--repo` fix of #55 (the unreleased 4.1.2, PR #56) is in this release instead;
+there is no 4.1.2.
+
+### Fixed
+
+- **External `--repo` sources run their `oats` calls in the deployment**
+  (#55). Such a source keeps the repository as its context; the harvester
+  spawn and its session start, the live consent read, every printed operator
+  and completion command, and the harvester's `okf-harvest complete` now run
+  in the deployment the kernel names (`OATS_WORKSPACE`, else
+  `OATS_TEAM_SCOPE`), or a captured source's frozen execution binding.
+  Neither named, or two different ones, is `E_DEPLOYMENT_SCOPE` before any
+  effect; nothing searches for a deployment from the repository. Frozen
+  descriptors are unchanged. The floor stays **OATS >=0.29.0**: CI's
+  `external-repo-041` job runs a real external-`--repo` checkpoint to a real
+  harvester spawn and retirement on released OATS 0.41.0, with the released
+  v4.1.1 payload as a failing negative control. 4.1.2's scheduler scoping is
+  not carried over: 4.2 manages no scheduler job.
 
 ### Changed
 

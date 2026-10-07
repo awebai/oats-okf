@@ -15,7 +15,7 @@ const CLI=join(CAP,'bin/oats-okf.mjs');
 const mod=p=>import(new URL(`../oats-package/capabilities/oats-okf/lib/${p}.mjs`,import.meta.url));
 const {loadBindings,metadata,validateBindings,validateDeclaration}=await mod('config');
 const {tree,save,readJSON,atomic,digest,withLock,baseLock:unused,quote,command,hash}=await mod('io');
-const {register,registerCaptured,capture,input,loadStatus,loadSource,saveStatus,pinOwner,sourceSwitch}=await mod('sources');
+const {register,registerCaptured,capture,input,loadStatus,loadSource,saveStatus,pinOwner,sourceSwitch,sourceDeployment}=await mod('sources');
 const {cat:consultCat,acceptedResolution}=await mod('consult');
 /** An okf 3.0.0 consult read of one accepted file (no local view). */
 const readAccepted=(s,path='/expert/index.md',alias=Object.keys(s.bindings.bases)[0])=>consultCat(s,{base:alias},[path]).result;
@@ -115,7 +115,9 @@ else process.exit(44);
   put(join(soul,'AGENTS.md'),'# Expert\nOwn domain rationale and hard-won limitations.\n');
   put(join(soul,'soul.yaml'),'name: source\nwork: directory\n');save(join(soul,'okf.json'),{version:1,owner:'owner-1',owns:['project/expert'],reads:['project/peer']});
   fs.symlinkSync(soul,join(home,'soul'));save(join(home,'instance.json'),{instance:'source-one',agent:'source',repo:context,work:'directory',launched:true});
-  Object.assign(process.env,{OATS_HOME:home,OATS_INSTANCE_HOME:home,OATS_INSTANCE:'source-one',OATS_AGENT:'source',OATS_SOUL:soul,OATS_CONTEXT:context});
+  Object.assign(process.env,{OATS_HOME:home,OATS_INSTANCE_HOME:home,OATS_INSTANCE:'source-one',OATS_AGENT:'source',OATS_SOUL:soul,OATS_CONTEXT:context,
+    // The deployment, as the kernel's command dispatch names it (OATS_TEAM_SCOPE).
+    OATS_TEAM_SCOPE:context});
   const source=()=>register(home);
   const cli=(cmd,args=[],env={})=>{const r=spawnSync(process.execPath,[CLI,cmd,...args,'--json'],{cwd:home,env:{...process.env,...env},encoding:'utf8',timeout:30000,maxBuffer:16*1024*1024});let out;try{out=JSON.parse(r.stdout);}catch{}return {...r,out};};
   return {dir,home,soul,bindings,bindingFile,repo,source,cli,calls,context,base:bindings.bases.project};
@@ -3154,4 +3156,45 @@ test('4.2.0 no oats.okf code manages a scheduler job; the review trigger and its
   assert.ok(JSON.parse(fs.readFileSync(join(ROOT,'oats-package/triggers/harvest-review.json'),'utf8')),'the harvest-review trigger template stays');
   const skill=fs.readFileSync(join(ROOT,'oats-package/capabilities/oats-okf-maintenance/skills/okf-trigger-setup/SKILL.md'),'utf8');
   assert.match(skill,/oats schedule host install/);assert.match(skill,/polls PR triggers[\s\S]*for this review trigger only[\s\S]*harvest\s+needs no timer/);
+});
+
+test('4.2.0 (#55) the deployment of a source\'s oats calls: a captured source\'s frozen binding, else the kernel\'s dispatch, never a guess',()=>{
+  const dir=fs.realpathSync(fs.mkdtempSync(join(tmpdir(),'okf-deployment-')));
+  try {
+    const dep=join(dir,'deployment'),other=join(dir,'other'),link=join(dir,'link');fs.mkdirSync(dep);fs.mkdirSync(other);fs.symlinkSync(dep,link);
+    const home={agent:'source',context:join(dir,'external-repo')};
+    assert.equal(sourceDeployment(home,{OATS_WORKSPACE:dep}),dep,'a hook: OATS_WORKSPACE');
+    assert.equal(sourceDeployment(home,{OATS_TEAM_SCOPE:dep}),dep,'a command dispatch: OATS_TEAM_SCOPE');
+    assert.equal(sourceDeployment(home,{OATS_WORKSPACE:link,OATS_TEAM_SCOPE:dep}),dep,'both naming one deployment');
+    for(const env of [{},{OATS_WORKSPACE:'',OATS_TEAM_SCOPE:''},{OATS_TEAM_SCOPE:'relative/deployment'},{OATS_TEAM_SCOPE:join(dir,'missing')},{OATS_WORKSPACE:dep,OATS_TEAM_SCOPE:other}])
+      assert.throws(()=>sourceDeployment(home,env),{code:'E_DEPLOYMENT_SCOPE',message:/the source repository is never taken for the deployment/},JSON.stringify(env));
+    const captured={...home,executionBinding:{schemaVersion:1,deployment:'/frozen/deployment',resolution:{schemaVersion:1,id:`sha256-${'a'.repeat(64)}`}}};
+    assert.equal(sourceDeployment(captured,{OATS_TEAM_SCOPE:other}),'/frozen/deployment','nothing ambient replaces a captured source\'s binding');
+  } finally {fs.rmSync(dir,{recursive:true,force:true});}
+});
+test('4.2.0 (#55) an external --repo source runs its checkpoint, harvester spawn, launch, consent read and retire in the deployment; its repository context and descriptor stay',t=>{
+  const f=fixture(t),external=join(f.dir,'external-repo');fs.mkdirSync(external);
+  save(join(f.home,'instance.json'),{instance:'source-one',agent:'source',repo:external,work:'directory',launched:true});process.env.OATS_CONTEXT=external;
+  const s=f.source(),bytes=fs.readFileSync(s.file);assert.equal(s.context,external,'the repository stays the source context');
+  note(f);put(join(f.dir,'sessions-inert'),'');
+  const h=f.cli('harvest');assert.equal(h.status,0,h.stdout+h.stderr);assert.equal(h.out.result.status,'started');assert.equal(h.out.result.launched,true);
+  const calls=callsOf(f),spawn=calls.find(c=>c.a[0]==='spawn' && !c.a.includes('--preview')),start=calls.find(c=>c.a[0]==='session');
+  assert.equal(spawn.a[spawn.a.indexOf('--dir')+1],f.context,'the harvester spawns in the deployment');assert.equal(spawn.cwd,f.context);assert.equal(start.cwd,f.context,'its session starts from the deployment');
+  for(const c of [...calls.filter(c=>c.a[0]!=='capture' && c.a[0]!=='recall'),...consentReads(f)]) assert.notEqual(c.cwd,external,`${c.a.join(' ')} never runs from the repository`);
+  assert.ok(consentReads(f).length>0 && consentReads(f).every(c=>c.cwd===f.context),'the live consent read runs in the deployment');
+  const raw=deploymentCli(f,'run-source',['--source',s.file]);assert.ok(raw.out.error.message.endsWith(`cd ${f.context} && oats okf run-source --source ${s.file} --manual --soul source --json`),raw.out.error.message);
+  // The retire hook: the kernel names the deployment in OATS_WORKSPACE.
+  const r=f.cli('retire',[],{OATS_WORKSPACE:f.context,OATS_TEAM_SCOPE:''});assert.equal(r.status,0,r.stdout+r.stderr);assert.equal(r.out.meta.retired,true);
+  assert.deepEqual(fs.readFileSync(s.file),bytes,'the frozen descriptor is never rewritten');assert.equal(loadSource(s.file).context,external);
+});
+test('4.2.0 (#55) a checkpoint or retire whose deployment is not named, or named twice differently, refuses before any read, capture or spawn',t=>{
+  const f=fixture(t),external=join(f.dir,'external-repo'),other=join(f.dir,'other-deployment');fs.mkdirSync(external);fs.mkdirSync(other);
+  save(join(f.home,'instance.json'),{instance:'source-one',agent:'source',repo:external,work:'directory',launched:true});process.env.OATS_CONTEXT=external;
+  const s=f.source();note(f);const before=JSON.stringify(loadStatus(s));
+  for(const env of [{OATS_TEAM_SCOPE:''},{OATS_WORKSPACE:other}]) {
+    const h=f.cli('harvest',['--no-launch'],env);assert.equal(h.status,1,h.stdout);assert.equal(h.out.error.code,'E_DEPLOYMENT_SCOPE',h.stdout);
+    const r=f.cli('retire',[],env);assert.equal(r.status,1,r.stdout);assert.match(r.out.warning,/E_DEPLOYMENT_SCOPE/);assert.equal(r.out.meta.retired,false);
+  }
+  assert.equal(fs.existsSync(f.calls),false,'no capture, spawn or other oats call');assert.deepEqual(consentReads(f),[],'no consent read');
+  assert.equal(JSON.stringify(loadStatus(s)),before,'custody untouched');assert.ok(fs.existsSync(f.home),'the home is kept');
 });

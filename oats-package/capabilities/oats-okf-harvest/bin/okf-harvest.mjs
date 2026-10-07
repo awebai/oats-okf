@@ -4,7 +4,7 @@
 // cannot import oats.okf's lib), and `complete` runs the source's frozen
 // `oats okf complete` from the source deployment, never from this home.
 import { spawnSync } from 'node:child_process';
-import { readFileSync, lstatSync } from 'node:fs';
+import { readFileSync, lstatSync, realpathSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -63,6 +63,23 @@ export function completionArgv(source, file, run, judgment) {
   }
   return [...tail, '--soul', source.agent, '--json'];
 }
+/** okf 4.2.0 (#55): the deployment the completion runs in, by oats.okf's own
+ *  rule (sourceDeployment; this module cannot import it): a captured
+ *  source's frozen execution binding, else the kernel's dispatch
+ *  (OATS_WORKSPACE, else OATS_TEAM_SCOPE). Never the source's context, which
+ *  is the repository an external --repo source works in. */
+export function deploymentOf(source, env = process.env) {
+  if (source.executionBinding !== undefined) return source.executionBinding.deployment;
+  const named = [['OATS_WORKSPACE', env.OATS_WORKSPACE], ['OATS_TEAM_SCOPE', env.OATS_TEAM_SCOPE]].filter(([, v]) => typeof v === 'string' && v);
+  const how = 'run oats okf-harvest through the kernel, from this harvester\'s home; nothing was published: report this to your operator, and stay';
+  if (!named.length) fail('E_DEPLOYMENT_SCOPE', `the kernel named no deployment (OATS_WORKSPACE or OATS_TEAM_SCOPE): ${how}`);
+  const real = named.map(([k, v]) => {
+    if (resolve(v) !== v) fail('E_DEPLOYMENT_SCOPE', `${k} is not an absolute deployment path: ${how}`);
+    try { return realpathSync(v); } catch { return fail('E_DEPLOYMENT_SCOPE', `${k} names no existing deployment (${v}): ${how}`); }
+  });
+  if (new Set(real).size > 1) fail('E_DEPLOYMENT_SCOPE', `OATS_WORKSPACE (${real[0]}) and OATS_TEAM_SCOPE (${real[1]}) name different deployments: ${how}`);
+  return real[0];
+}
 // A refusal meaning oats.okf cannot run for the source soul in its deployment.
 const INACTIVE = new Set(['E_CAPABILITY_INACTIVE', 'E_CAPABILITY_BLOCKED', 'E_CAPABILITY_MISSING', 'E_PACKAGE_MISSING', 'E_PACKAGE_INTEGRITY', 'E_SOUL_UNKNOWN', 'E_SOUL_DISABLED', 'E_UNKNOWN_COMMAND']);
 export function complete(flags, env = process.env) {
@@ -73,13 +90,13 @@ export function complete(flags, env = process.env) {
   const cli = env.OATS_CLI_BIN;
   if (!cli || !isAbsolute(cli)) fail('E_RUNTIME', 'absolute OATS_CLI_BIN required; never resolve oats on PATH');
   const clean = Object.fromEntries(Object.entries(env).filter(([k]) => !IDENTITY.test(k)));
-  const argv = completionArgv(source, flags.source, flags.run, flags.judgment);
-  const r = spawnSync(cli, argv, { cwd: source.context, env: clean, encoding: 'utf8', timeout: 30 * 60 * 1000, maxBuffer: 16 * 1024 * 1024 });
+  const argv = completionArgv(source, flags.source, flags.run, flags.judgment), deployment = deploymentOf(source, env);
+  const r = spawnSync(cli, argv, { cwd: deployment, env: clean, encoding: 'utf8', timeout: 30 * 60 * 1000, maxBuffer: 16 * 1024 * 1024 });
   let answer; try { answer = JSON.parse(r.stdout); } catch { /* below */ }
-  if (answer?.schemaVersion === 1 && answer.ok === true) return { deployment: source.context, ...answer.result };
+  if (answer?.schemaVersion === 1 && answer.ok === true) return { deployment, ...answer.result };
   const code = answer?.error?.code || 'E_COMPLETE', message = answer?.error?.message || (r.error?.message || r.stderr || `exit ${r.status}`).trim();
-  if (INACTIVE.has(code)) fail('E_SOURCE_INACTIVE', `oats.okf cannot run for source soul ${source.agent} in ${source.context} (${code}: ${message}). Nothing was published: report this to your operator, and stay.`, { cause: code });
-  fail(code, `${message} (completion ran in ${source.context}; keep your home and report)`);
+  if (INACTIVE.has(code)) fail('E_SOURCE_INACTIVE', `oats.okf cannot run for source soul ${source.agent} in ${deployment} (${code}: ${message}). Nothing was published: report this to your operator, and stay.`, { cause: code });
+  fail(code, `${message} (completion ran in ${deployment}; keep your home and report)`);
 }
 /** "7d" | "48h" | "90m" | seconds → milliseconds. */
 export function maxAgeMs(value) {

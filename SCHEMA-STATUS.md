@@ -99,6 +99,13 @@ Three tests skip by default, with explicit Node test skip output:
    the source's own soul's policy. No model is launched. The optional
    public-consumer CI job runs this file alone, before its full suite, and
    fails if it is skipped (it needs the selected kernel at >= 0.43.0).
+5. The external-repo test (`test/external-repo-consumer.test.mjs`, okf 4.2.0,
+   #55) runs only in the default `external-repo-041` CI job, on released
+   OATS 0.41.0 (`OATS_OKF_EXTERNAL_CLI`): a source spawned on an external
+   `--repo`, its checkpoint to a real harvester spawn (`--no-launch`) and its
+   retirement, in the deployment, with no scheduler job and no model. The job
+   first requires the released v4.1.1 payload (`OATS_OKF_EXTERNAL_PAYLOAD`)
+   to fail the same fixture on the kernel's scope refusal.
 
 Native tests use `OATS_OKF_NATIVE_CLI`, falling back to
 `OATS_OKF_CONSUMER_CLI`. All of them run with:

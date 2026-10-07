@@ -348,6 +348,27 @@ function homeInvocation() {
     if (dirname(d) === d) return null;
   }
 }
+/** okf 4.2.0 (#55): the deployment a source's `oats` calls run in (the
+ *  harvester spawn, its session start, the live consent read, every printed
+ *  operator command). Never source.context: a source spawned with an external
+ *  --repo keeps that repository as its context, and the kernel resolves no
+ *  deployment from there. A captured source's frozen execution binding names
+ *  its deployment, and nothing ambient replaces it. Otherwise the kernel's
+ *  dispatch names it: OATS_WORKSPACE (hooks), else OATS_TEAM_SCOPE (command
+ *  dispatch). Neither, a relative one, or two that disagree is a refusal,
+ *  never a guess from the repository or a home. */
+export function sourceDeployment(source, env = process.env) {
+  if (source?.executionBinding) return source.executionBinding.deployment;
+  const named = [['OATS_WORKSPACE', env.OATS_WORKSPACE], ['OATS_TEAM_SCOPE', env.OATS_TEAM_SCOPE]].filter(([, v]) => typeof v === 'string' && v);
+  const how = 'run it through the kernel: from the deployment with --soul <soul>, or from the instance home; the source repository is never taken for the deployment';
+  if (!named.length) fail('E_DEPLOYMENT_SCOPE', `oats.okf needs the deployment the kernel dispatched it in (OATS_WORKSPACE or OATS_TEAM_SCOPE), and none was given: ${how}`);
+  const real = named.map(([k, v]) => {
+    if (resolve(v) !== v) fail('E_DEPLOYMENT_SCOPE', `${k} is not an absolute deployment path: ${how}`);
+    try { return fs.realpathSync(v); } catch { return fail('E_DEPLOYMENT_SCOPE', `${k} names no existing deployment (${v}): ${how}`); }
+  });
+  if (new Set(real).size > 1) fail('E_DEPLOYMENT_SCOPE', `OATS_WORKSPACE (${real[0]}) and OATS_TEAM_SCOPE (${real[1]}) name different deployments: ${how}`);
+  return real[0];
+}
 /** okf 4.0.1 #6, 4.2.0: the switch for an already registered source, as the
  *  deployment holds it NOW for THIS source's soul, AND that soul's absolute
  *  opt-out. It is always read from the deployment, by the provider's own
@@ -370,14 +391,14 @@ function homeInvocation() {
  *  started, and a retirement is refused. */
 export function sourceSwitch(source, { firstBatch = false, deadline } = {}) {
   const q = v => /^[\w@%+=:,./-]+$/.test(String(v)) ? String(v) : quote(v);
-  const view = `cd ${q(source.context)} && oats okf harvest-status --soul ${q(source.agent)} --json`;
+  const deployment = sourceDeployment(source), view = `cd ${q(deployment)} && oats okf harvest-status --soul ${q(source.agent)} --json`;
   const unknown = why => fail('E_HARVEST_CONSENT_UNKNOWN', `the deployment's current harvest consent for soul ${source.agent} is not known (${why}), and unknown is not off: nothing was captured or started, and the source stays as it is. Check it: ${view}`);
   const home = homeInvocation();
   let live;
   try {
     const timeout = deadline === undefined ? CONSENT_READ_MS : Math.min(CONSENT_READ_MS, deadline - Date.now());
     if (timeout <= 0) fail('E_DEADLINE', 'this invocation\'s time budget is spent');
-    live = oats(['okf', 'harvest-status', '--soul', source.agent, '--json'], source.context, { timeout, env: { ...cleanEnv(), PWD: source.context } });
+    live = oats(['okf', 'harvest-status', '--soul', source.agent, '--json'], deployment, { timeout, env: { ...cleanEnv(), PWD: deployment } });
   } catch (e) {
     unknown(`the read failed: ${e.code || 'E_OKF'}: ${redactUrls(e.message)}`);
   }

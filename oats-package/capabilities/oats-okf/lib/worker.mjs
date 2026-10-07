@@ -4,7 +4,7 @@ import { hostname } from 'node:os';
 import { isAbsolute, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { fs, join, dirname, safePath, readJSON, save, atomic, tree, materialize, digest, hash, withLock, withDeadline, oats, command, fail, relPath, quote, pidAlive, redactUrls } from './io.mjs';
-import { loadSource, loadStatus, saveStatus, updateStatus, capture, input, markerPath, homeSource, sourceSwitch } from './sources.mjs';
+import { loadSource, loadStatus, saveStatus, updateStatus, capture, input, markerPath, homeSource, sourceSwitch, sourceDeployment } from './sources.mjs';
 import {capturedSource,qualifyCapturedWorker,assertCapturedRun,capturedScaffold,retainCapturedWorkerCustody,assertCapturedWorkerHome,capturedStart} from './captured-worker.mjs';
 import { metadata, splitRef, SCHEDULE_REMOVED } from './config.mjs';
 import { stageBase, validateBase, allowedChanges, verifyGitScope, gitPublish, confirmGitBaseline, directoryPublish, journalPath, baseLock, recoveryStage, reconcileDirectoryIntent, gitRecoveryState } from './stores.mjs';
@@ -56,7 +56,7 @@ export function completionArgv(source,id,judgmentFile='<absolute-judgment.json>'
   if(Object.hasOwn(source,'providerBinding') || Object.hasOwn(source,'registration')) fail('E_SOURCE','captured completion requires explicit execution binding');
   return [...tail,'--soul',source.agent,'--json'];
 }
-export function completionCommand(source,id,judgmentFile) {return command(source.context,completionArgv(source,id,judgmentFile));}
+export function completionCommand(source,id,judgmentFile) {return command(sourceDeployment(source),completionArgv(source,id,judgmentFile));}
 // okf 4.0.0: the harvester is the package soul oats.okf/knowledge-harvester.
 // It homes in agents/oats-okf--knowledge-harvester/. Its instances get an
 // exact --name okf-harvester-<run> (50 characters): a derived
@@ -77,7 +77,7 @@ export function harvesterCommands(source,id) {
 export function operatorCommand(source,args) {
   const e=source.executionBinding,q=v=>/^[\w@%+=:,./-]+$/.test(String(v))?String(v):quote(v);
   const argv=e?['oats','--deployment',e.deployment,'--resolution',e.resolution?.id,'okf',...args,'--json']:['oats','okf',...args,'--soul',source.agent,'--json'];
-  return `cd ${q(source.context)} && ${argv.map(q).join(' ')}`;
+  return `cd ${q(sourceDeployment(source))} && ${argv.map(q).join(' ')}`;
 }
 /** `complete` for a run whose judgment is persisted: resumes a stopped
  *  delivery, or records a delivered PR's merge or close. */
@@ -158,6 +158,9 @@ function startRun(source,{ids,noLaunch=false,plan=null,previous=null,runFields={
   if(!source.decl.owns.length) fail('E_OWNER','source has evidence but owns no destination; retained for explicit ownership routing');
   const deferred={status:'deferred',reason:`a harvester's spawn needs ${SPAWN_TIMEOUT_MS/1000} s of this invocation's time budget, and less is left; nothing was started and the input stays in custody`};
   if(!spawnAdmitted(deadline)) return deferred;
+  // okf 4.2.0 (#55): the harvester is spawned in the source's deployment; one
+  // that cannot be named refuses here, before the run exists.
+  sourceDeployment(source);
   // Asked before the run exists, within what the spawn does not need (short
   // of it, every supported kernel accepts --runtime): nothing blocking stands
   // between the spawn-intent record and the spawn.
@@ -231,14 +234,15 @@ function spawnWorker(source,run,{parent=false,deadline,harness}={}) {
     }
   }
   if(!['pi','claude','codex'].includes(source.execution.runtime)) fail('E_CONFIG','invalid harvest runtime');
-  const args=['spawn',HARVESTER_SOUL,'--name',harvesterInstance(id),'--dir',source.context,harness ?? harnessFlag(source,deadline),source.execution.runtime,'--no-launch','--task-file',taskFile,'--json'];
+  const deployment=sourceDeployment(source);
+  const args=['spawn',HARVESTER_SOUL,'--name',harvesterInstance(id),'--dir',deployment,harness ?? harnessFlag(source,deadline),source.execution.runtime,'--no-launch','--task-file',taskFile,'--json'];
   if(source.execution.model) args.push('--model',source.execution.model);
   if(parent) args.push('--parent',source.instance);
   // okf 4.0.2: no team join. The harvester lives in the deployment's default
   // team, where the maintainer reaches it; a deployment that wants it in
   // another team opts in locally, as for any soul.
   try {
-    run.worker=oats(args,source.context,{timeout:budget(deadline,SPAWN_TIMEOUT_MS)});
+    run.worker=oats(args,deployment,{timeout:budget(deadline,SPAWN_TIMEOUT_MS)});
     if(!run.worker.instance || !run.worker.home) fail('E_RUNTIME','spawn receipt lacks worker identity');
     run.status='scaffolded';persist(source,run);
     prepareWorker(source,run);
@@ -261,8 +265,8 @@ function spawnWorker(source,run,{parent=false,deadline,harness}={}) {
  *  alias). Ask the kernel; an older kernel, or one that cannot answer, gets
  *  --runtime, which every supported kernel accepts. */
 export function harnessFlag(source,deadline) {
-  let version;
-  try {version=oats(['version','--json'],source.context,{native:true,timeout:budget(deadline,15000)});} catch {return '--runtime';}
+  let version;const deployment=sourceDeployment(source);
+  try {version=oats(['version','--json'],deployment,{native:true,timeout:budget(deadline,15000)});} catch {return '--runtime';}
   return Array.isArray(version?.features) && version.features.includes('harness')?'--harness':'--runtime';
 }
 function workerHome(run,source) {
@@ -318,7 +322,7 @@ function startWorker(source,run,{deadline}={}) {
   }
   requireQualifiedHelper(source);
   run.status='launch-intent';persist(source,run);
-  try {run.launch=oats(['session','start','--home',workerHome(run,source),'--json'],source.context,{timeout:budget(deadline,90000)});run.status='running';persist(source,run);}
+  try {run.launch=oats(['session','start','--home',workerHome(run,source),'--json'],sourceDeployment(source),{timeout:budget(deadline,90000)});run.status='running';persist(source,run);}
   catch(e) {run.status='launch-unknown';run.error=e.message;persist(source,run);throw e;}
 }
 function judge(source,run,file) {

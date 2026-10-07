@@ -269,6 +269,22 @@ rejudging it stays the explicit `oats okf retry --source FILE --run ID --rejudge
   destination on its own (above); first delivery still stops at the first
   failing destination.
 
+**External repositories (#55).** A source spawned with `--repo` outside its
+deployment keeps that repository as its context. Every `oats` call that needs
+the deployment (the harvester spawn and its session start, the live consent
+read, every printed operator or completion command, the harvester's own
+`okf-harvest complete`) runs in the deployment the kernel names:
+`OATS_WORKSPACE` (hooks), else `OATS_TEAM_SCOPE` (command dispatch), or a
+captured source's frozen execution binding, which nothing ambient replaces.
+Neither named, or the two naming different deployments, refuses with
+`E_DEPLOYMENT_SCOPE` before any read, capture or spawn; oats.okf never looks
+for a deployment from the repository. Frozen descriptors are not rewritten.
+CI's `external-repo-041` job runs a real external-`--repo` source on
+released OATS 0.41.0 through its checkpoint to a real harvester spawn
+(`--no-launch`) and retirement, after the released v4.1.1 payload fails the
+same fixture on the kernel's scope refusal. No model, host timer or scheduler
+job is involved.
+
 ### Upgrading from 4.1
 
 oats.okf 4.2 creates and removes no scheduler job; the operator removes the
@@ -284,15 +300,20 @@ Commands, Changing a job).
 3. **Remove `cron` and `tz`** from every live bindings file
    (`settings.oats.okf.bindings-file`); until then it answers
    `E_HARVEST_SCHEDULE_REMOVED`.
-4. **Remove each old OKF job.** `oats schedule list --dir <deployment> --json`;
-   an old OKF job is `okf-<source id>` running
+4. **Remove each old OKF job, per deployment.** Every deployment that ran
+   4.1 has its own jobs, in its own scheduler: in each one,
+   `oats schedule list --dir <that deployment> --json`; an old OKF job is
+   `okf-<source id>` running
    `oats okf run-source --source <that source's descriptor> …`. For each,
-   `oats schedule remove <id> --dir <deployment>`. Decide by its definition,
+   `oats schedule remove <id> --dir <that deployment>`. Decide by its definition,
    never by the `okf-` prefix alone, and never with `--force` (it only
    forgets the job and stops nothing). The kernel refuses while the job has a
    tracked instance or an unresolved effect: let it end or settle it
-   (`oats schedule reconcile <id> --dir <deployment>`), then remove it again.
-   A refused job is not removed.
+   (`oats schedule reconcile <id> --dir <that deployment>`), then remove it
+   again. A refused job is not removed.
+
+After the upgrade `oats okf inspect` shows no scheduler health at all: by
+design, since 4.2 has no job to report, not a fault.
 
 The `harvest-review` trigger is not a scheduler job: `oats schedule` neither
 lists nor removes it. **Stop** on an uncaptured source tail, a job you cannot
@@ -1463,6 +1484,8 @@ OATS_OKF_NATIVE_CLI=/absolute/oats/bin/oats.mjs node --test --test-name-pattern=
 # okf 4.2.0: a real home's checkpoint and retire hook follow the deployment's switch,
 # not its spawn-time settings (a disposable file:// v2 workspace; no model):
 OATS_OKF_NATIVE_CLI=/absolute/oats/bin/oats.mjs node --test test/real-home-dispatch.test.mjs
+# okf 4.2.0 (#55): an external --repo source on released OATS 0.41.0 (CI's external-repo-041 job):
+OATS_OKF_EXTERNAL_CLI=/absolute/oats-0.41.0/bin/oats.mjs node --test test/external-repo-consumer.test.mjs
 # Full standalone suite with both public-boundary probes (source OATS >=0.24.4):
 OATS_OKF_CONSUMER_CLI=/absolute/oats/bin/oats.mjs OATS_OKF_NATIVE_CLI=/absolute/oats/bin/oats.mjs npm test
 ```
