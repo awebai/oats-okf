@@ -1,81 +1,50 @@
-# OKF v2 public runtime boundary
+# Kernel surfaces oats.okf 5.0 relies on
 
-The **2.0.0 pre-tag candidate** requires **OATS >=0.23.0**. The historical v1
-extraction inventory (private agent lookup/registration, settings resolution,
-attached/worktree spawning; floor >=0.19.0) is not the v2 runtime contract.
-No private kernel API or additional knowledge-specific kernel behavior is
-required by this candidate.
+oats.okf 5.0 declares **OATS >=0.29.0** (package souls and triggers) and is
+tested in CI against the released **OATS 0.44.0**. It needs no private
+kernel API and no knowledge-specific kernel behaviour. The capability, not
+the kernel, owns OKF validation, consultation, the host cache, provisioning
+and migration.
 
-The repository also contains the provider half of the **planned, unreleased
-OATS >=0.24.0** portable binding/lifecycle handshake. Publication must raise the
-compatibility floor in coordination with that framework release; this document
-does not claim the current 0.23.x baseline can consume the new manifest field.
-The 0.24 kernel remains provider-neutral: it approves exact retained executable
-bytes, invokes bounded normalize/bind/check commands, runs the single shared
-choice resolver, and supplies private synchronous binding/source-receipt
-snapshots. OKF alone interprets stores, nodes, ownership and its captured runtime.
+## Environment
 
-## Declared capability and command transport
+| Variable | Used for |
+|---|---|
+| `OATS_SETTINGS` | the effective `oats.okf` settings (`bindings-file`, `state-dir`, `git-timeout`, `consult-max-age`); a 4.x harvest key refuses |
+| `OATS_SETTINGS_ORIGINS` | which layer (host, soul, spawn) set a 4.x harvest key, named in the `E_REMOVED` sentence |
+| `OATS_SOUL` | the soul directory whose `okf.json` an instance (or a deployment command run with `--soul`) consults |
+| `OATS_INSTANCE_HOME`, `OATS_HOME` | the instance home (instance knowledge, `inspect`) |
+| `OATS_KIND` | a service (capability) instance gets no knowledge upkeep |
+| `OATS_EVENT` | the hook being run (`spawn`, `soul-scaffold`) |
+| `OATS_WORKSPACE`, `OATS_TEAM_SCOPE` | the deployment `setup --remove-legacy-settings` edits; absent, relative, missing or disagreeing is `E_DEPLOYMENT_SCOPE` |
+| `OATS_BINDING_FILE` | an optional captured ProviderBinding1 snapshot (0.44 sets none) |
+| `OATS_TRIGGER_EVENT_FILE` | the maintainer's trigger event (`review-context --event`) |
 
-`oats-package/oats-package.json` enumerates only `capabilities/oats-okf/`.
-That subtree contains the capability-defined `memory-harvest` service agent,
-skills, schemas, injection and executable. Obsolete unenumerated root runtime
-copies have been removed. The exported worker preserves canonical `AGENTS.md`
-and the relative `CLAUDE.md -> AGENTS.md` compatibility symlink.
+`OATS_SOURCE_RECEIPT_FILE` and `OATS_INVOCATION_CONTEXT_FILE` are no longer
+used; their presence answers `E_REMOVED`.
 
-The public dispatcher supplies the absolute `OATS_CLI_BIN`, effective
-`OATS_SETTINGS` and documented hook/instance context. `lib/io.mjs` requires that
-authored CLI path, invokes it with argv-safe subprocesses, and clears source
-identity from child command environments. It does not discover a kernel root,
-search PATH for oats, call `oats root`, or import private kernel modules.
-Generated completion commands quote every shell argument and explicitly scrub
-inherited selectors/snapshots. Captured completion uses saved source execution
-selectors without --soul. Worker task files are owner-only temporary files.
+## Hooks, commands and operations
 
-**Open captured-worker gate:** the legacy spawn-by-name CLI below is not a
-qualified captured-helper interface. Captured run-source/harvest and
-worker-creating retry/rejudge/relaunch paths refuse before locks, run intent,
-helper staging or spawn effects until the generic API supplies exact retained
-helper/software selection. Existing source-free data and legacy delivery tests
-are not proof of captured helper launch. No ambient helper fallback is allowed.
+- A required **spawn** hook (no inputs) and a **soul-scaffold** hook. No
+  retire hook.
+- Manifest commands under `oats okf`, `oats okf-harvest` and
+  `oats okf-maintenance`, dispatched from an instance home or from the
+  deployment with `--soul`.
+- The `knowledge:inspect` view and the `knowledge:harvest` action (the
+  latter kept only to answer `E_REMOVED`).
+- The binding wire's `check` phase for readiness, with `binding.reasons` as
+  the allowlist of text that may cross it.
 
-## Required public surfaces
+## Spawning and automation
 
-- **Directory workers:** `oats spawn memory-harvest --work directory --no-launch
-  --json`, followed by the public session-start surface when launch is requested.
-  Workers use a durable deployment context and independent directory work, never
-  source attachments, branches or interviews. Source retirement does not remove
-  their copied input or provider receipts.
-- **Native record capture/recall:** `capture --home` and `recall --ids-only`
-  provide certified session boundaries and byte metadata. The provider plans
-  bounded full-text recall windows before copying evidence. Native record JSON
-  is distinct from the command JSON-v1 envelope; incomplete capture and oversized
-  turns fail closed. Inspection does not invoke capture or alter this contract.
-- **Generic scheduler command jobs:** none since okf 4.2.0. No source owns a
-  job and oats.okf calls no `oats schedule` command; the operator removes the
-  jobs earlier versions created with the kernel's `oats schedule remove`.
-- **Generic inspection/operations:** `oats inspect --home` discovers the declared
-  `knowledge:inspect` view and `knowledge:harvest` action. `oats operation run
-  knowledge:inspect --home ... --json` relays the provider's labeled documents
-  and receipts without launching a worker. The provider must drain the complete
-  JSON answer through its stdout pipe, including large live Markdown and receipts.
-- **Post-home command dispatch:** `oats okf ... --source <descriptor> --soul
-  <source-soul>` remains activation/trust-gated in deployment context after
-  retirement. Read/refresh views for this form live under the durable source's
-  `stateDir`, never in the invoking repository or a reused home.
+- **Proposals**: a working agent runs
+  `oats spawn oats.okf/knowledge-harvester --task-file <proposal> --relation unrelated`.
+  0.44 refuses `--relation unrelated` with `--relative-to`. The kernel
+  chooses the harvester's harness and model.
+- **Package souls** `oats.okf/knowledge-harvester` and
+  `oats.okf/knowledge-maintainer`.
+- **Trigger template** `oats.okf:harvest-review`, installed by the operator
+  as a workspace automation or with `oats trigger add`.
 
-The capability, not the kernel, owns identity-guarded live-memory inspection,
-accepted-view freshness, durable input/receipt semantics, Git PR verification,
-directory publication/recovery and migration. See [README.md](README.md) for
-inspection safety/error and preview contracts.
-
-## Evidence limits
-
-The standalone suite's optional public consumer uses the enumerated source
-capability in a disposable owned-capability fixture against a real >=0.23.0 CLI.
-It exercises public command/operation dispatch (including large live documents,
-missing/reused homes and durable external views), lifecycle, directory workers,
-and post-retirement completion. Native probes exercise capture/recall and
-scheduler registration. These are not package acquisition/trust/restore,
-remote GitHub PR, published-consumer, or real-model learning evidence; see
-[SCHEMA-STATUS.md](SCHEMA-STATUS.md) for the separate release gates.
+The harvester and maintainer use `git` and `gh` with the host's ordinary
+credentials; the kernel is not involved in publication.

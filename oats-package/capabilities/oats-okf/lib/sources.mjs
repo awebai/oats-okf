@@ -1,132 +1,29 @@
-import { randomUUID } from 'node:crypto';
+// okf 5.0.0: what a working instance consults, and what its spawn checks.
+// There is no source custody: no descriptor, marker, capture or worker. An
+// instance consults through its soul's declaration (the kernel's OATS_SOUL)
+// and the deployment's bindings, or a captured provider binding snapshot.
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { basename } from 'node:path';
-import { fs, join, dirname, resolve, safePath, readJSON, save, atomic, hash, withLock, oats, fail, tree, overlaps, identifier, cleanEnv, quote, redactUrls } from './io.mjs';
-import { loadBindings, declaration, bindingFingerprint, settings, validateBindings, resolveNodes } from './config.mjs';
-import { acceptedResolution, short } from './consult.mjs';
-import { loadInvocationKnowledgeBinding, readPrivateInvocationJson, sourceRuntimeFromKnowledgeBinding } from './binding-wire.mjs';
-import { sameJson } from './portable-binding.mjs';
-import { qualifiedSoulIdentity } from './source-contract.mjs';
-import { harvestSwitch, instanceRecordPath, parseOrigins } from './harvest-switch.mjs';
+import { fs, join, safePath, readJSON, atomic, fail } from './io.mjs';
+import { loadBindings, declaration, settings, validateBindings, resolveNodes } from './config.mjs';
+import { short } from './consult.mjs';
+import { loadInvocationKnowledgeBinding } from './binding-wire.mjs';
 import { validateBase } from './stores.mjs';
 
 const primeBasesScript=fileURLToPath(new URL('./prime-bases.mjs',import.meta.url));
 
-const obj=value=>value!==null && typeof value==='object' && !Array.isArray(value);
-function exact(value,allowed,required,label) {
-  if(!obj(value)) fail('E_SOURCE',`${label} must be an object`);
-  for(const key of Object.keys(value)) if(!allowed.includes(key)) fail('E_SOURCE',`unknown ${label} property: ${key}`);
-  for(const key of required) if(!Object.hasOwn(value,key)) fail('E_SOURCE',`${label} requires ${key}`);
-  return value;
-}
-function absolute(value,label) {if(typeof value!=='string' || !value || resolve(value)!==value) fail('E_SOURCE',`${label} must be a normalized absolute path`);return value;}
-function executionBinding(value) {
-  exact(value,['schemaVersion','deployment','resolution'],['schemaVersion','deployment','resolution'],'execution binding');
-  exact(value.resolution,['schemaVersion','id'],['schemaVersion','id'],'resolution reference');
-  if(value.schemaVersion!==1 || value.resolution.schemaVersion!==1 || typeof value.resolution.id!=='string' || !/^sha256-[a-f0-9]{64}$/.test(value.resolution.id)) fail('E_SOURCE','invalid execution binding');
-  absolute(value.deployment,'execution deployment');return JSON.parse(JSON.stringify(value));
-}
-function human(value) {
-  if(value===null) return null;
-  exact(value,['provider','id'],['provider','id'],'responsible human');
-  if(typeof value.provider!=='string' || !value.provider || typeof value.id!=='string' || !value.id) fail('E_SOURCE','invalid responsible human');
-  return JSON.parse(JSON.stringify(value));
-}
-export function validateCapturedReceipt(home,receipt) {
-  exact(receipt,['schemaVersion','kind','home','work','context','agent','instance','sourceIdentity','role','executionBinding','responsibleHuman','binding'],['schemaVersion','kind','home','work','context','agent','instance','sourceIdentity','role','executionBinding','responsibleHuman','binding'],'captured source receipt');
-  if(receipt.schemaVersion!==1 || !['persistent','helper'].includes(receipt.kind)) fail('E_SOURCE','unsupported captured source receipt');
-  home=absolute(home,'registration home');const receiptHome=absolute(receipt.home,'receipt home');if(home!==receiptHome) fail('E_SOURCE','registration home differs from receipt');
-  const work=absolute(receipt.work,'receipt work'),context=absolute(receipt.context,'receipt context'),binding=sourceRuntimeFromKnowledgeBinding(receipt.binding),execution=executionBinding(receipt.executionBinding);
-  if(context!==execution.deployment) fail('E_SOURCE','receipt context differs from execution deployment');
-  identifier(receipt.agent);identifier(receipt.instance);
-  if(typeof receipt.role!=='string' || Buffer.byteLength(receipt.role)>128*1024) fail('E_SOURCE','captured role must be text up to 128KiB');
-  const sourceIdentity=receipt.sourceIdentity===null?null:qualifiedSoulIdentity(receipt.sourceIdentity);
-  if((receipt.kind==='persistent')!==(sourceIdentity!==null)) fail('E_SOURCE','persistent receipt needs qualified source identity; helper needs null');
-  return {home,work,context,binding,execution,sourceIdentity,responsibleHuman:human(receipt.responsibleHuman)};
-}
-export function loadInvocationSourceReceipt(home,env=process.env) {
-  if(!Object.hasOwn(env,'OATS_SOURCE_RECEIPT_FILE')) return {mode:'legacy'};
-  if(!Object.hasOwn(env,'OATS_BINDING_FILE')) fail('E_SOURCE','captured source receipt requires its provider binding snapshot');
-  let receipt;try{receipt=readPrivateInvocationJson(env.OATS_SOURCE_RECEIPT_FILE);}catch{fail('E_SOURCE','invalid captured source receipt snapshot');}
-  const validated=validateCapturedReceipt(safePath(home),receipt),invocation=loadInvocationKnowledgeBinding(env);
-  if(invocation.kind!=='captured' || !sameJson(invocation.binding,receipt.binding)) fail('E_SOURCE','source receipt binding differs from invocation snapshot');
-  return {mode:'captured',receipt,validated};
-}
-export const markerPath = home => join(home,'.okf-source.json');
-export const statusPath = source => join(dirname(source.file),'status.json');
-export const saveStatus = (source,status) => save(statusPath(source),status);
-export function updateStatus(source, mutate) {
-  return withLock(join(dirname(source.file),'status.lock'),()=>{
-    const status=loadStatus(source);mutate(status);saveStatus(source,status);return status;
-  });
-}
-function saveCapture(source, status) {
-  updateStatus(source,current=>{
-    current.captured=status.captured;
-    if(status.launchObserved!==undefined) current.launchObserved=status.launchObserved;
-    if(status.lastCapture) current.lastCapture=status.lastCapture;
-    if(status.retired) {current.retired=true;current.retiredAt=status.retiredAt;}
-  });
-}
-export const loadStatus = source => readJSON(statusPath(source));
-export function loadSource(file) {
-  safePath(file); const s=readJSON(file);
-  if(s.version!==1 || !/^[0-9a-f-]{36}$/.test(s.id) || resolve(file)!==join(s.bindings.stateDir,'sources',s.id,'source.json')) fail('E_SOURCE','invalid source descriptor path/identity');
-  const {file:bindingsFile,...bindingsDoc}=s.bindings;
-  const checked=validateBindings(bindingsDoc,bindingsFile,{sourceHome:s.home,sourceWork:s.work,frozen:true});
-  if(bindingFingerprint(checked)!==s.bindingFingerprint) fail('E_SOURCE','frozen bindings fingerprint mismatch');
-  if(s.providerBinding!==undefined) {
-    let frozen;try{frozen=sourceRuntimeFromKnowledgeBinding(s.providerBinding);}catch{fail('E_SOURCE','invalid frozen provider binding');}
-    const actual={owner:s.owner,bindings:{file:bindingsFile,version:checked.version,stateDir:checked.stateDir,bases:checked.bases},decl:s.decl,execution:s.execution};
-    if(!sameJson(frozen,actual)) fail('E_SOURCE','frozen provider binding differs from source runtime');
-    exact(s.registration,['schemaVersion','kind'],['schemaVersion','kind'],'source registration');
-    if(s.registration.schemaVersion!==1 || s.registration.kind!=='captured' || !sameJson(qualifiedSoulIdentity(s.sourceIdentity),s.sourceIdentity)) fail('E_SOURCE','invalid captured source registration');
-    executionBinding(s.executionBinding);human(s.responsibleHuman);
-  } else if(s.registration!==undefined || s.sourceIdentity!==undefined || s.executionBinding!==undefined || s.responsibleHuman!==undefined) fail('E_SOURCE','partial captured source descriptor');
-  const invocation=loadInvocationKnowledgeBinding();
-  if(invocation.kind==='captured') {
-    if(s.providerBinding===undefined) fail('E_MIGRATION','legacy source descriptor cannot consume a captured provider binding');
-    if(!sameJson(invocation.binding,s.providerBinding)) fail('E_SOURCE','invocation provider binding differs from frozen source');
-  }
-  return {...s,file};
-}
-export function homeSource(home) { const m=readJSON(markerPath(home)); const s=loadSource(m.source); if(s.id!==m.id || s.home!==home) fail('E_SOURCE','home identity does not match durable source');return s; }
 export function service(home) {
   if(fs.existsSync(join(home,'instance.json'))) return readJSON(join(home,'instance.json')).kind==='capability';
   return process.env.OATS_KIND==='capability';
 }
-// okf 3.0.0 materializes no instance copy of any base: registration records
-// the accepted resolution (per base: commit or digest, and its nodes) and the
-// instance consults the bases remotely through `oats okf`. A ./knowledge/ left
-// by okf 2.x is not touched; inspect reports it as a legacy local view.
-const acceptedNodes = view => Object.fromEntries(Object.entries(view).map(([alias,row])=>[alias,row.nodes]));
-/** Instance knowledge (STATE.md, log.md, notes/) exists whether or not this
- *  instance is harvested: it is the instance's own working memory. */
+/** Instance knowledge (STATE.md, log.md, notes/): the instance's own working
+ *  memory, and where a checkpoint's backing notes live. */
 export function ensureInstanceKnowledge(home) {
   for(const [p,text] of [['STATE.md','# Working state\n\n# Task\n\n# Next\n'],['log.md','# Instance log\n']]) if(!fs.existsSync(join(home,p))) atomic(join(home,p),text);
   fs.mkdirSync(join(home,'notes'),{recursive:true});
 }
-function finishRegistration(source) {
-  // A durable home pointer precedes publication. Failures after it was saved
-  // resume this same source; they never reset captured evidence or IDs.
-  // okf 4.2.0: registration creates no scheduler job; harvest runs at the
-  // working agent's checkpoints (`oats okf harvest`) and at retirement.
-  ensureInstanceKnowledge(source.home);
-  return source;
-}
-/** Harvest off (okf 4.0.0): no source, no custody. The home keeps
- *  a small record so retire knows there is nothing to capture, and (4.0.3) the
- *  soul's declaration, so consultation works without a source. */
-function harvestOff(home,sw,extra={}) {
-  const record={version:1,harvest:'off',reason:sw.reason,rows:sw.rows,warnings:sw.warnings,...(extra.decl?{decl:extra.decl}:{}),at:new Date().toISOString()};
-  atomic(instanceRecordPath(home),JSON.stringify(record,null,2)+'\n');
-  ensureInstanceKnowledge(home);
-  return {harvestOff:true,switch:sw,home,...extra};
-}
-export const harvestOffRecord = home => fs.existsSync(instanceRecordPath(home))?readJSON(instanceRecordPath(home)):null;
 const firstLine=text=>String(text||'unknown error').split(/\r?\n/).map(s=>s.trim()).find(Boolean) || 'unknown error';
-function validateHarvestOffRefs(bindings,decl,primed={}) {
+function validateRefs(bindings,decl,primed={}) {
   const accepted={},resolvedAliases=new Set();
   for(const [alias,base] of Object.entries(bindings.bases)) if(base.kind==='directory') {
     accepted[alias]={nodes:validateBase(base.path,base).meta.nodes};resolvedAliases.add(alias);
@@ -164,358 +61,27 @@ function primeGitBases(bindings,decl) {
   }
   return {primed,warnings:[...warnings,...skippedWarnings]};
 }
-/** okf 4.0.3: what a harvest-off home consults. Consultation never depends on
- *  the harvest switch: such a home has no registered source by design, so it
- *  reads its soul's declaration (recorded at spawn; the kernel's OATS_SOUL for
- *  a home spawned before 4.0.3) and the deployment's bindings as they are now.
- *  Nothing is registered, captured or scheduled. */
+/** What an instance (or, from the deployment, its soul) consults: the soul's
+ *  declaration and the deployment's bindings as they are now, or a captured
+ *  provider binding snapshot (OATS_BINDING_FILE). From a deployment there is
+ *  no instance home to keep apart from the bases. */
 export function consultSource(home) {
   home=safePath(home);
-  const record=harvestOffRecord(home);
-  if(!record) fail('E_SOURCE',`no okf source for ${home}: it was not spawned with oats.okf as its knowledge capability`);
-  const decl=record.decl || (process.env.OATS_SOUL?declaration(fs.realpathSync(process.env.OATS_SOUL)):fail('E_OATS_SOUL_MISSING','OATS_SOUL is not set; oats.okf commands run only under the OATS kernel'));
   const work=fs.existsSync(join(home,'work'))?fs.realpathSync(join(home,'work')):join(home,'work');
-  return {home,work,decl,bindings:loadBindings(undefined,{sourceHome:home,sourceWork:work}),harvest:{status:'off',reason:record.reason,at:record.at}};
-}
-/** The source's tasks provider (its instance.json tasks-layer capability), or null. */
-function tasksProvider(meta) {
-  const row=Array.isArray(meta?.capabilities)?meta.capabilities.find(c=>c && c.layer==='tasks' && typeof c.id==='string'):null;
-  return row?row.id:null;
-}
-function capturedOwner(bindings,owner,identity) {
-  const file=join(bindings.stateDir,'owners.json'),row={schemaVersion:1,kind:'captured-qualified-soul',identity};
-  withLock(join(bindings.stateDir,'owners.lock'),()=>{
-    const owners=fs.existsSync(file)?readJSON(file):{};if(!obj(owners)) fail('E_OWNER','invalid owner registry');const prior=Object.hasOwn(owners,owner)?owners[owner]:undefined;
-    if(typeof prior==='string') fail('E_MIGRATION','legacy owner registry evidence requires explicit qualified-identity migration');
-    if(prior!==undefined && (!obj(prior) || prior.schemaVersion!==1 || prior.kind!=='captured-qualified-soul' || !sameJson(prior.identity,identity))) fail('E_OWNER','stable owner ID already identifies a different qualified soul');
-    if(prior===undefined) {owners[owner]=row;save(file,owners);}
-  });
-}
-function sameCapturedReceipt(source,receipt,validated) {
-  return source.registration?.schemaVersion===1 && source.registration.kind==='captured'
-    && source.home===validated.home && source.work===validated.work && source.context===validated.context
-    && source.agent===receipt.agent && source.instance===receipt.instance && source.role===receipt.role
-    && sameJson(source.sourceIdentity,validated.sourceIdentity) && sameJson(source.executionBinding,validated.execution)
-    && sameJson(source.responsibleHuman,validated.responsibleHuman) && sameJson(source.providerBinding,receipt.binding);
-}
-export function registerCaptured(home,receipt) {
-  home=safePath(home);const captured=validateCapturedReceipt(home,receipt),invocation=loadInvocationKnowledgeBinding();
-  if(invocation.kind==='captured' && !sameJson(invocation.binding,receipt.binding)) fail('E_SOURCE','lifecycle receipt binding differs from invocation snapshot');
-  if(receipt.kind==='helper') return {skipped:'service'};
-  if(fs.existsSync(markerPath(home))) {
-    const source=homeSource(home);if(!sameCapturedReceipt(source,receipt,captured)) fail('E_SOURCE','captured registration receipt differs from durable source');
-    return finishRegistration(source);
-  }
-  if(['.okf-harvest-record.json','.okf-harvest-record.next.json'].some(path=>fs.existsSync(join(home,path)))) fail('E_MIGRATION','legacy source watermarks require explicit migration before captured registration');
-  // The captured path takes its authority from the frozen binding and never
-  // reads live settings or the soul, so the 4.0.0 harvest switch (a live host
-  // setting) does not apply here. No released kernel drives this path.
-  if(overlaps(home,captured.context) && captured.context.startsWith(home)) fail('E_PATH','captured deployment context cannot be in disposable home');
-  const {file:bindingsFile,...bindingsDoc}=captured.binding.bindings;
-  const bindings={file:bindingsFile,...validateBindings(bindingsDoc,bindingsFile,{sourceHome:home,sourceWork:captured.work})};
-  fs.mkdirSync(bindings.stateDir,{recursive:true,mode:0o700});capturedOwner(bindings,captured.binding.owner,captured.sourceIdentity);
-  const id=randomUUID(),dir=join(bindings.stateDir,'sources',id),source={version:1,id,home,work:captured.work,context:captured.context,
-    agent:receipt.agent,instance:receipt.instance,owner:captured.binding.owner,decl:captured.binding.decl,role:receipt.role,bindings,
-    bindingFingerprint:bindingFingerprint(bindings),execution:captured.binding.execution,providerBinding:JSON.parse(JSON.stringify(receipt.binding)),
-    registration:{schemaVersion:1,kind:'captured'},sourceIdentity:captured.sourceIdentity,executionBinding:captured.execution,
-    responsibleHuman:captured.responsibleHuman,created:new Date().toISOString()};
-  const file=join(dir,'source.json');fs.mkdirSync(dir,{recursive:true,mode:0o700});
-  try {
-    source.acceptedView=acceptedResolution(bindings,source.decl);source.acceptedNodes=acceptedNodes(source.acceptedView);
-    save(file,source);save(join(dir,'status.json'),{version:1,captured:{notes:[],threads:{},inputs:[]},processed:[],delivered:{},accepted:{},retired:false,activeRun:null});
-    save(markerPath(home),{version:1,id,source:file});
-  } catch(error) {
-    if(!fs.existsSync(markerPath(home))) fs.rmSync(dir,{recursive:true,force:true});
-    throw error;
-  }
-  return finishRegistration({...source,file});
-}
-
-export function register(home) {
-  home=safePath(home);
+  const seat=fs.existsSync(join(home,'instance.json'))?{sourceHome:home,sourceWork:work}:{};
   const invocation=loadInvocationKnowledgeBinding();
   if(invocation.kind==='captured') {
-    if(fs.existsSync(markerPath(home))) return finishRegistration(homeSource(home));
-    fail('E_MIGRATION','captured provider binding requires durable captured-source registration; current soul/config fallback is forbidden');
+    const {file,...doc}=invocation.runtime.bindings;
+    return {home,work,decl:invocation.runtime.decl,bindings:{file,...validateBindings(doc,file,seat)}};
   }
-  if(service(home)) return {skipped:'service'};
-  if(fs.existsSync(markerPath(home))) return finishRegistration(homeSource(home));
-  if(['.okf-harvest-record.json','.okf-harvest-record.next.json'].some(p=>fs.existsSync(join(home,p))) && !fs.existsSync(join(home,'.okf-v1-migration.json'))) fail('E_MIGRATION','legacy source watermarks require explicit oats okf migrate --source-home PATH --soul <soul> before v2 registration; no cursor is silently trusted');
-  const seat=describeSeat(home);
-  const sw=harvestSwitch({settings:settings(),soulDir:seat.soul});
-  if(sw.effective!=='on') {const priming=primeGitBases(seat.bindings,seat.decl);validateHarvestOffRefs(seat.bindings,seat.decl,priming.primed);return harvestOff(home,{...sw,warnings:[...sw.warnings,...priming.warnings]},{decl:seat.decl});}
-  const source=sourceFor(randomUUID(),seat);
-  installSource(source,{marker:true});
-  return finishRegistration(source);
+  if(!process.env.OATS_SOUL) fail('E_OATS_SOUL_MISSING','OATS_SOUL is not set; oats.okf commands run only under the OATS kernel');
+  return {home,work,decl:declaration(fs.realpathSync(process.env.OATS_SOUL)),bindings:loadBindings(undefined,seat)};
 }
-/** What a source descriptor freezes about the seat at `home`, with the soul
- *  the kernel names (OATS_SOUL). The instance and agent come from the
- *  environment of the seat's own hooks, else (`fromHome`, an operator acting
- *  on a seat) from the home's instance.json only. */
-export function describeSeat(home,{fromHome=false}={}) {
-  const meta=fs.existsSync(join(home,'instance.json'))?readJSON(join(home,'instance.json')):{};
-  if(!process.env.OATS_SOUL) fail('E_OATS_SOUL_MISSING','OATS_SOUL is not set; oats.okf hooks and commands run only under the OATS kernel');
-  const soul=fs.realpathSync(process.env.OATS_SOUL);
-  const work=fs.existsSync(join(home,'work'))?fs.realpathSync(join(home,'work')):join(home,'work');
-  const decl=declaration(soul);
-  const soulId=process.env.OATS_SOUL_ID || null;
-  const bindings=loadBindings(undefined,{sourceHome:home,sourceWork:work});
-  const context=fs.realpathSync((fromHome?null:process.env.OATS_CONTEXT) || meta.repo || fail('E_CONFIG','source requires durable config context'));
-  if(overlaps(home,context) && context.startsWith(home)) fail('E_PATH','config context cannot be in disposable home');
-  const agent=fromHome?meta.agent:process.env.OATS_AGENT || meta.agent;
-  const instance=fromHome?meta.instance:process.env.OATS_INSTANCE || meta.instance;
-  if(!agent || !instance) fail('E_SOURCE','source instance/agent required');
-  return {home,meta,soul,work,decl,soulId,bindings,context,agent,instance};
-}
-/** A source descriptor (not yet installed) for a described seat. */
-export function sourceFor(id,seat,extra={}) {
-  // Copy only the role document, never instance.json wholesale, launch recipes,
-  // environment, credentials, source worktree, or third-party message stores.
-  const roleFile=safePath(join(seat.soul,'AGENTS.md'));
-  const role=fs.existsSync(roleFile)?fs.readFileSync(roleFile,'utf8'):'';
-  if(Buffer.byteLength(role)>128*1024) fail('E_SOURCE','role document exceeds 128KiB; provide a concise role before registering');
-  const {bindings,decl}=seat;
-  const source={version:1,id,home:seat.home,work:seat.work,context:seat.context,agent:seat.agent,instance:seat.instance,owner:decl.owner,soulDir:seat.soul,decl,role,bindings,bindingFingerprint:bindingFingerprint(bindings),execution:{runtime:settings()['harvest-runtime']||'pi',model:settings()['harvest-model']||null},soulId:seat.soulId,tasksProvider:tasksProvider(seat.meta),created:new Date().toISOString(),...extra};
-  return {...source,file:join(bindings.stateDir,'sources',id,'source.json')};
-}
-/** Write a source's custody: its owner pin, descriptor and status, and (a
- *  registered source only) the home's pointer. Nothing is left behind if any
- *  of it fails before the pointer is durable. */
-export function installSource(source,{marker,status={}}) {
-  const {file,...descriptor}=source,dir=dirname(file);
-  fs.mkdirSync(source.bindings.stateDir,{recursive:true,mode:0o700});
-  fs.mkdirSync(dir,{recursive:true,mode:0o700});
-  try {
-    descriptor.acceptedView=acceptedResolution(source.bindings,source.decl);
-    pinOwner(join(source.bindings.stateDir,'owners.json'),source.decl.owner,{id:source.soulId,soulName:source.agent,path:source.soulDir});
-    descriptor.acceptedNodes=acceptedNodes(descriptor.acceptedView);
-    save(file,descriptor);
-    save(join(dir,'status.json'),{version:1,captured:{notes:[],threads:{},inputs:[]},processed:[],delivered:{},accepted:{},retired:false,activeRun:null,...status});
-    if(marker) save(markerPath(source.home),{version:1,id:source.id,source:file});
-  } catch(e) {
-    // Until the pointer is durable no capture or schedule can reference these
-    // files. Leave an installed pointer's state intact even if fsync failed.
-    if(!marker || !fs.existsSync(markerPath(source.home))) fs.rmSync(dir,{recursive:true,force:true});
-    throw e;
-  }
-  Object.assign(source,{acceptedView:descriptor.acceptedView,acceptedNodes:descriptor.acceptedNodes});
-  return source;
-}
-/** Pin a stable owner id to the soul it identifies. The kernel names a soul by
- *  identity (OATS_SOUL_ID: repository key plus soul name) so the pin survives
- *  the per-commit soul copies a workspace deployment materializes; a classic
- *  soul keeps the resolved path. A row written by an earlier version as a path
- *  under agents/<same soul name>/(soul|souls/<commit>) is rewritten to the
- *  identity once; any other mismatch is a different soul and is refused. */
-export function pinOwner(ownersFile,owner,{id,soulName,path}) {
-  const value=id || path;
-  return withLock(join(dirname(ownersFile),'owners.lock'),()=>{
-    const owners=fs.existsSync(ownersFile)?readJSON(ownersFile):{};
-    if(!obj(owners)) fail('E_OWNER','invalid owner registry');
-    const prior=Object.hasOwn(owners,owner)?owners[owner]:undefined;
-    const samePath=typeof prior==='string' && new RegExp(`/agents/${soulName.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}/(soul|souls/[^/]+)$`).test(prior);
-    if(prior!==undefined && prior!==value && !(id && samePath)) fail('E_OWNER',`stable owner ID already identifies a different soul in this state namespace: existing soul ${prior}; new soul ${value}. Remedies: retire the existing registration first, or use a fresh state directory.`);
-    if(prior!==value) {owners[owner]=value;save(ownersFile,owners);}
-    return value;
-  });
-}
-function enqueue(source,status,payload) {
-  const id=hash(payload);const path=join(dirname(source.file),'inputs',`${id}.json`);
-  if(!fs.existsSync(path)) save(path,payload);
-  if(!status.captured.inputs.includes(id)) status.captured.inputs.push(id);
-  return id;
-}
-/** How many of a source's captured inputs its runs have processed. */
-export function inputCounts(status) {
-  const total=status.captured.inputs.length,processed=status.captured.inputs.filter(i=>status.processed.includes(i)).length;
-  return {total,processed,remaining:total-processed};
-}
-export function input(source,id) {
-  if(!/^[0-9a-f]{64}$/.test(id)) fail('E_INPUT','bad input identity');
-  const value=readJSON(join(dirname(source.file),'inputs',`${id}.json`));
-  if(hash(value)!==id) fail('E_INPUT','durable evidence hash mismatch');return value;
-}
-/** The most this process waits for the deployment's current switch. */
-const CONSENT_READ_MS = 20000;
-/** The kernel dispatches an instance home's commands and hooks with the
- *  settings captured at its spawn (OATS_INSTANCE_HOME or OATS_HOME, else the
- *  home enclosing the working directory, as the kernel finds it). */
-function homeInvocation() {
-  const named = process.env.OATS_INSTANCE_HOME || process.env.OATS_HOME;
-  if (named) return resolve(named);
-  for (let d = resolve(process.cwd()); ; d = dirname(d)) {
-    if (basename(dirname(d)) === 'instances') { try { if (readJSON(join(d, 'instance.json')).instance === basename(d)) return d; } catch { /* not a home */ } }
-    if (dirname(d) === d) return null;
-  }
-}
-/** okf 4.2.0 (#55): the deployment a source's `oats` calls run in (the
- *  harvester spawn, its session start, the live consent read, every printed
- *  operator command). Never source.context: a source spawned with an external
- *  --repo keeps that repository as its context, and the kernel resolves no
- *  deployment from there. A captured source's frozen execution binding names
- *  its deployment, and nothing ambient replaces it. Otherwise the kernel's
- *  dispatch names it: OATS_WORKSPACE (hooks), else OATS_TEAM_SCOPE (command
- *  dispatch). Neither, a relative one, or two that disagree is a refusal,
- *  never a guess from the repository or a home. */
-export function sourceDeployment(source, env = process.env) {
-  if (source?.executionBinding) return source.executionBinding.deployment;
-  const named = [['OATS_WORKSPACE', env.OATS_WORKSPACE], ['OATS_TEAM_SCOPE', env.OATS_TEAM_SCOPE]].filter(([, v]) => typeof v === 'string' && v);
-  const how = 'run it through the kernel: from the deployment with --soul <soul>, or from the instance home; the source repository is never taken for the deployment';
-  if (!named.length) fail('E_DEPLOYMENT_SCOPE', `oats.okf needs the deployment the kernel dispatched it in (OATS_WORKSPACE or OATS_TEAM_SCOPE), and none was given: ${how}`);
-  const real = named.map(([k, v]) => {
-    if (resolve(v) !== v) fail('E_DEPLOYMENT_SCOPE', `${k} is not an absolute deployment path: ${how}`);
-    try { return fs.realpathSync(v); } catch { return fail('E_DEPLOYMENT_SCOPE', `${k} names no existing deployment (${v}): ${how}`); }
-  });
-  if (new Set(real).size > 1) fail('E_DEPLOYMENT_SCOPE', `OATS_WORKSPACE (${real[0]}) and OATS_TEAM_SCOPE (${real[1]}) name different deployments: ${how}`);
-  return real[0];
-}
-/** okf 4.0.1 #6, 4.2.0: the switch for an already registered source, as the
- *  deployment holds it NOW for THIS source's soul, AND that soul's absolute
- *  opt-out. It is always read from the deployment, by the provider's own
- *  deployment-scoped view (`oats okf harvest-status --soul <source.agent>`
- *  from the source's deployment, without this process's identity or
- *  settings), never from this process's own: an instance home's settings and
- *  soul copy are its spawn's; an operator command's are those of whichever
- *  soul it was dispatched as, which need not be the source's; and a long
- *  detached delivery's are those it was dispatched with. Its rows are
- *  authoritative: the soul's opt-out as the deployment resolves the source's
- *  soul now (never a frozen soul copy).
- *  An explicit spawn override for this source (the kernel's origin kind
- *  spawn; a host value captured at spawn is none) stands in for the
- *  deployment's own switch for a first batch (a checkpoint, the retire hook)
- *  taken in the source's own home: it never skips the read, and never
- *  overrides the soul's opt-out.
- *  Consent that is not known (the read fails, times out or is malformed, or
- *  the soul's opt-out cannot be read while the switch would be on) is
- *  E_HARVEST_CONSENT_UNKNOWN, never a confirmed off: nothing is captured or
- *  started, and a retirement is refused. */
-export function sourceSwitch(source, { firstBatch = false, deadline } = {}) {
-  const q = v => /^[\w@%+=:,./-]+$/.test(String(v)) ? String(v) : quote(v);
-  const deployment = sourceDeployment(source), view = `cd ${q(deployment)} && oats okf harvest-status --soul ${q(source.agent)} --json`;
-  const unknown = why => fail('E_HARVEST_CONSENT_UNKNOWN', `the deployment's current harvest consent for soul ${source.agent} is not known (${why}), and unknown is not off: nothing was captured or started, and the source stays as it is. Check it: ${view}`);
-  const home = homeInvocation();
-  let live;
-  try {
-    const timeout = deadline === undefined ? CONSENT_READ_MS : Math.min(CONSENT_READ_MS, deadline - Date.now());
-    if (timeout <= 0) fail('E_DEADLINE', 'this invocation\'s time budget is spent');
-    live = oats(['okf', 'harvest-status', '--soul', source.agent, '--json'], deployment, { timeout, env: { ...cleanEnv(), PWD: deployment } });
-  } catch (e) {
-    unknown(`the read failed: ${e.code || 'E_OKF'}: ${redactUrls(e.message)}`);
-  }
-  const soul = Array.isArray(live?.rows) ? live.rows.find(row => row?.layer === 'soul') : undefined;
-  if (!['on', 'off', 'unknown'].includes(live?.harvest) || typeof live.reason !== 'string' || !soul || typeof soul.readable !== 'boolean' || ![null, 'on', 'off'].includes(soul.value)) unknown('the deployment\'s harvest-status answered no switch');
-  if (live.harvest === 'unknown' || !soul.readable) unknown(live.reason);
-  const answer = (effective, reason, consent) => ({ effective, reason, consent, rows: live.rows, warnings: live.warnings || [] });
-  const real = p => { try { return fs.realpathSync(p); } catch { return resolve(p); } };
-  if (home && firstBatch && real(home) === real(source.home) && parseOrigins()['/harvest']?.kind === 'spawn') {
-    if (settings().harvest !== 'on') return answer('off', 'this source\'s spawn switched harvest off for it', 'spawn-override');
-    if (soul.value === 'off') return answer('off', 'the soul opts out (knowledge: { harvest: off }), which no override or deployment can switch back on', 'spawn-override');
-    if (soul.value === 'on') return answer('off', `${live.reason}`, 'spawn-override');
-    return answer('on', 'an explicit spawn override for this source admits its first batch, and the soul does not opt out', 'spawn-override');
-  }
-  return live.harvest === 'on' ? answer('on', 'the deployment switches harvest on now and the soul does not opt out', 'deployment')
-    : answer('off', `the deployment's current switch is off for soul ${source.agent}: ${live.reason}`, 'deployment');
-}
-/** Retire a registered source whose harvest is now off: no final capture and
- *  no new drain; the inputs already in custody stay. */
-export function retireHarvestOff(source, sw) {
-  updateStatus(source, current => {
-    current.retired = true; current.retiredAt = new Date().toISOString(); current.harvestOff = { reason: sw.reason, at: current.retiredAt };
-  });
-  return { retired: true, reason: 'harvest-off', switch: sw.reason, source: source.file };
-}
-/** Capture the source's notes and session into custody. `deadline` (epoch ms)
- *  is the caller's ONE invocation budget: every native call below gets what
- *  is left of it, never a fresh timeout of its own. A busy capture lock is
- *  E_LOCKED at once (another capture is in progress): the caller defers, and
- *  a final capture is then simply not certified. */
-export function capture(source,{final=false,deadlineMs=85000,deadline=Date.now()+deadlineMs}={}) {
-  // A busy capture lock is marked captureBusy; an E_LOCKED from inside the
-  // capture (its status writes) is not another capture.
-  let entered=false;
-  try {return captureLocked(source,{final,deadline},()=>{entered=true;});}
-  catch(e) {if(!entered && e.code==='E_LOCKED') e.captureBusy=true;throw e;}
-}
-function captureLocked(source,{final,deadline},enter) {
-  return withLock(join(dirname(source.file),'capture.lock'),()=>{
-    enter();
-    const status=loadStatus(source);
-    if(status.retired) return {status:'complete',complete:true,retired:true};
-    if(!fs.existsSync(markerPath(source.home))) fail('E_SOURCE','source home gone without final capture; existing evidence is retained');
-    if(homeSource(source.home).id!==source.id) fail('E_SOURCE','source name reused');
-    const meta=fs.existsSync(join(source.home,'instance.json'))?readJSON(join(source.home,'instance.json')):{};
-    const noLaunch=meta.launched!==true;status.launchObserved=!noLaunch;
-    // Notes AND record, every pass. Note content versions remain captured even
-    // when the live file is rewritten while a worker is judging a prior version.
-    const notes=join(source.home,'notes');
-    if(fs.existsSync(notes)) for(const [name,b64] of Object.entries(tree(notes))) {
-      if(!name.endsWith('.md')) continue;
-      const text=Buffer.from(b64,'base64').toString('utf8');const key=hash({name,text});
-      if(status.captured.notes.includes(key)) continue;
-      enqueue(source,status,{version:1,kind:'note',name,contentHash:hash(text),text});
-      status.captured.notes.push(key);saveCapture(source,status);
-    }
-    let report;
-    try {
-      const remainingTime=()=>{
-        const remaining=deadline-Date.now();
-        if(remaining<=0) fail('E_CAPTURE','capture deadline: backlog preserved; retire must retry');
-        return remaining;
-      };
-      report=oats(['capture','--home',source.home,'--quiet'],source.context,{native:true,timeout:Math.min(remainingTime(),60000)});
-      if(!Array.isArray(report.sessions)) fail('E_CAPTURE','capture response has no sessions');
-      for(const session of report.sessions) {
-        if(!session.thread || !session.lastTurnId) continue;
-        let after=status.captured.threads[session.thread] || null;
-        while(after!==session.lastTurnId) {
-          remainingTime();
-          const args=['recall','--thread',session.thread,'--until',session.lastTurnId,'--limit','60','--json','--ids-only'];
-          if(after) args.push('--after',after);
-          let plan;
-          try { plan=oats(args,source.context,{native:true,timeout:remainingTime()}); }
-          catch(e) { if(after && /--after: no turn/.test(e.message)) {after=null;continue;} throw e; }
-          if(!Array.isArray(plan.turns) || !plan.turns.length || plan.turns.length>60) fail('E_CAPTURE','capture/recall boundaries disagree');
-          // Plan BEFORE requesting text. Native bytes describe each turn in
-          // pretty JSON. Nested response indentation adds bytes: reserve 3x
-          // that estimate plus envelope space, always below the 16MiB pipe.
-          // The 96k target is soft only for one individually legal turn.
-          let offset=0;
-          while(offset<plan.turns.length) {
-            const window=[];let bytes=0;
-            for(const t of plan.turns.slice(offset)) {
-              if(typeof t.id!=='string' || !t.id || t.thread!==session.thread || t.kind!=='session' || !Number.isSafeInteger(t.bytes) || t.bytes<=0) fail('E_CAPTURE','invalid ids-only record metadata');
-              if(window.length && bytes+t.bytes>96000) break;
-              if(3*(bytes+t.bytes)+4096>16*1024*1024) fail('E_CAPTURE','single captured turn exceeds bounded transport; input retained at source, manual intervention required');
-              window.push(t);bytes+=t.bytes;
-            }
-            const until=window.at(-1).id;
-            const read=['recall','--thread',session.thread,'--until',until,'--limit',String(window.length),'--json'];
-            if(after) read.push('--after',after);
-            const full=oats(read,source.context,{native:true,timeout:remainingTime()});
-            if(!Array.isArray(full.turns) || full.turns.length!==window.length || full.remaining!==0) fail('E_CAPTURE','planned record window changed; retain source and retry');
-            const turns=full.turns.map((t,i)=>{
-              const turn={id:t.id,ts:t.ts,thread:t.thread,kind:t.kind,source:t.source,text:t.text};
-              if(['id','ts','thread','kind','source'].some(k=>turn[k]!==window[i][k]) || !Array.isArray(turn.text) || turn.text.some(p=>typeof p.role!=='string' || typeof p.text!=='string')) fail('E_CAPTURE','unsupported or changed captured session record');
-              if(Buffer.byteLength(JSON.stringify(turn))>1024*1024) fail('E_CAPTURE','single captured turn exceeds 1MiB; input retained at source, manual intervention required');
-              return turn;
-            });
-            // Commit evidence before its cursor; failures retain earlier windows.
-            enqueue(source,status,{version:1,kind:'record',thread:session.thread,after,until,turns});
-            after=until;status.captured.threads[session.thread]=after;saveCapture(source,status);
-            offset+=window.length;
-          }
-          if(plan.remaining===0 && after!==session.lastTurnId) fail('E_CAPTURE','final record boundary missing');
-        }
-      }
-      status.lastCapture={status:report.status,complete:report.complete===true,ignored:report.ignored||0,at:new Date().toISOString()};
-      if(report.complete!==true) fail('E_CAPTURE',`capture ${report.status || 'uncertified'}: retain source and retry`);
-      // The retire hook hands the final input to a drain (worker.mjs
-      // retireDrain, which records it with recordDrain); capture itself only
-      // certifies custody.
-      if(final) {status.retired=true;status.retiredAt=new Date().toISOString();}
-      saveCapture(source,status);return {...status.lastCapture,inputs:status.captured.inputs.length};
-    } catch(e) {
-      status.lastCapture={status:'incomplete',complete:false,error:e.message,at:new Date().toISOString()}; saveCapture(source,status);throw e;
-    }
-  });
+/** The spawn's check: the soul's declared nodes resolve in the accepted bases
+ *  (Git bases primed into the host cache within a bounded time; a base that
+ *  cannot be primed is a warning, not a refusal). → { decl, warnings }. */
+export function checkSeat(home) {
+  const {decl,bindings}=consultSource(home),priming=primeGitBases(bindings,decl);
+  validateRefs(bindings,decl,priming.primed);
+  return {decl,warnings:priming.warnings};
 }

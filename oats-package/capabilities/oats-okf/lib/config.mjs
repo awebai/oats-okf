@@ -1,4 +1,5 @@
 import { isAbsolute } from 'node:path';
+import { refuseLegacySettings } from './legacy-settings.mjs';
 import { fs, join, resolve, dirname, fail, readJSON, safePath, relPath, identifier, overlaps, hash, embedsCredential } from './io.mjs';
 const obj = v => v && typeof v === 'object' && !Array.isArray(v);
 function keys(value, allowed, label, code='E_CONFIG') {
@@ -6,14 +7,12 @@ function keys(value, allowed, label, code='E_CONFIG') {
   for(const key of Object.keys(value)) if(!allowed.includes(key)) fail(code, `unknown ${label} property: ${key}`);
 }
 export function settings() {
+  refuseLegacySettings(); // okf 5.0: a forwarded harvest/harvest-runtime/harvest-model names its fix first
   const s = JSON.parse(process.env.OATS_SETTINGS || '{}');
-  keys(s,['bindings-file','state-dir','harvest-runtime','harvest-model','git-timeout','consult-max-age','harvest'],'OATS_SETTINGS');
-  if(s.harvest!==undefined && !['on','off'].includes(s.harvest)) fail('E_CONFIG','harvest must be on or off');
+  keys(s,['bindings-file','state-dir','git-timeout','consult-max-age'],'OATS_SETTINGS');
   if(s['git-timeout']!==undefined && (!Number.isInteger(s['git-timeout']) || s['git-timeout']<1)) fail('E_CONFIG','git-timeout must be a positive integer number of seconds');
   if(s['consult-max-age']!==undefined && (!Number.isInteger(s['consult-max-age']) || s['consult-max-age']<0)) fail('E_CONFIG','consult-max-age must be a non-negative integer number of seconds');
   if(s['state-dir']!==undefined && (typeof s['state-dir']!=='string' || !isAbsolute(s['state-dir']) || resolve(s['state-dir'])!==s['state-dir'])) fail('E_CONFIG','state-dir must be a normalized absolute path');
-  if(s['harvest-runtime']!==undefined && !['pi','claude','codex'].includes(s['harvest-runtime'])) fail('E_CONFIG','invalid harvest-runtime');
-  if(s['harvest-model']!==undefined && (typeof s['harvest-model']!=='string' || !s['harvest-model'].trim())) fail('E_CONFIG','harvest-model must be a nonempty string');
   return s;
 }
 /** Time budget for Git operations that talk to a remote (clone, fetch, push,
@@ -28,23 +27,14 @@ export function noGit(path) {
     if (dirname(p) === p) break;
   }
 }
-/** okf 4.2.0: harvest runs at checkpoints, not on schedules, and oats.okf
- *  manages no scheduler job: the kernel's own `oats schedule` removes the
- *  jobs 4.1 created. The refusal a live bindings document with the old
- *  cron/tz fields answers (and run-source without --manual), in one sentence. */
-export const JOBS_REMOVED = 'Remove each okf-<source id> job okf <= 4.1 created with the kernel: oats schedule list --dir <deployment> --json, then oats schedule remove <id> --dir <deployment> (README#upgrading-from-41).';
-export const SCHEDULE_REMOVED = 'oats.okf 4.2 harvests at checkpoints, not on schedules: remove cron/tz from the bindings file, and remove each okf-<source id> job okf <= 4.1 created with oats schedule remove <id> --dir <deployment> (README#upgrading-from-41).';
-/** A bindings document. A live one (the bindings file, a portable payload)
- *  refuses cron/tz. A source descriptor frozen by okf <= 4.1 recorded them
- *  (always: the defaults were written out): `frozen` reads them as inert
- *  history, still shape-checked; nothing returns or uses them, and the
- *  binding fingerprint never covered them. */
-export function validateBindings(doc, file, { sourceHome, sourceWork, frozen = false } = {}) {
+/** okf 4.2.0 removed harvest schedules; a live bindings document with the
+ *  old cron/tz fields is refused with the fix. */
+export const SCHEDULE_REMOVED = 'oats.okf harvests no schedule since 4.2: remove cron/tz from the bindings file, and remove each okf-<source id> job okf <= 4.1 created with oats schedule remove <id> --dir <deployment> (README#upgrading-from-41).';
+export function validateBindings(doc, file, { sourceHome, sourceWork } = {}) {
   keys(doc,['version','stateDir','bases','cron','tz'],'bindings');
   if (!obj(doc) || doc.version !== 1 || !obj(doc.bases) || !Object.keys(doc.bases).length || (typeof doc.stateDir !== 'string' || !doc.stateDir)) fail('E_CONFIG', 'bindings require {version:1,stateDir,bases}');
   const legacy = ['cron','tz'].filter(key => Object.hasOwn(doc, key));
-  if (legacy.length && !frozen) fail('E_HARVEST_SCHEDULE_REMOVED', `${file}: ${legacy.join(' and ')} ${legacy.length > 1 ? 'are' : 'is'} no longer supported. ${SCHEDULE_REMOVED}`);
-  for(const key of legacy) if(typeof doc[key]!=='string' || !doc[key].trim()) fail('E_CONFIG', `${key} must be a nonempty string`);
+  if (legacy.length) fail('E_HARVEST_SCHEDULE_REMOVED', `${file}: ${legacy.join(' and ')} ${legacy.length > 1 ? 'are' : 'is'} no longer supported. ${SCHEDULE_REMOVED}`);
   const stateDir = safePath(resolve(dirname(file), doc.stateDir));
   const bases = {}; const ids = new Set(); const paths = [];
   for (const [alias, raw] of Object.entries(doc.bases)) {

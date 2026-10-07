@@ -1,36 +1,40 @@
 # Portable OKF binding examples
 
-These are data examples for the **planned, unreleased OATS 0.24.0 provider-binding
-protocol**. They are not commands to run against OATS 0.23.x. The source
-`knowledge` envelope is covered by `schemas/okf-portable-declaration.schema.json`;
-the provider-owned `payload` in ProviderBinding1 is covered by
-`schemas/okf-portable-payload.schema.json`. Generic wire/lifecycle envelopes stay
+Data examples for the OKF provider-binding wire (oats.okf 5.0). The source
+`knowledge` envelope (`oats.okf.locations@1`) is covered by
+`schemas/okf-portable-declaration.schema.json`; the provider-owned `payload`
+in ProviderBinding1 (payloadVersion 2) by
+`schemas/okf-portable-payload.schema.json`. The generic wire envelopes are
 kernel-owned.
 
-- `normalize-request.json` shows decoded source, workspace, adoption and operator
-  inputs. The source fixes a public store, supplies a rebindable local default,
-  and inherits `write.default`. The workspace entry uses the actual
-  `knowledge.stores[].payload.bindings` shape. Inputs remain separate; OKF emits
-  candidates and the kernel's one resolver selects them.
-- `bind-request.json` is the subsequent bind request after that shared resolver
-  selected the operator's `write.default`. It includes the resolver's
-  `selectedBy`, `constraints` and `considered` evidence.
-- `provider-binding.json` is the nonsecret ProviderBinding1 result. Stable store
-  IDs are runtime aliases. It captures the effective v1 bindings/declaration,
-  explicit host `stateDir` and descriptor location, and selected worker
-  runtime/model. Credential values are absent.
-- `captured-source-receipt.json` is the persistent lifecycle receipt shape. Its
-  `responsibleHuman: null` means messaging was explicitly disabled; absence is
-  not equivalent. A helper receipt instead uses `kind: "helper"` and
-  `sourceIdentity: null`, and creates no OKF source or owner.
+- `normalize-request.json` shows decoded source, workspace, adoption and
+  operator inputs. The source fixes a public store, supplies a rebindable
+  local default, and inherits `write.default`. The workspace entry uses the
+  `knowledge.stores[].payload.bindings` shape. Inputs stay separate; OKF
+  emits candidates and the kernel's one resolver selects them. The settings
+  are `bindings-file` and `state-dir` only: a 4.x `harvest`,
+  `harvest-runtime` or `harvest-model` is refused as `needs-configuration`
+  with an `E_REMOVED` message.
+- `bind-request.json` is the bind request after that resolver selected the
+  operator's `write.default`, with the resolver's `selectedBy`,
+  `constraints` and `considered` evidence. Its runtime model is
+  `{descriptorFile, stateDir}`.
+- `provider-binding.json` is the resulting nonsecret ProviderBinding1,
+  `payloadVersion: 2`: `owner`, `stores`, `reads`, `owns` and `runtime` (the
+  rendered version 1 bindings and declaration, with the host `stateDir` and
+  descriptor location). There is no `execution` (the 4.x harvest
+  runtime/model), and a payloadVersion 1 binding is refused. Stable store ids
+  are the runtime aliases. Credential values are absent.
 
-Every `/srv/oats/example/...` path and `example.invalid` URL is a documentation
+Running the bind request through `binding-bind` produces exactly
+`provider-binding.json`.
+
+Every `/srv/oats/example/...` path and `example.invalid` URL is a
 placeholder. Real directory locators, state and descriptor locations must be
-physical normalized absolute paths; symlink aliases are refused. Git publication
-remains same-repository PR-only.
+physical normalized absolute paths; symlink aliases are refused. Git
+publication is same-repository PRs only.
 
-The manifest-owned `binding-normalize`, `binding-bind` and `binding-check`
-commands are broker protocol entrypoints, not operator CLI recipes. Exact retained
-artifact approval precedes any codec execution. Mutable check can report
-`needs-configuration`, `authorization-required`, or `unavailable`; a populated
-binding is not privacy, enrollment or readiness certification.
+`binding-normalize`, `binding-bind` and `binding-check` are kernel protocol
+entrypoints, not operator commands. Check can report `ready`,
+`needs-configuration` or `unavailable`; a populated binding is not readiness
+or privacy certification.

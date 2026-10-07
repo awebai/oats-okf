@@ -19,12 +19,14 @@ The work mode:
   links; do not bulk-load.
 - **Before compaction and before a task boundary:** update STATE.md, log.md
   and notes/ first, so your future self can continue.
-- **At a checkpoint**—after opening or handing over a PR, or finishing a
-  task—first update STATE.md, log.md and relevant notes. If your TASK
-  briefing says harvest is on, run `oats okf harvest` from your instance
-  home. Already running or nothing new needs no action; report a failure
-  rather than repeatedly retrying. With harvest off, do not run it.
-  Retirement takes the final checkpoint.
+- **At an important checkpoint**—a decision made, a PR opened or handed
+  over, a task finished—first update STATE.md, log.md and relevant notes.
+  If something durable was learned, **propose it**: write a short,
+  self-contained proposal and spawn the knowledge harvester on it, directly
+  (`oats spawn oats.okf/knowledge-harvester --task-file <proposal>
+  --relation unrelated`, from your instance home). okf-instance-knowledge
+  says how. Nothing durable, no proposal; report a refused spawn rather than
+  retrying it in a loop.
 - **Every so often while working, and always before a design decision or
   before re-deriving something:** `oats okf search` / `cat` the relevant
   concepts and re-read your own notes. Consult prior decisions before
@@ -40,7 +42,9 @@ contradict soul knowledge (flag those as candidate supersessions). Not code
 descriptions, command logs, retries, secrets, verbatim third-party messages,
 or what the tracker and docs already hold. One concept per note in notes/;
 STATE.md is the current picture (rewritten); log.md is dated events
-(append-only). The knowledge harvester, not you, decides what is promoted.
+(append-only). You propose; the knowledge harvester judges what is promoted,
+and the knowledge maintainer reviews its PR. Load **knowledge-theory** for
+the promotion doctrine your proposals are judged by.
 
 **Never write accepted knowledge or soul knowledge.** This is an instruction
 boundary, not a filesystem sandbox. Skills remain curated soul artifacts.

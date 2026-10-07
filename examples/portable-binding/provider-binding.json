@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "capability": "oats.okf",
   "payloadContract": "oats.okf.locations",
-  "payloadVersion": 1,
+  "payloadVersion": 2,
   "payload": {
     "owner": "domain-expert",
     "stores": {
@@ -83,10 +83,6 @@
           "local-notes/observations"
         ]
       }
-    },
-    "execution": {
-      "runtime": "pi",
-      "model": null
     }
   },
   "credentialRefs": {},
