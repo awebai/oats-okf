@@ -26,6 +26,7 @@ parser (`oats.okf-maintenance` `lib/provenance.mjs`) is strict and accepts:
 - **version 2** (5.0): `source {soul, owner (required), instance,
   ownedNodes, readNodes, bases}`, `evidence [{note: notes/…/*.md, sha256?}]`
   (at most 100), `tasks {provider, refs}`, `harvester {instance, alias}`;
+  a base's `repository` is its GitHub `owner/repo`, never a path or URL;
 - **version 1** (4.x): `run`, `input` ids and `source` with `soulId`, so 4.x
   PRs stay reviewable.
 

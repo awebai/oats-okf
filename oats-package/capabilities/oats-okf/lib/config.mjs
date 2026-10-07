@@ -9,7 +9,8 @@ function keys(value, allowed, label, code='E_CONFIG') {
 export function settings() {
   refuseLegacySettings(); // okf 5.0: a forwarded harvest/harvest-runtime/harvest-model names its fix first
   const s = JSON.parse(process.env.OATS_SETTINGS || '{}');
-  keys(s,['bindings-file','state-dir','git-timeout','consult-max-age'],'OATS_SETTINGS');
+  // `harvest` here can only be the soul's own opt-out (off): refuseLegacySettings refused any other.
+  keys(s,['bindings-file','state-dir','git-timeout','consult-max-age','harvest'],'OATS_SETTINGS');
   if(s['git-timeout']!==undefined && (!Number.isInteger(s['git-timeout']) || s['git-timeout']<1)) fail('E_CONFIG','git-timeout must be a positive integer number of seconds');
   if(s['consult-max-age']!==undefined && (!Number.isInteger(s['consult-max-age']) || s['consult-max-age']<0)) fail('E_CONFIG','consult-max-age must be a non-negative integer number of seconds');
   if(s['state-dir']!==undefined && (typeof s['state-dir']!=='string' || !isAbsolute(s['state-dir']) || resolve(s['state-dir'])!==s['state-dir'])) fail('E_CONFIG','state-dir must be a normalized absolute path');

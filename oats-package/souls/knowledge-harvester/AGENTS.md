@@ -19,6 +19,8 @@ the doctrine you judge by, and **okf-authoring** the Markdown craft.
   an accepted branch, change soul skills, or close a PR.
 - If the source's authority cannot be established from those records, STOP
   and report the claim. Do not invent scope, receipts or a fallback.
+- A source whose recorded soul opts out (`knowledge: { harvest: off }`) is
+  never harvested: your spawn refuses it, and so do you.
 - You hold no knowledge slot (`knowledge: none`): no STATE.md, log.md or
   notes upkeep, and nothing of yours is proposed.
 - Once the PR is open (or nothing was promotable), hand over in your final

@@ -1,9 +1,13 @@
-// okf 5.0.0: the 4.x harvest settings are gone. The kernel still forwards an
-// undeclared key that a layer sets (soul ⊕ host ⊕ spawn, with the last layer
-// that set it in OATS_SETTINGS_ORIGINS), so every command and hook refuses it
-// here, naming where it was set and the fix; nothing treats it as valid. The
-// one exception is `setup --remove-legacy-settings`, which deletes the host's
-// own explicit keys from the deployment's oats-local.yaml, and nothing else.
+// okf 5.0.0: the 4.x harvest settings are gone, except one: a soul's own
+// `knowledge: { harvest: off }`, its author's opt-out (a public soul is
+// reachable from outside, and its notes must not be harvested). The kernel
+// still forwards an undeclared key that a layer sets (soul ⊕ host ⊕ spawn,
+// with the last layer that set it in OATS_SETTINGS_ORIGINS), so every command
+// and hook refuses any other: a host or spawn harvest, even `off`, harvest-
+// runtime and harvest-model anywhere, naming where it was set and the fix. A
+// host key masks the soul's, so it must go before the soul opt-out shows.
+// `setup --remove-legacy-settings` deletes the host's own explicit keys from
+// the deployment's oats-local.yaml, and nothing else; it never touches a soul.
 import { fs, join, resolve, atomic, fail } from './io.mjs';
 
 export const LEGACY_KEYS = ['harvest', 'harvest-runtime', 'harvest-model'];
@@ -24,17 +28,25 @@ export function legacySettings(env = process.env) {
   let settings; try { settings = JSON.parse(env.OATS_SETTINGS || '{}'); } catch { return []; }
   if (!settings || typeof settings !== 'object') return [];
   const origins = parseOrigins(env.OATS_SETTINGS_ORIGINS);
-  return LEGACY_KEYS.filter((key) => Object.hasOwn(settings, key)).map((key) => {
+  return LEGACY_KEYS.filter((key) => Object.hasOwn(settings, key) && !(key === 'harvest' && soulOptOut(env))).map((key) => {
     const layer = origins[`/${key}`], kind = typeof layer?.kind === 'string' ? layer.kind : null, at = typeof layer?.at === 'string' ? layer.at : null;
     const origin = kind ? `from ${kind}${at ? ` (${at})` : ''}` : 'from an unknown origin';
     let setting = key, remedy;
     if (kind === 'host') { setting = `settings.oats.okf.${key}`; remedy = `${WHY[key]}; run ${CLEANUP} from this deployment.`; }
+    else if (kind === 'soul' && key === 'harvest') { setting = 'knowledge.harvest other than off'; remedy = `only the soul's opt-out, knowledge: { harvest: off }, remains; remove the key in the soul's reviewed source (or set it off) and sync/respawn; ${NEW_WAY}. Host cleanup cannot change a soul setting.`; }
     else if (kind === 'soul') { setting = `knowledge.${key}`; remedy = `remove that key in the soul's reviewed source and sync/respawn; ${WHY[key]}. Host cleanup cannot remove a soul setting.`; }
     else if (kind === 'spawn') remedy = `drop it from the spawn command; ${WHY[key]}. Host cleanup cannot remove it.`;
     else if (kind) remedy = `remove it in that layer's reviewed source; ${WHY[key]}. Host cleanup cannot remove it.`;
     else remedy = `${WHY[key]}; find where it is set (oats-local.yaml settings.oats.okf, soul.yaml knowledge:, or a --provider oats.okf flag) and remove it (${CLEANUP} removes a host value).`;
     return { key, kind: kind ?? 'unknown', at, setting, origin, remedy, message: removedSentence({ setting, origin, remedy }) };
   });
+}
+/** Whether the soul opts out: the forwarded `harvest` is `off` and the soul
+ *  layer is the one that set it (a host or spawn value masks it, and refuses). */
+export function soulOptOut(env = process.env) {
+  let settings; try { settings = JSON.parse(env.OATS_SETTINGS || '{}'); } catch { return false; }
+  const layer = parseOrigins(env.OATS_SETTINGS_ORIGINS)['/harvest'];
+  return settings?.harvest === 'off' && layer?.kind === 'soul';
 }
 /** Refuse a forwarded legacy key before any of this provider's effects. */
 export function refuseLegacySettings(env = process.env) {
@@ -64,7 +76,7 @@ export function deployment(env = process.env) {
 const KEY = /^(\s+)(['"]?)([A-Za-z0-9._-]+)\2\s*:(.*)$/;
 const value = (rest) => rest.replace(/\s+#.*$/, '').trim();
 function plan(text) {
-  const refuse = (why) => fail('E_UNSUPPORTED', `oats-local.yaml: ${why}; nothing was written. Remove settings.oats.okf.${LEGACY_KEYS.join('/')} by hand in a reviewed edit`);
+  const refuse = (why) => fail('E_UNSUPPORTED', `oats-local.yaml: ${why}, which this cleanup does not edit; nothing was written. Report it to the deployment's owner`);
   const lines = text.split('\n');
   if (!/harvest/.test(text)) return { lines, keys: [] }; // nothing to remove: any shape will do
   if (/\t/.test(text)) refuse('tab indentation is not edited');
@@ -111,14 +123,14 @@ export function removeLegacySettings({ plan: preview = false } = {}) {
   const found = legacySettings(), others = found.filter((f) => f.kind !== 'host');
   // The kernel says the host set a key this reader did not find: not this file's shape, so nothing is written.
   const missed = found.filter((f) => f.kind === 'host' && !out.keys.includes(f.key)).map((f) => f.key);
-  if (missed.length) fail('E_UNSUPPORTED', `the host layer sets settings.oats.okf.${missed.join('/')}, but ${file} has no such plain key under settings: oats.okf:; nothing was written. Remove it by hand in a reviewed edit`);
+  if (missed.length) fail('E_UNSUPPORTED', `the host layer sets settings.oats.okf.${missed.join('/')}, but ${file} has no such plain key under settings: oats.okf: that this cleanup edits; nothing was written. Report it to the deployment's owner`);
   const result = { file, removed, ...(preview ? { plan: true } : {}), written: false, ...(others.length ? { remaining: others.map(({ key, kind, at }) => ({ key, kind, at })) } : {}) };
   if (!preview && removed.length) {
     const next = out.lines.join('\n');
     if (fs.readFileSync(file, 'utf8') !== text) fail('E_CONFLICT', `${file} changed while it was read; nothing was written: run the command again`);
     atomic(file, next);
     let after; try { after = fs.readFileSync(file, 'utf8'); } catch { after = null; }
-    if (after !== next) failWith('E_UNCERTAIN', `${file} was replaced, but reading it back did not show the intended edit; check it by hand (removed: ${removed.join(', ')})`, { ...result, written: 'unknown' });
+    if (after !== next) failWith('E_UNCERTAIN', `${file} was replaced, but reading it back did not show the intended edit, so the outcome is uncertain; report it to the deployment's owner (removed: ${removed.join(', ')})`, { ...result, written: 'unknown' });
     result.written = true;
   }
   if (others.length) failWith('E_REMOVED', others.map((f) => f.message).join(' '), result);

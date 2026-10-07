@@ -79,6 +79,29 @@ test('spawn hook creates instance knowledge and briefs the proposal + harvester 
   assert.equal(fs.existsSync(f.stateDir),false,'the spawn keeps no custody state');
 });
 
+test('a soul that opts out (knowledge: { harvest: off }) keeps consultation and working memory but gets no proposal instruction',t=>{
+  const f=fixture(t);
+  const r=hook(f,'spawn',{extra:{OATS_SETTINGS:JSON.stringify({'bindings-file':f.bindingsFile,harvest:'off'}),OATS_SETTINGS_ORIGINS:JSON.stringify({'/harvest':{kind:'soul',at:'soul.yaml#/knowledge'}})}});
+  assert.equal(r.status,0,r.stdout+r.stderr);
+  assert.deepEqual(r.out.meta,{memory:'okf-v2',knowledge:'opted-out'});
+  assert.match(r.out.brief,/oats okf index/);assert.match(r.out.brief,/okf-consultation and okf-instance-knowledge/);
+  assert.match(r.out.brief,/never propose knowledge or spawn a knowledge harvester/);
+  assert.doesNotMatch(r.out.brief,/oats spawn|--task-file|proposals\//);
+  assert.ok(fs.statSync(join(f.home,'STATE.md')).isFile());assert.ok(fs.statSync(join(f.home,'notes')).isDirectory());
+  // Its commands work as well.
+  const idx=run(f,['index','--json'],{extra:{OATS_SETTINGS:JSON.stringify({'bindings-file':f.bindingsFile,harvest:'off'}),OATS_SETTINGS_ORIGINS:JSON.stringify({'/harvest':{kind:'soul',at:'soul.yaml#/knowledge'}})}});
+  assert.equal(idx.status,0,idx.stdout+idx.stderr);
+});
+
+test('the shared inject and skills carry no harvest direction (only the spawn brief does)',()=>{
+  const cap=join(ROOT,'oats-package/capabilities/oats-okf');
+  for(const file of ['injects/okf.md','skills/okf-consultation/SKILL.md','skills/okf-instance-knowledge/SKILL.md','skills/knowledge-theory/SKILL.md']) {
+    const text=fs.readFileSync(join(cap,file),'utf8');
+    assert.doesNotMatch(text,/oats spawn|--task-file|--relation/,file);
+    if(file!=='skills/knowledge-theory/SKILL.md') assert.doesNotMatch(text,/knowledge-harvester/,file);
+  }
+});
+
 test('spawn hook keeps existing working memory',t=>{
   const f=fixture(t);
   write(join(f.home,'STATE.md'),'# mine\n');

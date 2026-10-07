@@ -27,7 +27,7 @@ syncBuiltinESMExports();process.on('exit',()=>{if(hit) process.exitCode=97;});
 // where they were set; `setup --remove-legacy-settings` is the one exempt command.
 const ROOT=fileURLToPath(new URL('../',import.meta.url));
 const CLI=join(ROOT,'oats-package/capabilities/oats-okf/bin/oats-okf.mjs');
-const {legacySettings,refuseLegacySettings,LEGACY_KEYS}=await import(new URL('../oats-package/capabilities/oats-okf/lib/legacy-settings.mjs',import.meta.url));
+const {legacySettings,refuseLegacySettings,soulOptOut,LEGACY_KEYS}=await import(new URL('../oats-package/capabilities/oats-okf/lib/legacy-settings.mjs',import.meta.url));
 const SECRET='SECRET-VALUE-x';
 const HOST={kind:'host',at:'oats-local.yaml#/settings/oats.okf'};
 const NEW='agents now propose knowledge and spawn oats.okf/knowledge-harvester at checkpoints';
@@ -68,7 +68,11 @@ test('host and soul origins render the exact removal sentence for each legacy ke
     const [host]=legacySettings(envFor([key]));
     assert.equal(host.kind,'host');assert.equal(host.message,`settings.oats.okf.${key} from host (oats-local.yaml#/settings/oats.okf) was removed in oats.okf 5.0; ${why(key)}; run ${CLEANUP} from this deployment.`);
     const [soul]=legacySettings(envFor([key],{kind:'soul',at:'soul.yaml#/knowledge'}));
-    assert.equal(soul.kind,'soul');assert.equal(soul.message,`knowledge.${key} from soul (soul.yaml#/knowledge) was removed in oats.okf 5.0; remove that key in the soul's reviewed source and sync/respawn; ${why(key)}. Host cleanup cannot remove a soul setting.`);
+    assert.equal(soul.kind,'soul');
+    // A soul `harvest` other than off (here the secret) is refused; off is the soul's opt-out (below).
+    assert.equal(soul.message,key==='harvest'
+      ?`knowledge.harvest other than off from soul (soul.yaml#/knowledge) was removed in oats.okf 5.0; only the soul's opt-out, knowledge: { harvest: off }, remains; remove the key in the soul's reviewed source (or set it off) and sync/respawn; ${NEW}. Host cleanup cannot change a soul setting.`
+      :`knowledge.${key} from soul (soul.yaml#/knowledge) was removed in oats.okf 5.0; remove that key in the soul's reviewed source and sync/respawn; ${why(key)}. Host cleanup cannot remove a soul setting.`);
   }
   assert.equal(legacySettings(envFor(['harvest'])).at(0).message,`settings.oats.okf.harvest from host (oats-local.yaml#/settings/oats.okf) was removed in oats.okf 5.0; agents now propose knowledge and spawn oats.okf/knowledge-harvester at checkpoints; run oats okf setup --remove-legacy-settings --soul <soul> --json from this deployment.`);
 });
@@ -132,7 +136,8 @@ test('shapes the line reader does not edit refuse E_UNSUPPORTED before writing',
   for(const [name,text] of Object.entries(shapes)) {
     const dep=deployment(t,text),before=inventory(dep);
     const r=cleanup(dep,envFor(['harvest']));
-    assert.equal(r.status,1,name);assert.equal(r.out.error.code,'E_UNSUPPORTED',`${name}: ${r.stdout}`);assert.match(r.out.error.message,/nothing was written/);
+    assert.equal(r.status,1,name);assert.equal(r.out.error.code,'E_UNSUPPORTED',`${name}: ${r.stdout}`);assert.match(r.out.error.message,/nothing was written\. Report it to the deployment's owner/);
+    assert.doesNotMatch(r.out.error.message,/by hand/,'never an instruction to hand-edit oats-local.yaml');
     assert.deepEqual(inventory(dep),before,`${name}: bytes unchanged`);
   }
   // host origin present but the key is not in the file at all
@@ -170,6 +175,34 @@ test('a soul-origin key refuses E_REMOVED with the remaining keys while the host
   assert.equal(r.status,1);assert.equal(r.out.error.code,'E_REMOVED');assert.match(r.out.error.message,/^knowledge\.harvest-model from soul \(soul\.yaml#\/knowledge\)/);
   assert.deepEqual(r.out.error.result,{file,removed:['settings.oats.okf.harvest'],written:true,remaining:[{key:'harvest-model',kind:'soul',at:'soul.yaml#/knowledge'}]});
   assert.equal(fs.readFileSync(file,'utf8'),'settings:\n  oats.okf:\n    bindings-file: /b.json\n');
+});
+
+const SOUL={kind:'soul',at:'soul.yaml#/knowledge'};
+const soulOff=(origin=SOUL,extra={})=>({OATS_SETTINGS:JSON.stringify({...extra,harvest:'off'}),OATS_SETTINGS_ORIGINS:JSON.stringify({'/harvest':origin})});
+test('the soul opt-out knowledge: { harvest: off } is valid; absent is the default; only the soul layer may set it',()=>{
+  assert.deepEqual(legacySettings(soulOff()),[]);assert.doesNotThrow(()=>refuseLegacySettings(soulOff()));assert.equal(soulOptOut(soulOff()),true);
+  assert.equal(soulOptOut({OATS_SETTINGS:'{}'}),false,'absent: the normal 5.0 proposal flow');
+  // A host or spawn value, even off, is removed: the merged value's origin is the last layer, so a host key masks the soul's.
+  for(const origin of [HOST,{kind:'spawn'},{kind:'workspace'},null]) {
+    const env=origin?soulOff(origin):{OATS_SETTINGS:JSON.stringify({harvest:'off'})};
+    assert.equal(soulOptOut(env),false);assert.throws(()=>refuseLegacySettings(env),{code:'E_REMOVED'});
+  }
+  // The soul's harvest-runtime / harvest-model stay removed beside its opt-out.
+  const both={OATS_SETTINGS:JSON.stringify({harvest:'off','harvest-model':SECRET}),OATS_SETTINGS_ORIGINS:JSON.stringify({'/harvest':SOUL,'/harvest-model':SOUL})};
+  assert.deepEqual(legacySettings(both).map(f=>f.key),['harvest-model']);
+});
+
+test('a host harvest key over a soul opt-out still needs the host cleanup; the cleanup never touches the soul',t=>{
+  const dep=deployment(t,'settings:\n  oats.okf:\n    bindings-file: /b.json\n    harvest: off\n'),file=join(dep,'oats-local.yaml');
+  // The kernel reports the host as the origin (it masks the soul's off): every command refuses until the host key is gone.
+  assert.throws(()=>refuseLegacySettings(soulOff(HOST)),e=>e.code==='E_REMOVED' && /^settings\.oats\.okf\.harvest from host/.test(e.message));
+  const r=cleanup(dep,soulOff(HOST));
+  assert.equal(r.status,0,r.stdout);assert.deepEqual(r.out.result,{file,removed:['settings.oats.okf.harvest'],written:true});
+  assert.equal(fs.readFileSync(file,'utf8'),'settings:\n  oats.okf:\n    bindings-file: /b.json\n');
+  // Then the soul's own off shows through: valid, and nothing left for the cleanup.
+  const again=cleanup(dep,soulOff());
+  assert.equal(again.status,0,again.stdout);assert.deepEqual(again.out.result,{file,removed:[],written:false});
+  assert.equal(run(['--help'],soulOff()).status,0);
 });
 
 test('with a host legacy key, inspect/bases/init and the spawn hook refuse E_REMOVED before effects; --help still answers',t=>{

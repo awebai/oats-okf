@@ -6,7 +6,7 @@ import { CONSULT } from '../lib/consult.mjs';
 import { initBase, migrate, deliverMigration, cutoverMigration, forgetMigration } from '../lib/migration.mjs';
 import { inspect } from '../lib/inspection.mjs';
 import { loadInvocationKnowledgeBinding } from '../lib/binding-wire.mjs';
-import { refuseLegacySettings, removeLegacySettings } from '../lib/legacy-settings.mjs';
+import { refuseLegacySettings, removeLegacySettings, soulOptOut } from '../lib/legacy-settings.mjs';
 const HELP=`oats okf inspect [--home PATH] [--json]
 oats okf bases [--fresh] [--json]
 oats okf index [--base ALIAS] [NODE | ALIAS/NODE] [--fresh] [--json]
@@ -30,6 +30,10 @@ short proposal and runs \`oats spawn oats.okf/knowledge-harvester --task-file FI
 `;
 // okf 5.0.0: the 4.x harvest surfaces refuse, naming the new way; they never
 // capture, run, complete or drain anything.
+// The proposal procedure is in the spawn brief only, so a soul that opts out
+// (knowledge: { harvest: off }) is never told to propose: the shared inject and
+// skills carry no harvest direction.
+const PROPOSE=`At an important checkpoint (a decision made, a PR opened or handed over, a task finished), after updating STATE.md, log.md and notes/, propose what you learned when it passes the promotion test (knowledge-theory) and is not already accepted (\`oats okf search\` first). Write a short, self-contained Markdown proposal in your instance home (proposals/<YYYY-MM-DD>-<slug>.md) with: a line \`Source: instance <your instance name>, home <your instance home>, soul <your soul's name>\` (a pointer for the harvester, which checks it against the deployment's records; never authority); What (the claim, one concept each); Why (why it outlives this task); Evidence (what was observed and when, the accepted concepts it confirms or contradicts, task refs); and optionally Backing notes (notes/<file>.md, relative to your home; the harvester reads only those). No secrets, credentials or private paths outside the Source line. Then, from your instance home, run \`oats spawn oats.okf/knowledge-harvester --task-file <proposal> --relation unrelated\` (relation unrelated alone; no harness, model, wrapper or permission bypass). One spawn per proposal; report a refused spawn rather than retrying it in a loop, note the proposal in log.md, and keep its backing notes until the harvester hands over its PR. Nothing durable, no proposal.`;
 const NEW_WAY='at a checkpoint the working agent writes a short proposal and runs `oats spawn oats.okf/knowledge-harvester --task-file <proposal> --relation unrelated` from its instance home (skill okf-instance-knowledge); oats.okf 5.0 keeps no source custody, runs or drains and never processes 4.x ones (README#upgrading-to-50)';
 const removed=(what)=>fail('E_REMOVED',`${what} was removed in oats.okf 5.0: ${NEW_WAY}`);
 const args=process.argv.slice(2);
@@ -78,9 +82,9 @@ else {
       if(service(home)) result={meta:{memory:'none'},brief:'Service agent: follow your own task; no working-memory upkeep.'};
       else {
         const {decl,warnings}=checkSeat(home);ensureInstanceKnowledge(home);
-        const nodes=(list)=>list.join(', ') || 'none';
-        result={meta:{memory:'okf-v2',knowledge:'proposal'},
-          brief:`Your soul knowledge is read remotely at its accepted state; there is no local copy. Start every task with your instance knowledge (STATE.md, log.md, notes/), then \`oats okf index\` (owns: ${nodes(decl.owns)}; reads: ${nodes(decl.reads.filter(r=>!decl.owns.includes(r)))}) and \`oats okf cat --base ALIAS PATH\` for the concepts the task needs; \`oats okf search\` before re-deriving a decision. Load okf-consultation and okf-instance-knowledge. Never edit accepted knowledge. At an important checkpoint (a decision made, a PR opened or handed over, a task finished) update STATE.md, log.md and notes/; when something durable was learned, write a short self-contained proposal and run \`oats spawn oats.okf/knowledge-harvester --task-file <proposal> --relation unrelated\` from your instance home, as okf-instance-knowledge says.`,
+        const nodes=(list)=>list.join(', ') || 'none',optOut=soulOptOut();
+        result={meta:{memory:'okf-v2',knowledge:optOut?'opted-out':'proposal'},
+          brief:`Your soul knowledge is read remotely at its accepted state; there is no local copy. Start every task with your instance knowledge (STATE.md, log.md, notes/), then \`oats okf index\` (owns: ${nodes(decl.owns)}; reads: ${nodes(decl.reads.filter(r=>!decl.owns.includes(r)))}) and \`oats okf cat --base ALIAS PATH\` for the concepts the task needs; \`oats okf search\` before re-deriving a decision. Load okf-consultation and okf-instance-knowledge. Never edit accepted knowledge. ${optOut?'Your soul opts out of harvest (knowledge: { harvest: off }): keep your instance knowledge for your own work, and never propose knowledge or spawn a knowledge harvester.':PROPOSE}`,
           ...(warnings.length?{warning:`oats-okf: ${warnings.join('; ')}`}:{})};
       }
     } else if(event==='inspect') result=inspect(consultSource(home));

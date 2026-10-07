@@ -48,6 +48,8 @@ export function parseProvenance(body) {
     for (const k of ['ownedNodes', 'readNodes']) need(Array.isArray(s[k]) && s[k].length <= 256 && s[k].every((n) => typeof n === 'string' && NODE.test(n)), `source.${k} must be a list of base/node`);
     need(Array.isArray(s.bases) && s.bases.length <= 64 && s.bases.every((b) => obj(b) && Object.keys(b).every((k) => ['alias', 'id', 'kind', 'root', 'repository'].includes(k)) && str(b.alias, 64) && str(b.id, 128) && ['git', 'directory'].includes(b.kind) && (b.root === undefined || str(b.root, 512)) && (b.repository === undefined || str(b.repository, 512))), 'source.bases must be a list of {alias, id, kind, root?, repository?}');
     need(!Array.isArray(s.bases) || s.bases.every((b) => !obj(b) || b.root === undefined || safeRoot(b.root)), 'source.bases[].root must be a relative directory without ..');
+    // v2 publishes no machine path: a base's repository is its GitHub owner/repo.
+    if (v.version === 2) need(!Array.isArray(s.bases) || s.bases.every((b) => !obj(b) || b.repository === undefined || (/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(b.repository) && b.repository.split('/').every((x) => x !== '.' && x !== '..'))), 'source.bases[].repository must be the GitHub owner/repo, never a path or URL');
   }
   if (need(obj(v.tasks), 'tasks must be an object')) {
     only(v.tasks, ['provider', 'refs'], 'tasks');

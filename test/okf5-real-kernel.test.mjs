@@ -71,6 +71,11 @@ test(`5.0.0 real OATS ${KERNEL}: legacy-key cleanup, a source spawn, its checkpo
   write(join(soul, 'soul.yaml'), 'schemaVersion: 2\nname: source\ndescription: Domain expert fixture.\nwork: directory\n');
   write(join(soul, 'AGENTS.md'), '# Source\nNo model or production operations in this fixture.\n');
   write(join(soul, 'okf.json'), JSON.stringify({ version: 1, owner: 'source-owner', owns: ['project/expert'], reads: ['project/peer'] }));
+  // A soul whose author opts out of harvest: it consults, but is never harvested.
+  const quietSoul = join(ws, 'souls/quiet');
+  write(join(quietSoul, 'soul.yaml'), 'schemaVersion: 2\nname: quiet\ndescription: Public fixture soul that opts out.\nwork: directory\nknowledge: { harvest: off }\n');
+  write(join(quietSoul, 'AGENTS.md'), '# Quiet\nNo model or production operations in this fixture.\n');
+  write(join(quietSoul, 'okf.json'), JSON.stringify({ version: 1, owner: 'source-owner', owns: [], reads: ['project/peer'] }));
   repo(ws, join(base, 'ws.git'));
 
   // ---- the deployment: one Git knowledge base, and a 4.x harvest key left in its host settings ----
@@ -144,7 +149,8 @@ test(`5.0.0 real OATS ${KERNEL}: legacy-key cleanup, a source spawn, its checkpo
     assert.deepEqual(srcRecord.capabilityMeta?.['oats.okf'], { memory: 'okf-v2', knowledge: 'proposal' });
     assert.ok(fs.readFileSync(join(src, 'TASK.md'), 'utf8').includes(SPAWN_LINE), 'the spawn brief (TASK.md) names the exact harvester spawn');
     const srcAgents = fs.readFileSync(join(src, 'AGENTS.md'), 'utf8');
-    assert.ok(srcAgents.includes('## Knowledge: OKF') && srcAgents.includes('oats spawn oats.okf/knowledge-harvester --task-file <proposal>'), 'the composed okf inject names the spawn');
+    assert.ok(srcAgents.includes('## Knowledge: OKF'), 'the okf inject is composed');
+    assert.ok(!srcAgents.includes('oats spawn oats.okf/knowledge-harvester'), 'only the spawn brief carries the harvest direction, never the shared inject');
     const srcSkills = srcRecord.skills.map(s => s.name);
     for (const s of ['okf-consultation', 'okf-instance-knowledge', 'knowledge-theory']) {
       assert.ok(srcSkills.includes(s), `source composes ${s}: ${srcSkills}`);
@@ -177,6 +183,7 @@ test(`5.0.0 real OATS ${KERNEL}: legacy-key cleanup, a source spawn, its checkpo
     for (const k of ['parentInstance', 'siblingInstance', 'relation', 'relativeTo']) assert.equal(hRecord[k], undefined, `${k}: ${JSON.stringify(hRecord[k])}`);
     assert.equal(hRecord.spawnOrigin, 'operator', 'not an instance-origin (child) spawn: ambient OATS_INSTANCE is not parentage');
     assert.ok(!strings(hRecord).some(v => v === 'src' || v.includes(src)), 'nothing in the harvester record names the source');
+    assert.deepEqual(hRecord.capabilityMeta?.['oats.okf-harvest'], { sourceChecked: true }, 'the required oats.okf-harvest spawn hook checked the recorded source');
     assert.deepEqual(fs.readFileSync(join(src, 'instance.json')), srcBefore, 'the source record gained no child or lineage');
 
     // Composition: oats.okf-harvest only, knowledge: none (no oats.okf, its hook, skills or instance knowledge).
@@ -254,13 +261,13 @@ test(`5.0.0 real OATS ${KERNEL}: legacy-key cleanup, a source spawn, its checkpo
     // Step 8: the v2 block, from records only; the maintainer's parser accepts it.
     const block = {
       version: 2,
-      source: { soul: claimedSoul, owner: okf.owner, instance: record.instance, ownedNodes, readNodes: okf.reads, bases: [{ alias: 'project', id: kb.id, kind: kb.kind, root: kb.root, repository: kb.repository }] },
+      source: { soul: claimedSoul, owner: okf.owner, instance: record.instance, ownedNodes, readNodes: okf.reads, bases: [{ alias: 'project', id: kb.id, kind: kb.kind, root: kb.root, repository: kb.pr.repository }] },
       evidence,
       tasks: { provider: record.capabilities.find(c => c.layer === 'tasks')?.id ?? null, refs: [] },
       harvester: { instance: harvester, alias: null },
     };
     const body = `okf-harvest: retry budget is per request\n\nPromoted: project/expert (decision).\n\n\`\`\`okf-harvest\n${JSON.stringify(block, null, 2)}\n\`\`\`\n`;
-    assert.ok(!body.includes(record.home), 'no source home path in the PR body');
+    assert.ok(!body.includes(record.home) && !body.includes(kb.repository), 'no source home or clone path in the PR body');
     const parsed = parseProvenance(body);
     assert.equal(parsed.valid, true, parsed.problems.join('; '));
     assert.deepEqual(parsed.value, block);
@@ -297,5 +304,23 @@ test(`5.0.0 real OATS ${KERNEL}: legacy-key cleanup, a source spawn, its checkpo
     assert.ok(fs.existsSync(join(hHome, 'TASK.md')), 'the harvester home is kept');
     assert.deepEqual(fs.readFileSync(join(hHome, 'instance.json')), hBefore, 'retiring the source does not touch the harvester record');
     assert.equal(fs.existsSync(asked), false, 'no harness was ever asked to start a model');
+  });
+
+  await t.test('f) a soul that opts out (knowledge: { harvest: off }) spawns and consults with no proposal instruction, and the harvester spawn hook refuses it in code', () => {
+    const quiet = ok(['spawn', 'quiet', '--name', 'quiet-1', '--no-launch']).result.home;
+    const record = json(join(quiet, 'instance.json'));
+    assert.deepEqual(record.capabilityMeta?.['oats.okf'], { memory: 'okf-v2', knowledge: 'opted-out' }, 'the kernel forwards the soul opt-out and oats.okf accepts it');
+    const task = fs.readFileSync(join(quiet, 'TASK.md'), 'utf8');
+    assert.ok(!task.includes('oats spawn') && task.includes('never propose knowledge'), 'no proposal instruction for an opted-out soul');
+    assert.ok(fs.statSync(join(quiet, 'STATE.md')).isFile());
+    ok(['okf', 'bases'], { cwd: quiet, as: { instance: 'quiet-1', home: quiet } });
+    // Even if it proposed, the harvester's required spawn hook reads the RECORDED soul and refuses.
+    write(join(quiet, 'proposals/p.md'), `# OKF proposal: x\n\nSource: instance quiet-1, home ${quiet}, soul quiet\n\n## What\nA claim.\n`);
+    const before = harvesterHomes();
+    const r = run(['spawn', 'oats.okf/knowledge-harvester', '--task-file', 'proposals/p.md', '--relation', 'unrelated', '--no-launch'], { cwd: quiet, as: { instance: 'quiet-1', home: quiet } });
+    assert.notEqual(r.status, 0, r.text);
+    assert.match(r.text, /E_OPTED_OUT/, r.text);
+    assert.deepEqual(harvesterHomes(), before, 'no harvester exists for an opted-out source');
+    assert.equal(fs.existsSync(asked), false);
   });
 });

@@ -60,8 +60,19 @@ settings:
 | `git-timeout` | Seconds for each Git operation that talks to a remote (clone, fetch, push, ls-remote); default 600. Local object reads keep a short fixed limit. |
 | `consult-max-age` | Seconds a Git base's cached accepted commit may age before a consult read refetches; default 300, 0 refetches on every read. |
 
-Any other key is refused (`E_CONFIG`). The 4.x keys `harvest`,
-`harvest-runtime` and `harvest-model` are removed: wherever one is set, every
+Any other key is refused (`E_CONFIG`).
+
+**The soul's opt-out stays.** A soul author can write
+`knowledge: { harvest: off }` in soul.yaml: its instances still consult and
+keep instance knowledge, but are never told to propose, and the harvester
+refuses to harvest them (its spawn hook checks the recorded soul in code). A
+public soul is reachable from outside, and its notes must not be harvested.
+5.0 removes the HOST harvest switch, not this author's safety opt-out. Absent
+means the normal 5.0 proposal flow.
+
+Every other 4.x harvest key is removed: a host or spawn `harvest` (even
+`off`; a host value also masks the soul's opt-out), and `harvest-runtime` and
+`harvest-model` in any layer. Wherever one is set, every
 `oats okf` command and hook (except the cleanup below) refuses with
 `E_REMOVED` before doing anything, in one sentence that names the layer that
 set it, for example:
@@ -71,9 +82,9 @@ settings.oats.okf.harvest from host (oats-local.yaml#/settings/oats.okf) was rem
 ```
 
 - A **host** value (`oats-local.yaml`) names the cleanup command.
-- A **soul** value (`knowledge: { harvest: off }` in soul.yaml, the 4.x
-  opt-out) says to remove the key in the soul's reviewed source and
-  sync/respawn; host cleanup cannot remove it.
+- A **soul** `harvest` other than `off`, or a soul `harvest-runtime` or
+  `harvest-model`, says to change it in the soul's reviewed source and
+  sync/respawn; host cleanup cannot change a soul.
 - A **spawn** value (`--provider oats.okf harvest=…`) says to drop it from
   the spawn command.
 - `harvest-runtime` and `harvest-model` say the harvester now launches with
@@ -254,7 +265,9 @@ Source: instance <instance name>, home <instance home>, soul <soul name>
 - notes/<file>.md
 ```
 
-and spawns a harvester on it, from its instance home:
+and spawns a harvester on it, from its instance home. The spawn brief (not
+the shared inject or skills) carries this procedure, and only for a soul that
+has not opted out:
 
 ```sh
 oats spawn oats.okf/knowledge-harvester --task-file proposals/<file>.md --relation unrelated
@@ -282,8 +295,11 @@ The harvester (`knowledge: none`, capability `oats.okf-harvest`) follows the
    proposal: the one `agents/*/instances/<instance>/instance.json` whose
    `instance` and `home` match; that record's soul (`soul.yaml` name and
    `okf.json` owner, owns and reads); and the bindings file named in the
-   record's effective `oats.okf` settings. Owner, owned nodes, bases and
-   destination come only from these.
+   record's `providers["oats.okf"]` settings. Owner, owned nodes, bases and
+   destination come only from these. A source whose recorded soul opts out is
+   refused, first by the harvester's required spawn hook (code, before the
+   harvester exists: it also refuses an unrecorded or ambiguous source), then
+   by the skill.
 3. **Reads only the notes the proposal names**, as `notes/<path>.md` under
    the source home (regular files, no symlinks, no `..`), recording each
    one's SHA-256. It never reads STATE.md, log.md, other notes, transcripts
@@ -335,7 +351,7 @@ answer `E_REMOVED` and never run a 4.x completion.
     "instance": "<source instance>",
     "ownedNodes": ["<alias>/<node>"],
     "readNodes": ["<alias>/<node>"],
-    "bases": [{ "alias": "<alias>", "id": "<base id>", "kind": "git", "root": "<root>", "repository": "<repository, without credentials>" }]
+    "bases": [{ "alias": "<alias>", "id": "<base id>", "kind": "git", "root": "<root>", "repository": "<owner>/<repo>" }]
   },
   "evidence": [
     { "note": "notes/<file>.md", "sha256": "<64-hex of what was read>" },
@@ -527,9 +543,10 @@ unknown operation.
   `oats okf setup --remove-legacy-settings --soul <soul> [--plan] --json`,
   run from the deployment. It only deletes `settings.oats.okf.harvest`,
   `harvest-runtime` and `harvest-model` (`--plan` writes nothing), refuses
-  with `E_UNSUPPORTED` on YAML it cannot edit line by line, and cannot remove
-  a soul or spawn value: remove a soul's `knowledge: { harvest: … }` in its
-  source. Until the keys are gone, every command and the spawn hook refuse.
+  with `E_UNSUPPORTED` on YAML it cannot edit line by line (report that to
+  the deployment's owner), and never touches a soul: a soul's
+  `knowledge: { harvest: off }` stays valid. Until the host keys are gone,
+  every command and the spawn hook refuse.
 - 5.0 neither reads nor deletes 4.x custody (`<stateDir>/sources/`,
   `owners.json`); finish or dispose of it under 4.x. A registered 4.x home
   retired after the pin is kept with `E_HARVEST_CONSENT_UNKNOWN` from its

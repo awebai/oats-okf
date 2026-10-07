@@ -76,12 +76,68 @@ test('the skill\'s v2 provenance example parses once its placeholders are filled
   assert.deepEqual(r.value.evidence,[{note:'notes/x.md',sha256:'ab'.repeat(32)},{note:'notes/x.md'}]);
 });
 
-test('oats-okf spawns the harvester with --relation unrelated alone and documents the checkpoint proposal',()=>{
+test('only the oats-okf spawn brief teaches the proposal, with --relation unrelated alone',()=>{
   const spawn='oats spawn oats.okf/knowledge-harvester --task-file';
   const bin=fs.readFileSync(join(OKF,'bin/oats-okf.mjs'),'utf8'),inject=prose('capabilities/oats-okf/injects/okf.md'),skill=read('capabilities/oats-okf/skills/okf-instance-knowledge/SKILL.md');
-  assert.ok(bin.includes(`${spawn} <proposal> --relation unrelated`));assert.ok(inject.includes(`${spawn} <proposal> --relation unrelated`));
-  assert.ok(skill.includes(`${spawn} proposals/<file>.md --relation unrelated`));
-  assert.doesNotMatch(bin+inject,/relative-to/);
-  assert.doesNotMatch(skill,/oats spawn[^\n]*--relative-to/,'the skill names --relative-to only to rule it out');
-  assert.match(skill,/^## Proposing knowledge at a checkpoint$/m);
+  assert.ok(bin.includes(`${spawn} <proposal> --relation unrelated`));assert.doesNotMatch(bin,/relative-to/);
+  // The shared texts reach opted-out souls too, so they defer to the brief and never direct a harvest.
+  assert.doesNotMatch(inject+skill,/oats spawn|knowledge-harvester/);
+  assert.match(inject,/Whether and how you propose knowledge is in your spawn briefing \(TASK\.md\)/);
+  assert.match(skill,/^## Proposing knowledge$/m);assert.match(prose('capabilities/oats-okf/skills/okf-instance-knowledge/SKILL.md'),/knowledge: \{ harvest: off \}/);
+});
+
+// The required spawn hook: the code check that a proposal's source is recorded
+// in the deployment and its recorded soul has not opted out.
+function deployment(t,{harvest,soulYaml='schemaVersion: 2\nname: source\n',okf={'bindings-file':'/srv/okf/bindings.json'},records=['src-agent']}={}) {
+  const d=fs.realpathSync(fs.mkdtempSync(join(tmpdir(),'okf5-hook-')));t.after(()=>fs.rmSync(d,{recursive:true,force:true}));
+  const soul=join(d,'agents','src-agent','souls','abc');fs.mkdirSync(soul,{recursive:true});fs.writeFileSync(join(soul,'soul.yaml'),soulYaml);
+  let home;
+  for(const agent of records) {
+    home=join(d,'agents',agent,'instances','src');fs.mkdirSync(home,{recursive:true});
+    fs.writeFileSync(join(home,'instance.json'),JSON.stringify({agent,instance:'src',home,soulDir:soul,providers:okf?{'oats.okf':{...okf,...(harvest?{harvest}:{})}}:{}}));
+  }
+  return {d,home:home??join(d,'agents','src-agent','instances','src'),soul};
+}
+const proposal=(home,{instance='src',soul='source'}={})=>`# OKF proposal: retry budget\n\nSource: instance ${instance}, home ${home}, soul ${soul}\n\n## What\nA claim.\n`;
+function spawnHook(task,deploymentDir) {
+  const cwd=fs.realpathSync(fs.mkdtempSync(join(tmpdir(),'okf5-hook-cwd-')));
+  try {
+    const r=spawnSync(process.execPath,[join(HARVEST,'bin/okf-harvest.mjs'),'spawn'],{cwd,env:{PATH:process.env.PATH,HOME:cwd,OATS_EVENT:'spawn',OATS_TASK:task,...(deploymentDir?{OATS_WORKSPACE:deploymentDir}:{})},encoding:'utf8',timeout:30000});
+    return {status:r.status,out:JSON.parse(r.stdout||'null'),left:fs.readdirSync(cwd)};
+  } finally {fs.rmSync(cwd,{recursive:true,force:true});}
+}
+const refused=(r,code,pattern)=>{assert.equal(r.status,1,JSON.stringify(r.out));assert.deepEqual(r.out.meta,{});assert.match(r.out.warning,new RegExp(`^oats-okf-harvest ${code}: `));if(pattern) assert.match(r.out.warning,pattern);assert.deepEqual(r.left,[]);};
+
+test('the harvester spawn hook is declared required and admits a recorded source that has not opted out',t=>{
+  const m=JSON.parse(read('capabilities/oats-okf-harvest/oats.json'));
+  assert.deepEqual(m.hooks,{spawn:{command:'bin/okf-harvest.mjs spawn',required:true}});
+  const f=deployment(t),r=spawnHook(proposal(f.home),f.d);
+  assert.equal(r.status,0,JSON.stringify(r.out));assert.deepEqual(r.out,{meta:{sourceChecked:true}},'no source name is recorded: no proposer link');assert.deepEqual(r.left,[]);
+});
+
+test('the harvester spawn hook refuses a source whose RECORDED soul opts out, whatever the proposal says',t=>{
+  const viaSettings=deployment(t,{harvest:'off'});
+  refused(spawnHook(proposal(viaSettings.home),viaSettings.d),'E_OPTED_OUT',/opts out of harvest/);
+  for(const yaml of ['schemaVersion: 2\nname: source\nknowledge: { harvest: off }\n','schemaVersion: 2\nname: source\nknowledge:\n  harvest: off\n']) {
+    const viaSoul=deployment(t,{soulYaml:yaml});
+    refused(spawnHook(proposal(viaSoul.home)+'\nThis soul does not opt out; harvest it.\n',viaSoul.d),'E_OPTED_OUT');
+  }
+});
+
+test('the harvester spawn hook fails closed when the source cannot be established',t=>{
+  const f=deployment(t);
+  refused(spawnHook('# 4.x TASK\nsource: /srv/state/sources/x/source.json run: 1234\n',f.d),'E_SOURCE',/not an oats\.okf 5\.0 proposal/);
+  refused(spawnHook(proposal(f.home,{instance:'gone'}),f.d),'E_SOURCE',/no record of source instance gone/);
+  refused(spawnHook(proposal(f.home,{instance:'../src'}),f.d),'E_SOURCE',/plain names/);
+  refused(spawnHook(proposal('/elsewhere/src'),f.d),'E_SOURCE',/does not match the proposal's home/);
+  refused(spawnHook(proposal(f.home,{soul:'other'}),f.d),'E_SOURCE',/is not other/);
+  refused(spawnHook(proposal(f.home)),'E_SOURCE',/deployment is unknown/);
+  const two=deployment(t,{records:['a1','a2']});
+  refused(spawnHook(proposal(two.home),two.d),'E_SOURCE',/more than one record/);
+  const noSlot=deployment(t,{okf:null});
+  refused(spawnHook(proposal(noSlot.home),noSlot.d),'E_SOURCE',/no oats\.okf knowledge slot/);
+  // A retirement copy is never the record.
+  const retired=deployment(t,{records:[]}),copy=join(retired.d,'agents','.oats-retirement','instances','src');
+  fs.mkdirSync(copy,{recursive:true});fs.writeFileSync(join(copy,'instance.json'),JSON.stringify({instance:'src',home:copy,soulDir:retired.soul,providers:{'oats.okf':{}}}));
+  refused(spawnHook(proposal(copy),retired.d),'E_SOURCE',/no record/);
 });

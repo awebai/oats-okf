@@ -23,5 +23,11 @@
   "commands": {
     "complete": "bin/okf-harvest.mjs complete",
     "harvest-status": "bin/okf-harvest.mjs harvest-status"
+  },
+  "hooks": {
+    "spawn": {
+      "command": "bin/okf-harvest.mjs spawn",
+      "required": true
+    }
   }
 }

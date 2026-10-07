@@ -21,12 +21,8 @@ The work mode:
   and notes/ first, so your future self can continue.
 - **At an important checkpoint**—a decision made, a PR opened or handed
   over, a task finished—first update STATE.md, log.md and relevant notes.
-  If something durable was learned, **propose it**: write a short,
-  self-contained proposal and spawn the knowledge harvester on it, directly
-  (`oats spawn oats.okf/knowledge-harvester --task-file <proposal>
-  --relation unrelated`, from your instance home). okf-instance-knowledge
-  says how. Nothing durable, no proposal; report a refused spawn rather than
-  retrying it in a loop.
+  Whether and how you propose knowledge is in your spawn briefing (TASK.md):
+  follow it exactly, and without that instruction never propose.
 - **Every so often while working, and always before a design decision or
   before re-deriving something:** `oats okf search` / `cat` the relevant
   concepts and re-read your own notes. Consult prior decisions before
@@ -42,9 +38,8 @@ contradict soul knowledge (flag those as candidate supersessions). Not code
 descriptions, command logs, retries, secrets, verbatim third-party messages,
 or what the tracker and docs already hold. One concept per note in notes/;
 STATE.md is the current picture (rewritten); log.md is dated events
-(append-only). You propose; the knowledge harvester judges what is promoted,
-and the knowledge maintainer reviews its PR. Load **knowledge-theory** for
-the promotion doctrine your proposals are judged by.
+(append-only). Soul knowledge changes only through a reviewed PR. Load
+**knowledge-theory** for what is worth keeping.
 
 **Never write accepted knowledge or soul knowledge.** This is an instruction
 boundary, not a filesystem sandbox. Skills remain curated soul artifacts.

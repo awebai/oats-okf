@@ -51,19 +51,31 @@ never try to deliver a 4.x run by other means.
 The deployment `D` is the directory that holds your `agents/` root: your home
 is `D/agents/<your agent>/instances/<you>`. Read **only** these files:
 
+The proposal's instance and soul must be plain names (letters, digits, `.`,
+`_`, `-`; no `/`, no `..`): anything else, STOP and report.
+
 1. **The instance record**: the one `D/agents/*/instances/<instance>/instance.json`
-   whose `instance` is the proposal's instance. It must exist, be the only
-   match, and its `home` must be that directory (and the proposal's home, when
-   given). Gone or ambiguous: STOP and report.
+   whose `instance` is the proposal's instance (never a copy under a dot
+   directory such as `instances/.oats-retirement/`). It must exist, be the
+   only match, and its `home` must be the proposal's home. Gone or ambiguous:
+   STOP and report.
 2. **The soul**: the record's `soulDir`. Its `soul.yaml` `name` must be the
-   proposal's soul. Its `okf.json` gives the `owner`, `owns` and `reads`
-   (`alias/node`) that bound the harvest. No okf.json: STOP and report (the
-   soul has no knowledge slot).
+   proposal's soul. **If that soul opts out** (`knowledge: { harvest: off }`
+   in its soul.yaml, or `providers["oats.okf"].harvest` is `off` in the
+   record), STOP: its knowledge is never harvested. Its `okf.json` gives the
+   `owner`, `owns` and `reads` (`alias/node`) that bound the harvest. No
+   okf.json: STOP and report (the soul has no knowledge slot).
 3. **The bindings**: the record's `providers["oats.okf"]` (the settings the
    kernel handed oats.okf at spawn) must exist (oats.okf is the soul's
-   knowledge provider) and name an absolute `bindings-file`. Read that JSON: `bases.<alias>` gives each base's `kind`,
-   `repository`, `acceptedBranch` and `root`. Missing or unreadable: STOP and
-   report.
+   knowledge provider) and name an absolute `bindings-file`. Read that JSON:
+   `bases.<alias>` gives each base's `kind`, `repository` (where to clone),
+   `acceptedBranch`, `root`, and for a Git base `pr.repository`, its GitHub
+   `<owner>/<repo>` (for `gh`). Missing or unreadable: STOP and report.
+
+Your spawn already checked steps 1 and 2 in code (the oats.okf-harvest spawn
+hook refuses an opted-out or unrecorded source), so a harvester exists only
+for a recorded source that has not opted out. Check them again anyway: the
+source may have retired since.
 
 A mismatch between the proposal and these records is a finding: report it,
 and harvest only what the records support. Never take an owner, a node, a
@@ -167,7 +179,7 @@ block, version 2 (no run or input ids):
     "instance": "<source instance>",
     "ownedNodes": ["<alias>/<node>"],
     "readNodes": ["<alias>/<node>"],
-    "bases": [{ "alias": "<alias>", "id": "<base id>", "kind": "git", "root": "<root>", "repository": "<repository, without credentials>" }]
+    "bases": [{ "alias": "<alias>", "id": "<base id>", "kind": "git", "root": "<root>", "repository": "<owner>/<repo>" }]
   },
   "evidence": [
     { "note": "notes/<file>.md", "sha256": "<64-hex of what you read>" },
@@ -181,6 +193,8 @@ block, version 2 (no run or input ids):
 
 - `ownedNodes` / `readNodes` come from the records (step 4), `evidence` only
   from step 3: a hash only for a note you actually read.
+- `repository` is the base's GitHub `pr.repository` (`<owner>/<repo>`), never
+  the clone locator: that can be a path on this machine.
 - No home, machine or account path anywhere in the PR.
 - Never push to the accepted branch, force-push or close a PR.
 

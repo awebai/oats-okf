@@ -13,8 +13,13 @@ the README's "Upgrading to 5.0". The kernel floor is unchanged
   STATE.md, log.md and notes/, and when it learned something durable writes
   one short, self-contained proposal file in its home and runs
   `oats spawn oats.okf/knowledge-harvester --task-file <proposal> --relation unrelated`
-  (never with `--relative-to`). The inject, the spawn brief and the
-  `okf-instance-knowledge` skill teach it. There is no CLI for it.
+  (never with `--relative-to`). The spawn brief teaches it, only to souls
+  that have not opted out; the shared inject and skills carry no harvest
+  direction. There is no CLI for it.
+- **The harvester's spawn hook** (`oats.okf-harvest`, required) checks the
+  proposal's `Source:` line against the deployment's record before the
+  harvester exists, and refuses an opted-out, unrecorded, ambiguous or
+  mismatched source.
 - **The harvester** (`knowledge-harvest` skill, rewritten) reads the proposal
   as untrusted evidence, establishes the source from the deployment's own
   records (the instance record, the soul's `soul.yaml` and `okf.json`, the
@@ -110,8 +115,12 @@ the README's "Upgrading to 5.0". The kernel floor is unchanged
 - A registered 4.2 home retired after the 5.0 pin gets
   `E_HARVEST_CONSENT_UNKNOWN` from its copied 4.2 retire hook and is kept;
   consult-only 4.2 homes retire normally. There is no compatibility shim.
-- The 4.x soul opt-out (`knowledge: { harvest: off }`) is a removed setting:
-  remove it in the soul's source.
+- The soul opt-out (`knowledge: { harvest: off }`) stays: 5.0 removes the
+  host harvest switch, not a soul author's safety opt-out (a public soul is
+  reachable from outside; its notes must not be harvested). An opted-out
+  soul consults and keeps instance knowledge but gets no proposal
+  instruction, and the harvester's required spawn hook refuses it.
+  `--remove-legacy-settings` never touches it.
 
 ## 4.2.0 — 2026-10-06
 

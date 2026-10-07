@@ -123,7 +123,8 @@ function contract(value,{required=false}={}) {
 }
 function runtimeSettings(settings) {
   if(obj(settings)) {const removed=removedMessage(settings);if(removed) removedError(removed);}
-  keys(settings,['bindings-file','state-dir'],[], 'OKF settings');
+  // `harvest` can only be the soul's own opt-out (off) once removedMessage passed.
+  keys(settings,['bindings-file','state-dir','harvest'],[], 'OKF settings');
   const descriptorFile=settings['bindings-file'],stateDir=settings['state-dir'];
   for(const name of ['bindings-file','state-dir']) {
     if(settings[name]===undefined) settingError(`${name}:missing`);

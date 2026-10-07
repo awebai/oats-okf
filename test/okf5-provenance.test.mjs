@@ -10,7 +10,7 @@ const {parseProvenance}=await import(new URL('../oats-package/capabilities/oats-
 const {reviewContext,notifyHarvester}=await import(new URL('../oats-package/capabilities/oats-okf-maintenance/bin/okf-maintenance.mjs',import.meta.url));
 const HEX='0123456789abcdef'.repeat(4),URL_='https://github.com/acme/kb/pull/7';
 const block=v=>`Harvested claims.\n\n\`\`\`okf-harvest\n${JSON.stringify(v,null,2)}\n\`\`\`\n`;
-const source={soul:'source',owner:'owner-1',instance:'source-1',ownedNodes:['kb/expert','kb/peer'],readNodes:['kb/peer'],bases:[{alias:'kb',id:'kb-1',kind:'git',root:'.',repository:'https://github.com/acme/kb.git'}]};
+const source={soul:'source',owner:'owner-1',instance:'source-1',ownedNodes:['kb/expert','kb/peer'],readNodes:['kb/peer'],bases:[{alias:'kb',id:'kb-1',kind:'git',root:'.',repository:'acme/kb'}]};
 const V2={version:2,source,evidence:[{note:'notes/decisions/a.md',sha256:HEX},{note:'notes/b.md'}],tasks:{provider:'oats.jira',refs:['ABC-1']},harvester:{instance:'harvester-1',alias:'harv'}};
 const V1={version:1,run:'7c9e6679-7425-40de-944b-e07fc1f90ae7',input:[HEX,'f'.repeat(64)],source:{soul:'source',soulId:'agents/source/soul',owner:'owner-1',instance:'source-1',ownedNodes:['kb/expert'],readNodes:[],bases:[{alias:'kb',id:'kb-1',kind:'git',root:'.'}]},tasks:{provider:null,refs:[]},harvester:{instance:'okf-harvest-source-1-20250101',alias:null}};
 const problems=v=>parseProvenance(block(v)).problems;
@@ -43,6 +43,15 @@ test('version 2 refuses run/input keys, a missing owner, unknown keys and bad ev
   assert.match(problems({...V2,evidence:'notes/a.md'}).join(),/evidence must be/);
   assert.match(problems({...V2,evidence:Array.from({length:101},(_,i)=>({note:`notes/n${i}.md`}))}).join(),/evidence must be/);
   assert.deepEqual(problems({...V2,evidence:Array.from({length:100},(_,i)=>({note:`notes/n${i}.md`}))}),[]);
+});
+
+test('version 2 publishes no machine path: a base repository is its GitHub owner/repo',()=>{
+  const withRepo=repository=>problems({...V2,source:{...source,bases:[{...source.bases[0],repository}]}}).join();
+  assert.equal(withRepo('acme/kb'),'');
+  for(const repository of ['/tmp/okf/knowledge.git','/home/u/kb.git','./kb','../..','file:///srv/kb.git','https://github.com/acme/kb.git','git@github.com:acme/kb.git','C:\\kb','acme/kb/extra'])
+    assert.match(withRepo(repository),/repository must be the GitHub owner\/repo/,repository);
+  // A 4.x (v1) block keeps its old shape: its repository string is not re-judged.
+  assert.equal(parseProvenance(block({...V1,source:{...V1.source,bases:[{...V1.source.bases[0],repository:'https://github.com/acme/kb.git'}]}})).valid,true);
 });
 
 test('review-context for a v2 PR returns its evidence and a reading line naming the notes',()=>{
