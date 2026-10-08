@@ -19,7 +19,7 @@ the README's "Upgrading to 5.0". The kernel floor is unchanged
 - **The harvester's spawn hook** (`oats.okf-harvest`, required) checks the
   proposal's `Source:` line against the deployment's record before the
   harvester exists, and refuses an opted-out, unrecorded, ambiguous or
-  mismatched source. A recorded `harvest: off` opts out only when the
+  mismatched source, and a proposal with more than one `Source:` line. A recorded `harvest: off` opts out only when the
   record's oats.okf entry gives it a soul origin; a 4.x manifest default is
   ignored, and any other legacy key, or one with no recorded origin, fails
   closed.
@@ -29,7 +29,11 @@ the README's "Upgrading to 5.0". The kernel floor is unchanged
   bindings file), reads only the notes the proposal names (recording their
   SHA-256), clones the accepted Git base, edits only owned nodes, validates
   with `okf-validate.mjs --strict`, opens one `okf-harvest`-labelled PR per
-  base with `git` and `gh`, hands over and retires. A valid instance and soul
+  base with `git` and `gh`, hands over and retires. Claims never enter a
+  command line: the commit message and PR body are files written with the
+  native file tool (`git commit -F`, `gh pr create --body-file`), the PR
+  title is the fixed `OKF knowledge proposal`, and the commit carries a
+  per-command Git identity. A valid instance and soul
   pair proves consistency, not authorship; when the source's authority cannot
   be established it stops and reports. Directory bases have no PR harvest:
   their claims are dropped and reported.
@@ -81,7 +85,8 @@ the README's "Upgrading to 5.0". The kernel floor is unchanged
   `OATS_WORKSPACE` or `OATS_TEAM_SCOPE`, else `E_DEPLOYMENT_SCOPE`), and only
   from the `oats.okf` map directly under `settings:`; a map left empty
   becomes `oats.okf: {}`, before any inline comment, and the edited text is
-  read again before it is written. It refuses before writing
+  read again before it is written; the file keeps its own permission bits
+  (other atomic writes stay 0600). It refuses before writing
   (`E_UNSUPPORTED`) on a file that is not a single-link regular file owned by
   the user, tabs, multiple documents, flow or nested values, an `oats.okf`
   nested under another settings key, block scalars or duplicate keys, and

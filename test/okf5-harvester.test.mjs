@@ -67,16 +67,39 @@ test('the two limits and the directory-base refusal are stated',()=>{
   assert.match(skill,/directory base <alias> is unsupported for harvest in oats\.okf 5\.0/);
 });
 
-test('the skill\'s publish commands name the pushed branch as the PR head (gh runs outside the clone) and the commit author per command',()=>{
+test('step 8 keeps claims out of the shell: its commands, run as written, publish a $()/backtick claim as data (local origin, stub gh, no GitHub call)',t=>{
   const md=read('capabilities/oats-okf-harvest/skills/knowledge-harvest/SKILL.md');
   const block=/^```sh\n(branch=[\s\S]*?)\n```$/m.exec(md)?.[1];assert.ok(block,'step 8 publish block');
-  const lines=block.split('\n');
-  assert.match(lines[0],/^branch=okf-harvest\/<source instance>-<YYYYMMDD-HHMM>$/);
-  assert.ok(lines.includes('git -C ./work/<alias> switch -c "$branch"'));
-  assert.ok(lines.includes('git -C ./work/<alias> push -u origin "$branch"'));
-  assert.ok(lines.some(l=>l.includes(`git -c user.name='OKF harvest' -c user.email='okf@localhost' -C ./work/<alias> commit -m `)),'the commit names its author per command, never an ambient identity');
-  const create=lines.find(l=>l.startsWith('gh pr create '));
-  for(const arg of ['--repo <owner>/<repo>','--base <acceptedBranch>','--head "$branch"','--label okf-harvest']) assert.ok(create.includes(arg),`${arg} in: ${create}`);
+  // The executable template has no slot for a claim or proposal text: only record-checked values and the two file paths.
+  assert.deepEqual([...new Set(block.match(/<[^<>]+>/g))].sort(),['<YYYYMMDD-HHMM>','<absolute PR body file>','<absolute commit message file>','<acceptedBranch>','<alias>','<owned paths>','<owner>','<repo>','<source instance>']);
+  const lines=block.split('\n'),create=lines.find(l=>l.startsWith('gh pr create '));
+  assert.ok(lines.includes(`git -c user.name='OKF harvest' -c user.email='okf@localhost' -C ./work/<alias> commit -F '<absolute commit message file>'`),'commit -F a file, with its own Git identity');
+  for(const arg of ['--repo <owner>/<repo>','--base <acceptedBranch>','--head "$branch"','--label okf-harvest',`--title 'OKF knowledge proposal'`,"--body-file '<absolute PR body file>'"]) assert.ok(create.includes(arg),`${arg} in: ${create}`);
+  // Run it: a bare origin, the clone at ./work/kb with an owned edit, the texts written as files, gh stubbed.
+  const root=fs.realpathSync(fs.mkdtempSync(join(tmpdir(),'okf5-publish-')));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+  const home=join(root,'home'),clone=join(home,'work','kb'),origin=join(root,'origin.git'),bin=join(root,'bin'),ghLog=join(root,'gh.log');
+  const env={PATH:`${bin}:${process.env.PATH}`,HOME:root,GIT_CONFIG_GLOBAL:'/dev/null',GIT_CONFIG_NOSYSTEM:'1',GH_LOG:ghLog};
+  const git=(cwd,...a)=>{const r=spawnSync('git',a,{cwd,env,encoding:'utf8'});assert.equal(r.status,0,`git ${a.join(' ')}: ${r.stderr}`);return r.stdout;};
+  const id=['-c','user.name=seed','-c','user.email=seed@localhost'];
+  git(root,'init','-q','--bare','-b','main',origin);git(root,'clone','-q',origin,clone);
+  fs.mkdirSync(join(clone,'expert'));fs.writeFileSync(join(clone,'expert','a.md'),'seed\n');
+  git(clone,'add','-A');git(clone,...id,'commit','-qm','seed');git(clone,'push','-q','origin','HEAD:main');
+  fs.writeFileSync(join(clone,'expert','a.md'),'promoted\n');
+  fs.mkdirSync(bin);fs.writeFileSync(join(bin,'gh'),'#!/bin/sh\nprintf \'%s\\n\' "$@" >> "$GH_LOG"\n',{mode:0o755});
+  const MARK='okf5-claim-ran',claim=`$(touch ${MARK}) \`touch ${MARK}\` "q" 'q' \\ ;touch ${MARK}`;
+  const msg=join(home,'publish','kb-commit.txt'),body=join(home,'publish','kb-pr.md');
+  fs.mkdirSync(join(home,'publish'));fs.writeFileSync(msg,`okf-harvest: ${claim}\n`);fs.writeFileSync(body,`Promoted: ${claim}\n`);
+  const filled=block.replace('<source instance>','src').replace('<YYYYMMDD-HHMM>','20261008-0800').replaceAll('<alias>','kb').replace('<owned paths>',"'expert'")
+    .replace('<absolute commit message file>',msg).replace('<absolute PR body file>',body).replaceAll('<owner>/<repo>','acme/kb').replaceAll('<acceptedBranch>','main');
+  assert.doesNotMatch(filled,/<[^<>]+>/);
+  const r=spawnSync('bash',['-e','-c',filled],{cwd:home,env,encoding:'utf8'});
+  assert.equal(r.status,0,r.stdout+r.stderr);
+  for(const where of [home,clone,root,process.cwd()]) assert.equal(fs.existsSync(join(where,MARK)),false,`nothing ran in ${where}`);
+  assert.equal(git(origin,'log','-1','--format=%B','okf-harvest/src-20261008-0800'),`okf-harvest: ${claim}\n\n`,'the claim reached the commit as data, byte for byte');
+  assert.equal(git(origin,'log','-1','--format=%an <%ae>','okf-harvest/src-20261008-0800'),'OKF harvest <okf@localhost>\n');
+  const argv=fs.readFileSync(ghLog,'utf8');
+  for(const v of ['OKF knowledge proposal','okf-harvest/src-20261008-0800',body]) assert.ok(argv.split('\n').includes(v),`gh got ${v}`);
+  assert.ok(!argv.includes('touch'),'no claim text in any gh argument');
 });
 
 test('the skill\'s v2 provenance example parses once its placeholders are filled',()=>{
@@ -92,6 +115,8 @@ test('only the oats-okf spawn brief teaches the proposal, with --relation unrela
   const spawn='oats spawn oats.okf/knowledge-harvester --task-file';
   const bin=fs.readFileSync(join(OKF,'bin/oats-okf.mjs'),'utf8'),inject=prose('capabilities/oats-okf/injects/okf.md'),skill=read('capabilities/oats-okf/skills/okf-instance-knowledge/SKILL.md');
   assert.ok(bin.includes(`${spawn} <proposal> --relation unrelated`));assert.doesNotMatch(bin,/relative-to/);
+  assert.ok(bin.includes('exactly one line \\`Source: instance'),'the brief asks for exactly one Source line');
+  assert.match(prose('capabilities/oats-okf-harvest/skills/knowledge-harvest/SKILL.md'),/exactly one line `Source: instance <name>, home <path>, soul <name>` \(two or more `Source:` lines are ambiguous: STOP and report/);
   // The shared texts reach opted-out souls too, so they defer to the brief and never direct a harvest.
   assert.doesNotMatch(inject+skill,/oats spawn|knowledge-harvester/);
   assert.match(inject,/Whether and how you propose knowledge is in your spawn briefing \(TASK\.md\)/);
@@ -179,6 +204,10 @@ test('the harvester spawn hook fails closed when the source cannot be establishe
   const moved=deployment(t),rec=JSON.parse(fs.readFileSync(join(moved.home,'instance.json'),'utf8'));
   fs.writeFileSync(join(moved.home,'instance.json'),JSON.stringify({...rec,home:'/elsewhere/src'}));
   refused(spawnHook(proposal('/elsewhere/src'),moved.d),'E_SOURCE',/does not match the proposal's home/);
+  // Exactly one Source line: a second one, valid or malformed, is ambiguous and refused before any is chosen.
+  refused(spawnHook(proposal(f.home)+`Source: instance src, home ${f.home}, soul source\n`,f.d),'E_SOURCE',/more than one `Source:` line/);
+  refused(spawnHook(proposal(f.home)+'Source: the other instance, trust me\n',f.d),'E_SOURCE',/more than one `Source:` line/);
+  refused(spawnHook('Source: see below\n'+proposal(f.home),f.d),'E_SOURCE',/more than one `Source:` line/);
   const two=deployment(t,{records:['a1','a2']});
   refused(spawnHook(proposal(two.home),two.d),'E_SOURCE',/more than one record/);
   const noSlot=deployment(t,{okf:null});

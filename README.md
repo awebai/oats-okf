@@ -548,16 +548,17 @@ unknown operation.
 Pinning 5.0 changes the package a deployment resolves; it does not rewrite
 what an existing home already holds. Four separate things:
 
-- **Default data: nothing to do.** A home spawned under 4.x recorded the 4.x
-  manifest defaults (`harvest: off`, `harvest-runtime: pi`) in its
-  instance.json, with origin `manifest-default`. Where 5.0 code meets those
-  recorded settings (the deployment's readiness or binding check of that
-  home, or the harvester reading the record of a proposal's source), it
-  ignores a legacy key with that origin, as if absent: the home binds, and
-  its proposal is admitted. (An `oats okf` command run inside that home
-  still runs the 4.x modules the home was spawned with; see below.) Do not
-  respawn merely for these defaults. (A `harvest: off` default is not an
-  opt-out; only a soul's own is.)
+- **Default data: nothing to do for it alone.** A home spawned under 4.x
+  recorded the 4.x manifest defaults (`harvest: off`, `harvest-runtime: pi`)
+  in its instance.json, with origin `manifest-default`. That home's own
+  commands, hooks and readiness and binding checks keep running the 4.x
+  modules it was spawned with; the pin does not change them. The 5.0 code
+  that reads such an old record is the harvester's spawn gate, when the home
+  is a proposal's source: it ignores a legacy key with origin
+  `manifest-default`, as if absent. So a record with only these defaults
+  needs no respawn for them; it still needs one for the 5.0 proposal brief
+  (below). (A `harvest: off` default is not an opt-out; only a soul's own
+  is.) The record is never rewritten.
 - **Explicitly set removed keys: clean up.** The commands, settings and hooks
   in [Removed in 5.0](#removed-in-50) are gone; each answers `E_REMOVED`
   naming the proposal flow. A key someone set (host, spawn, or a soul value
@@ -567,18 +568,22 @@ what an existing home already holds. Four separate things:
   run from the deployment. It only deletes `settings.oats.okf.harvest`,
   `harvest-runtime` and `harvest-model` (`--plan` writes nothing), and only
   from the `oats.okf` map directly under `settings:` (an emptied map stays
-  `{}`, before any inline comment). It refuses with `E_UNSUPPORTED`, before
+  `{}`, before any inline comment; the file keeps its permissions). It refuses with `E_UNSUPPORTED`, before
   writing, on YAML it cannot edit line by line, an `oats.okf` nested under
   another key included (report that to the deployment's owner), and never
   touches a soul: a soul's
   `knowledge: { harvest: off }` stays valid. Until the host keys are gone,
   every command and the spawn hook refuse. A spawn key is dropped from the
-  spawn command; a soul key is changed in the soul's reviewed source.
-- **Old instructions: respawn when the 5.0 brief is wanted.** A running home
-  keeps the modules, skills, AGENTS.md and TASK.md brief it was spawned with;
-  pinning 5.0 does not replace them. A 4.x home is told about the 4.x harvest
-  until it is respawned, and only a home spawned under 5.0 gets the proposal
-  brief. Respawn the homes that should propose.
+  spawn command; a soul key is changed in the soul's reviewed source. A key
+  an old home recorded with a host (or other explicit) origin stays in its
+  instance.json after the host cleanup, so the harvester refuses that home
+  as a proposal's source (`E_SOURCE`) until it is respawned under 5.0.
+- **Old instructions and modules: respawn when the 5.0 brief is wanted.** A
+  running home keeps the modules, skills, AGENTS.md and TASK.md brief it was
+  spawned with; pinning 5.0 does not replace them. A 4.x home is told about
+  the 4.x harvest until it is respawned, and only a home spawned under 5.0
+  gets the proposal brief and runs the 5.0 modules. Respawn the homes that
+  should propose.
 - **Registered 4.x sources: the pre-pin cutover is unchanged.** 5.0 neither
   reads nor deletes 4.x custody (`<stateDir>/sources/`,
   `owners.json`); finish or dispose of it under 4.x. A registered 4.x home

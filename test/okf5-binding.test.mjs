@@ -141,4 +141,5 @@ test('the portable payload schema requires the five keys and has no execution',(
   assert.deepEqual(Object.keys(schema.properties).sort(),['owner','owns','reads','runtime','stores']);
   assert.equal(schema.additionalProperties,false);
   assert.doesNotMatch(JSON.stringify(schema),/execution/);
+  assert.ok(fs.readFileSync(join(ROOT,'schemas','okf-portable-payload.schema.json')).equals(fs.readFileSync(join(CAP,'schemas','okf-portable-payload.schema.json'))),'the repository copy and the capability copy are byte-identical');
 });

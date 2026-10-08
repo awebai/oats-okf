@@ -37,13 +37,16 @@ export function identifier(value) {
   return value;
 }
 export function syncDir(dir) { const fd = fs.openSync(dir, 'r'); try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); } }
-export function atomic(path, bytes, { tempDir = dirname(path) } = {}) {
+/** Write `bytes` to `path` through a temp file and a rename. The file gets
+ *  `mode` (default 0600, private), set on the open descriptor before fsync and
+ *  rename; a caller replacing someone's file passes its original mode. */
+export function atomic(path, bytes, { tempDir = dirname(path), mode = 0o600 } = {}) {
   safePath(path); fs.mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   // Publication may stage in its owned lock directory, outside accepted data.
   safePath(tempDir);
   const temp = join(tempDir, `${basename(path)}.tmp-${randomUUID()}`);
   const fd = fs.openSync(temp, 'wx', 0o600);
-  try { fs.writeFileSync(fd, bytes); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+  try { fs.writeFileSync(fd, bytes); fs.fchmodSync(fd, mode); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
   fs.renameSync(temp, path); syncDir(dirname(path));
 }
 export const save = (path, obj) => atomic(path, JSON.stringify(obj, null, 2) + '\n');

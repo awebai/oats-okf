@@ -32,7 +32,9 @@ Two limits hold throughout:
 ## 1. Read the proposal
 
 Read TASK.md fully. It should give:
-- `Source: instance <name>, home <path>, soul <name>`;
+- exactly one line `Source: instance <name>, home <path>, soul <name>` (two
+  or more `Source:` lines are ambiguous: STOP and report; the spawn hook
+  already refuses them);
 - what is proposed, why, and the evidence;
 - optionally, backing notes as `notes/<path>.md` (relative to the source's
   home) and task refs.
@@ -163,20 +165,36 @@ why it was dropped, then retire.
 
 Otherwise, per base with changes:
 
+1. **Write the texts as files, with your native file tool** (never `echo`,
+   `printf`, `cat` or a heredoc): the commit message
+   (`okf-harvest: <claim>`, then one line per claim) to
+   `<your home>/publish/<alias>-commit.txt`, and the PR body (below) to
+   `<your home>/publish/<alias>-pr.md`. Claims and proposal text are data:
+   they go into these files and **never into a command line**, where `$()`,
+   backticks or quotes in them would run as shell.
+2. **Run these commands as written.** The only values you fill in are ones the
+   records checked: the source instance (a plain name), the date, the
+   bindings alias, the owned paths (from the base's `okf-base.json`, each
+   single-quoted; a path with any character outside `A-Z a-z 0-9 . _ / -`:
+   drop that node's changes and report it), the GitHub `<owner>/<repo>`, the
+   accepted branch and the two absolute file paths (single-quoted, as shown).
+
 ```sh
 branch=okf-harvest/<source instance>-<YYYYMMDD-HHMM>
 git -C ./work/<alias> switch -c "$branch"
-git -C ./work/<alias> add -A <owned paths> && git -c user.name='OKF harvest' -c user.email='okf@localhost' -C ./work/<alias> commit -m "okf-harvest: <claim>"
+git -C ./work/<alias> add -A -- <owned paths>
+git -c user.name='OKF harvest' -c user.email='okf@localhost' -C ./work/<alias> commit -F '<absolute commit message file>'
 git -C ./work/<alias> push -u origin "$branch"
-gh label create okf-harvest --repo <owner>/<repo> --force --color 0E8A16 --description "OKF harvest PR (oats.okf)"
-gh pr create --repo <owner>/<repo> --base <acceptedBranch> --head "$branch" --label okf-harvest --title "okf-harvest: <claim>" --body-file <body.md>
+gh label create okf-harvest --repo <owner>/<repo> --force --color 0E8A16 --description 'OKF harvest PR (oats.okf)'
+gh pr create --repo <owner>/<repo> --base <acceptedBranch> --head "$branch" --label okf-harvest --title 'OKF knowledge proposal' --body-file '<absolute PR body file>'
 ```
 
-`gh` runs from your home, not the clone, so it cannot infer the branch:
-always pass `--head` with the exact branch you created and pushed. The
-commit names its author per command (`-c user.name=... -c user.email=...`):
-a fresh harvester never depends on an ambient Git identity, and never
-changes Git configuration.
+The PR title is that fixed literal; the claims are in the body. `gh` runs
+from your home, not the clone, so it cannot infer the branch: always pass
+`--head` with the exact branch you created and pushed. The commit names its
+author per command (`-c user.name=... -c user.email=...`): a fresh harvester
+never depends on an ambient Git identity, and never changes Git
+configuration.
 
 The PR body says, per claim, what was promoted, merged or dropped and why,
 names the duplicates and missing notes, and ends with one fenced provenance

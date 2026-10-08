@@ -151,7 +151,7 @@ export function removeLegacySettings({ plan: preview = false } = {}) {
   if (!preview && removed.length) {
     const next = out.lines.join('\n');
     if (fs.readFileSync(file, 'utf8') !== text) fail('E_CONFLICT', `${file} changed while it was read; nothing was written: run the command again`);
-    atomic(file, next);
+    atomic(file, next, { mode: stat.mode & 0o777 }); // the deployment's file keeps its own permissions
     let after; try { after = fs.readFileSync(file, 'utf8'); } catch { after = null; }
     if (after !== next) failWith('E_UNCERTAIN', `${file} was replaced, but reading it back did not show the intended edit, so the outcome is uncertain; report it to the deployment's owner (removed: ${removed.join(', ')})`, { ...result, written: 'unknown' });
     result.written = true;

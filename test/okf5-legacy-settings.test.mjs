@@ -157,6 +157,18 @@ test('a 4.x manifest default (origin manifest-default) is no legacy setting: ign
   assert.equal(fs.readFileSync(file,'utf8'),'settings:\n  oats.okf:\n    bindings-file: /b.json\n');
 });
 
+test('the cleanup keeps the deployment file\'s own permissions (0644, 0600); other atomic writes stay private (0600)',async t=>{
+  for(const mode of [0o644,0o600]) {
+    const dep=deployment(t),file=join(dep,'oats-local.yaml');fs.chmodSync(file,mode);
+    const r=cleanup(dep,envFor(LEGACY_KEYS));
+    assert.equal(r.status,0,r.stdout+r.stderr);assert.equal(r.out.result.written,true);
+    assert.equal(fs.statSync(file).mode&0o777,mode,`mode ${mode.toString(8)} kept`);
+  }
+  const {atomic}=await import(new URL('../oats-package/capabilities/oats-okf/lib/io.mjs',import.meta.url));
+  const dir=tmp(t),other=join(dir,'state.json');
+  atomic(other,'{}\n');assert.equal(fs.statSync(other).mode&0o777,0o600,'the default stays 0600');
+});
+
 test('shapes the line reader does not edit refuse E_UNSUPPORTED before writing',t=>{
   const shapes={
     tabs:'settings:\n  oats.okf:\n\tharvest: on\n',

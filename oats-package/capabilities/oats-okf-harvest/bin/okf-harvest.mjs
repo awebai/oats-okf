@@ -26,6 +26,8 @@ const file = (p) => { try { const s = lstatSync(p); return s.isFile() && !s.isSy
 
 /** The proposal's source, checked against the deployment's record. → { instance, soul, agent }. */
 export function checkSource({ task = '', deployment } = {}) {
+  // Exactly one Source line: with two, which one names the source is ambiguous.
+  if ((String(task).match(/^Source:/gm) || []).length > 1) fail('E_SOURCE', 'the proposal has more than one `Source:` line; exactly one names the source');
   const m = /^Source:\s*instance\s+(\S+?),\s*home\s+(\S+?),\s*soul\s+(\S+?)\s*$/m.exec(task);
   if (!m) fail('E_SOURCE', 'the task is not an oats.okf 5.0 proposal: it has no `Source: instance <name>, home <path>, soul <name>` line; a harvester is spawned only on a proposal');
   const [, instance, home, soul] = m;
