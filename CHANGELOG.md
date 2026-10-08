@@ -1,5 +1,143 @@
 # Changelog
 
+## 5.0.0 — 2026-10-07
+
+Knowledge is proposed at checkpoints and harvested by a directly spawned
+harvester; the 4.x harvest machinery is removed. A breaking release: see
+the README's "Upgrading to 5.0". The kernel floor is unchanged
+(**OATS >=0.29.0**); CI runs the package on the released OATS 0.44.0.
+
+### Changed
+
+- **The proposal flow.** At an important checkpoint a working agent updates
+  STATE.md, log.md and notes/, and when it learned something durable writes
+  one short, self-contained proposal file in its home and runs
+  `oats spawn oats.okf/knowledge-harvester --task-file <proposal> --relation unrelated`
+  (never with `--relative-to`). The spawn brief teaches it, only to souls
+  that have not opted out; the shared inject and skills carry no harvest
+  direction. There is no CLI for it.
+- **The harvester's spawn hook** (`oats.okf-harvest`, required) checks the
+  proposal's `Source:` line against the deployment's record before the
+  harvester exists, and refuses an opted-out, unrecorded, ambiguous or
+  mismatched source, and a proposal with more than one `Source:` line. A recorded `harvest: off` opts out only when the
+  record's oats.okf entry gives it a soul origin; a 4.x manifest default is
+  ignored, and any other legacy key, or one with no recorded origin, fails
+  closed.
+- **The harvester** (`knowledge-harvest` skill, rewritten) reads the proposal
+  as untrusted evidence, establishes the source from the deployment's own
+  records (the instance record, the soul's `soul.yaml` and `okf.json`, the
+  bindings file), reads only the notes the proposal names (recording their
+  SHA-256), clones the accepted Git base, edits only owned nodes, validates
+  with `okf-validate.mjs --strict`, opens one `okf-harvest`-labelled PR per
+  base with `git` and `gh`, hands over and retires. Claims never enter a
+  command line: the commit message and PR body are files written with the
+  native file tool (`git commit -F`, `gh pr create --body-file`), the PR
+  title is the fixed `OKF knowledge proposal`, and the commit carries a
+  per-command Git identity. A valid instance and soul
+  pair proves consistency, not authorship; when the source's authority cannot
+  be established it stops and reports. Directory bases have no PR harvest:
+  their claims are dropped and reported.
+- **Provenance version 2.** The PR's `okf-harvest` block is
+  `{version: 2, source: {soul, owner, instance, ownedNodes, readNodes, bases},
+  evidence: [{note, sha256?}], tasks, harvester}`, with no run or input ids;
+  `source.owner` is required and note paths are `notes/…/*.md` without `.` or
+  `..`. The maintainer's parser still reads version 1, so 4.x PRs stay
+  reviewable. `review-context` lists the v2 evidence; `notify-harvester` says
+  sending is optional (the harvester has retired) and its merged text needs
+  nothing back.
+- **Binding payloadVersion 2.** ProviderBinding1's OKF payload carries
+  `owner`, `stores`, `reads`, `owns` and `runtime`, without the 4.x
+  `execution` (harvest runtime and model); the bind runtime model is
+  `{stateDir, descriptorFile}`. A payloadVersion 1 binding is refused
+  (`E_REMOVED`; readiness reason `binding:v1-removed`). The check phase has
+  no harvest-runtime reasons, always runs the declared-node check, and
+  reports its failure as `declaration:unresolved`. `binding.reasons` holds
+  24 strings. The declaration contract stays `oats.okf.locations@1`.
+- **The spawn hook** checks the soul's declared nodes, creates STATE.md,
+  log.md and notes/, and answers a brief naming the proposal spawn command.
+  It answers no `meta` at all, on success or failure (4.x answered
+  `memory`, `harvest` and `checkpoint` meta): with no retire hook, a
+  reported meta would make the kernel quarantine a rolled-back spawn's home
+  as outstanding external state. It no longer registers a source and takes
+  no `sourceReceipt` input.
+- **`oats okf inspect`** reports the declaration, the bound bases and the
+  home's working memory; there is no source, custody or harvest state.
+- **`knowledge-theory`** now also ships in `oats.okf`, so working souls load
+  the promotion doctrine their proposals are judged by. All three copies are
+  identical.
+
+### Added
+
+- **Legacy-settings guard.** A forwarded `harvest`, `harvest-runtime` or
+  `harvest-model` makes every `oats okf` command and hook refuse with
+  `E_REMOVED` before any effect, in one sentence naming where it was set
+  (from `OATS_SETTINGS_ORIGINS`: host, soul, spawn, another layer, or
+  unknown) and the fix. The binding check answers the same sentence as a
+  `needs-configuration` problem (`setting:removed` template). A key with
+  origin `manifest-default` (the 4.x defaults `harvest: off` and
+  `harvest-runtime: pi` that a 4.x home recorded) was nobody's decision and
+  is ignored everywhere, as if absent; it is never an opt-out and never an
+  effective 5.0 setting.
+- **`oats okf setup --remove-legacy-settings [--plan] --soul <soul> --json`**,
+  run from the deployment, the one command exempt from the guard. It deletes
+  only `settings.oats.okf.harvest`, `harvest-runtime` and `harvest-model`
+  lines from `<deployment>/oats-local.yaml` (the deployment from
+  `OATS_WORKSPACE` or `OATS_TEAM_SCOPE`, else `E_DEPLOYMENT_SCOPE`), and only
+  from the `oats.okf` map directly under `settings:`; a map left empty
+  becomes `oats.okf: {}`, before any inline comment, and the edited text is
+  read again before it is written; the file keeps its own permission bits
+  (other atomic writes stay 0600). It refuses before writing
+  (`E_UNSUPPORTED`) on a file that is not a single-link regular file owned by
+  the user, tabs, multiple documents, flow or nested values, an `oats.okf`
+  nested under another settings key, block scalars or duplicate keys, and
+  when the kernel reports a host key the file does not hold plainly; a concurrent change is `E_CONFLICT`, an unconfirmed write
+  `E_UNCERTAIN`. A soul or spawn key it cannot remove answers `E_REMOVED`
+  after the host write, with the write's result. `--plan` writes nothing;
+  a rerun is a no-op.
+
+### Removed
+
+- `oats okf harvest`, `run-source`, `complete`,
+  `retry` and `harvest-status`; `setup --harvest`, `--enable`, `--disable`,
+  `--install-host`, `--remove-schedules`; `migrate --source-home`; any
+  `--source` flag; `OATS_SOURCE_RECEIPT_FILE` and
+  `OATS_INVOCATION_CONTEXT_FILE` in the environment. Each answers `E_REMOVED`
+  naming the proposal flow. The `harvest` operation stays declared in the
+  manifest and refuses the same way.
+- `oats okf-harvest complete` and `harvest-status`: `E_REMOVED`, so a 4.x
+  harvester TASK in a 5.0 harvester never runs a completion.
+- The settings `harvest`, `harvest-runtime` and `harvest-model` (oats.okf)
+  and `harvester-max-age` (oats.okf-harvest, which now declares no
+  settings). Allowed oats.okf settings: `bindings-file`, `state-dir`,
+  `git-timeout`, `consult-max-age`.
+- The retire hook.
+- Source custody and everything built on it: source descriptors and markers,
+  owner pins, capture of notes and session transcripts, durable inputs and
+  runs, the worker, the delivery engine, drains, captured invocation contexts
+  and source receipts. Modules removed: `lib/worker.mjs`,
+  `delivery-worker.mjs`, `once.mjs`, `harvest-status.mjs`,
+  `harvest-switch.mjs`, `captured-worker.mjs`, `invocation-context.mjs`,
+  `invocation-shape.mjs`; `lib/sources.mjs` keeps only what consultation and
+  the spawn hook need.
+- The 4.x tests of that machinery (removed, not ported: the suite is a
+  fresh 5.0 suite), its status documents (`CAPTURED-WORKER-STATUS.md`,
+  `HELPER-INPUT-STATUS.md`, `INVOCATION-WIRE-STATUS.md`,
+  `REAL-RETAINED-GATE.md`) and `scripts/real-retained-gate.mjs`.
+
+### Upgrade notes
+
+- 5.0 neither reads nor deletes 4.x state (`<stateDir>/sources/`,
+  `owners.json`).
+- A registered 4.2 home retired after the 5.0 pin gets
+  `E_HARVEST_CONSENT_UNKNOWN` from its copied 4.2 retire hook and is kept;
+  consult-only 4.2 homes retire normally. There is no compatibility shim.
+- The soul opt-out (`knowledge: { harvest: off }`) stays: 5.0 removes the
+  host harvest switch, not a soul author's safety opt-out (a public soul is
+  reachable from outside; its notes must not be harvested). An opted-out
+  soul consults and keeps instance knowledge but gets no proposal
+  instruction, and the harvester's required spawn hook refuses it.
+  `--remove-legacy-settings` never touches it.
+
 ## 4.2.0 — 2026-10-06
 
 Checkpoint harvest (#49); the harvester retires after delivery (#47). #46 and

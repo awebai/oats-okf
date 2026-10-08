@@ -1,147 +1,64 @@
-# Schema and consumer verification status
+# Schema and verification status
 
-## Candidate and authoritative payload
+oats.okf **5.0.0**, requiring **OATS >=0.29.0**. Version declarations are not
+evidence of a published release.
 
-The working v2 candidate's distribution and capability manifests declare
-**2.0.0**, with **OATS >=0.23.0**. These declarations are not evidence of a
-published release or a passing released-consumer probe. The v1.6.1 baseline
-and its older compatibility floor do not describe this candidate's runtime.
+## Schemas
 
-The authoritative payload is `oats-package/capabilities/oats-okf/`, enumerated
-by `oats-package/oats-package.json`. The private root npm package supplies
-standalone tooling. Obsolete unenumerated root `oats.json`, `bin/`, `agents/`,
-`skills/` and `injects/` copies have been removed after checking manifest,
-validator, test, CI and framework consumer paths. The distribution manifest,
-LICENSE and actual exported capability remain; its canonical worker
-`CLAUDE.md -> AGENTS.md` symlink is unchanged. A baseline test prevents those
-obsolete copies from returning. This remains **2.0.0 before tagging**, not a
-published patch.
+The OKF JSON Schemas ship in the capability's `schemas/`, with copies in the
+repository's `schemas/`:
 
-Portable provider-binding and captured-source support in this branch targets a
-coordinated, still-unreleased **OATS >=0.24.0** framework. The package/version
-and compatibility declarations intentionally remain unchanged until coordinated
-publication; therefore the current 0.23.x consumer probe does not certify the
-new binding manifest/wire. Focused fixtures validate the provider codec,
-private snapshots, captured registration and source-independent worker path
-without claiming a published consumer release.
+| Schema | Describes |
+|---|---|
+| `okf-bindings.schema.json` | the bindings document (`version: 1`, `stateDir`, `bases`; no `cron`/`tz`) |
+| `okf-soul.schema.json` | a soul's `okf.json` (`version: 1`, `owner`, `owns`, `reads`) |
+| `okf-base.schema.json` | a base's `okf-base.json` (`version: 1`, `id`, `nodes`) |
+| `okf-portable-declaration.schema.json` | the portable `knowledge` envelope, `oats.okf.locations@1` |
+| `okf-portable-payload.schema.json` | the ProviderBinding1 OKF payload, **payloadVersion 2** (`owner`, `stores`, `reads`, `owns`, `runtime`; no `execution`) |
 
-## What `npm test` and default CI check
+The generic ProviderBinding1 envelope is a kernel contract. Runtime code
+also checks what a schema cannot: filesystem containment, identities,
+overlap, base metadata, ownership and OKF conformance.
 
-`npm test` runs `scripts/validate-manifests.mjs` and **all** `test/*.test.mjs`.
-The suite exercises the v2 implementation, not legacy harvest-branch behavior:
+The harvest PR's `okf-harvest` provenance block has no JSON Schema; its
+parser (`oats.okf-maintenance` `lib/provenance.mjs`) is strict and accepts:
 
-- **Manifest validation and mutation rejection:** package/capability manifests
-  use the vendored schema keywords implemented by the local validator, including
-  `oneOf` and `const`. Exported resources and their descendants must stay inside
-  the distribution after realpath resolution; escapes, dangling links and
-  directory cycles fail. Mutation tests verify declared operation/command
-  dispatch and skill closure against the enumerated payload.
-- **OKF configuration schemas:** `test/okf-schema-parity.test.mjs` compares the
-  root and exported `okf-bindings`, `okf-soul` and `okf-base` schema files
-  byte-for-byte, including the provider-owned portable declaration/effective-
-  payload schemas. Accepted/malformed examples exercise both the shipped schema
-  constraints and runtime validators, including unknown properties, reserved
-  identities, node references and settings. Its deliberately small schema
-  checker refuses unsupported keywords. Filesystem, ownership and custody
-  invariants remain runtime checks, not JSON Schema claims.
-- **V2 custody and lifecycle:** real temporary Git repositories with a
-  deterministic fake `gh`, and actual non-Git directories without Git/gh on
-  PATH. Tests cover source registration/scheduling, bounded record planning,
-  notes plus records, retirement/source deletion, frozen destinations, worker
-  staging, exclusions, judgments, PR uncertainty, accepted-versus-delivered
-  receipts, directory conflicts/crash recovery and explicit migration cutover.
-- **Reader views:** bases are materialized at `bases/<alias>` separately from
-  `view.json`; receipts, read/refresh results and injected navigation agree.
-  Aliases including `input.json`, `view.json` and `staging.json` traverse
-  registration, delivery and fresh reads. Failure tests check partial-build
-  cleanup, destination preservation and registration retries on both sides of
-  the durable source pointer without resetting source identity or evidence.
-  Descriptor-selected read/refresh caches stay under the durable source's
-  `views/` directory for live, retired, disappeared and reused homes, never in
-  the invoking context/repository. Home-selected views retain their home layout.
-- **Inspection compatibility:** both manifest command and operation routing
-  return the v1 labeled STATE/log/notes Markdown documents for a live matching
-  source, alongside v2 receipts, frozen bindings and registered view freshness.
-  Tests assert complete large stdout, explicit 256 KiB/UTF-8 preview metadata,
-  identity checks before/after reading, missing/retired/reused-home suppression,
-  symlink/hardlink/non-regular file rejection and explicit error envelopes.
-  Inspection is a best-effort live view, not a locked snapshot; it neither
-  captures evidence nor mutates custody/worker state.
+- **version 2** (5.0): `source {soul, owner (required), instance,
+  ownedNodes, readNodes, bases}`, `evidence [{note: notes/…/*.md, sha256?}]`
+  (at most 100), `tasks {provider, refs}`, `harvester {instance, alias}`;
+  a base's `repository` is its GitHub `owner/repo`, never a path or URL;
+- **version 1** (4.x): `run`, `input` ids and `source` with `soulId`, so 4.x
+  PRs stay reviewable.
 
-Neither local schema checker is a general JSON Schema implementation. The
-vendored OATS lock schema is not exercised, and the OKF root/exported byte-parity
-check is **not** a claim of parity with fresh canonical OATS schemas.
+Unknown keys are refused in both.
 
-## Optional public CLI probes
+## What the tests check
 
-Three tests skip by default, with explicit Node test skip output:
+`npm test` runs `scripts/validate-manifests.mjs` (package and capability
+manifests against the vendored schema keywords, exported resources inside
+the distribution, skill trees) and the fresh 5.0 suite (`test/okf5-*.test.mjs`;
+the 4.x tests of the removed machinery were removed, not ported):
+consultation of Git bases through the host cache, the hooks, `inspect`,
+`init` and `migrate`, the removed surfaces, the legacy-settings guard and
+cleanup, and the provenance parser for versions 1 and 2.
 
-1. `test/consumer.test.mjs` uses `OATS_OKF_CONSUMER_CLI` (absolute CLI path) to
-   exercise public command dispatch, targeted hooks, directory worker
-   scaffolding, retirement, completion after source deletion and fresh-reader
-   scaffolding. It also transports large live STATE/log/notes through native
-   `oats okf inspect` and `oats operation run knowledge:inspect`, checks
-   disappeared/reused-home suppression and external read/refresh cache paths.
-   It copies only the enumerated OKF capability into a disposable owned-capability
-   fixture. It does **not** acquire the OKF distribution.
-2. The native capture/recall test in `test/oats-okf.test.mjs` transports sixty
-   synthetic 350 kB Claude records through the actual public kernel into durable
-   bounded input, then exercises fixture completion after source removal.
-3. The native scheduler test checks that registration adds no scheduler job
-   and installs no host timer (okf 4.2.0 manages no job).
+CI's `real-kernel-044` job installs the released **OATS 0.44.0** in a
+disposable prefix and runs `test/okf5-real-kernel.test.mjs` through it: the
+legacy-key cleanup, a real spawn, a checkpoint proposal spawning a top-level
+harvester, the removed surfaces and the source's retirement, with
+`--no-launch` (no model, messaging or GitHub).
 
-4. The real home-dispatch tests (`test/real-home-dispatch.test.mjs`, okf
-   4.2.0) spawn sources in a disposable v2 workspace of file:// repositories
-   with this package pinned by commit, switch only the deployment's harvest
-   setting, and check that the existing homes' checkpoint and retire hook
-   capture and start nothing; an explicit spawn override and a soul opt-out
-   are the controls, and an operator command dispatched as another soul reads
-   the source's own soul's policy. No model is launched. The optional
-   public-consumer CI job runs this file alone, before its full suite, and
-   fails if it is skipped (it needs the selected kernel at >= 0.43.0).
-5. The external-repo test (`test/external-repo-consumer.test.mjs`, okf 4.2.0,
-   #55) runs only in the default `external-repo-041` CI job, on released
-   OATS 0.41.0 (`OATS_OKF_EXTERNAL_CLI`): a source spawned on an external
-   `--repo`, its checkpoint to a real harvester spawn (`--no-launch`) and its
-   retirement, in the deployment, with no scheduler job and no model. The job
-   first requires the released v4.1.1 payload (`OATS_OKF_EXTERNAL_PAYLOAD`)
-   to fail the same fixture on the kernel's scope refusal.
+The schemas themselves are not exercised by the suite: no test validates
+documents or the `examples/portable-binding/` data against them, or checks
+that the repository copies match the capability's. The binding wire
+(`binding-normalize`, `binding-bind`, `binding-check`) and `unlock` have no
+tests in the 5.0 suite either.
 
-Native tests use `OATS_OKF_NATIVE_CLI`, falling back to
-`OATS_OKF_CONSUMER_CLI`. All of them run with:
+## Not covered
 
-```sh
-OATS_OKF_CONSUMER_CLI=/absolute/oats/bin/oats.mjs npm test
-```
+- A real harvester session judging a proposal, and a real maintainer review.
+- A real GitHub PR, merge and accepted-head visibility.
+- Package acquisition, lock/restore and trust of the published distribution.
 
-The selected CLI must exist and satisfy the real compatibility floor; do not
-relabel an older kernel to manufacture a pass. Consumer fixtures isolate HOME,
-config, schedule state and executable PATH, and use an inert model executable.
-No real model session, deployment mutation or GitHub write is part of a probe.
-
-CI exposes an optional `workflow_dispatch` **public-consumer** job. Supply an
-exact published `@awebai/oats` version at or above the declared floor; the job
-installs that kernel in a disposable prefix and runs the full suite with the
-consumer variable set. Tags, ranges and source specifiers are rejected; an
-unavailable or incompatible version fails rather than falling back or skipping.
-With empty input the job is skipped, not counted as consumer evidence. Adding
-this job does not claim it has run successfully on GitHub.
-
-## Release acceptance still separate
-
-Before publication, record exact artifact/kernel/harness versions, commands and
-outcomes for parent-controlled gates that these tests do **not** certify:
-
-1. **Installed OKF distribution:** acquire → lock/restore → trust → activate →
-   scaffold/retire with the actual minimum and intended released consumer.
-   Verify enumerated resources and dispatch; owned-source fixtures do not prove
-   package acquisition, executable trust or lock restoration.
-2. **Real GitHub delivery:** verify PR creation, review/merge and accepted-head
-   visibility against an authorized disposable remote. Fake `gh` receipts and
-   local Git merges are not evidence of a remote PR.
-3. **Fresh selected-runtime learning:** a real fresh agent must answer from
-   delivered knowledge without the source home/transcript. Scaffold-visible
-   bytes and synthetic native records are not evidence of model learning.
-
-The v2 declarations, green standalone suite and optional CI configuration do not
-close these acceptance gates or authorize publication by themselves.
+These are verified by running the flow on a real deployment and knowledge
+base, outside this repository's tests.

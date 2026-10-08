@@ -1,0 +1,30 @@
+{
+  "_comment": "An instance.json of a working instance spawned under oats.okf 4.x, trimmed to the fields oats.okf 5.0 reads. The 4.x manifest defaulted harvest (off) and harvest-runtime (pi), so the kernel recorded them in providers and in the oats.okf capability entry with origin manifest-default (resolve.mjs: oats.json#/settings/<key>/default). <HOME>, <SOUL_DIR> and <BINDINGS_FILE> are filled in by the tests.",
+  "agent": "src-agent",
+  "instance": "src",
+  "home": "<HOME>",
+  "soulDir": "<SOUL_DIR>",
+  "providers": {
+    "oats.okf": {
+      "bindings-file": "<BINDINGS_FILE>",
+      "harvest": "off",
+      "harvest-runtime": "pi"
+    }
+  },
+  "capabilities": [
+    {
+      "id": "oats.okf",
+      "layer": "knowledge",
+      "settings": {
+        "bindings-file": "<BINDINGS_FILE>",
+        "harvest": "off",
+        "harvest-runtime": "pi"
+      },
+      "settingsOrigins": {
+        "/bindings-file": { "kind": "host", "at": "oats-local.yaml#/settings/oats.okf" },
+        "/harvest": { "kind": "manifest-default", "at": "oats.json#/settings/harvest/default" },
+        "/harvest-runtime": { "kind": "manifest-default", "at": "oats.json#/settings/harvest-runtime/default" }
+      }
+    }
+  ]
+}

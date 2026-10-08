@@ -37,13 +37,16 @@ export function identifier(value) {
   return value;
 }
 export function syncDir(dir) { const fd = fs.openSync(dir, 'r'); try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); } }
-export function atomic(path, bytes, { tempDir = dirname(path) } = {}) {
+/** Write `bytes` to `path` through a temp file and a rename. The file gets
+ *  `mode` (default 0600, private), set on the open descriptor before fsync and
+ *  rename; a caller replacing someone's file passes its original mode. */
+export function atomic(path, bytes, { tempDir = dirname(path), mode = 0o600 } = {}) {
   safePath(path); fs.mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   // Publication may stage in its owned lock directory, outside accepted data.
   safePath(tempDir);
   const temp = join(tempDir, `${basename(path)}.tmp-${randomUUID()}`);
   const fd = fs.openSync(temp, 'wx', 0o600);
-  try { fs.writeFileSync(fd, bytes); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+  try { fs.writeFileSync(fd, bytes); fs.fchmodSync(fd, mode); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
   fs.renameSync(temp, path); syncDir(dirname(path));
 }
 export const save = (path, obj) => atomic(path, JSON.stringify(obj, null, 2) + '\n');
@@ -69,19 +72,16 @@ const pause = ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0,
 /** Cooperative directory lock. `waitMs` lets a caller queue behind a live
  *  holder for a bounded time; a live holder is never stolen from, whatever its
  *  age. With `reclaimDead`, a lock whose owner is provably gone (reclaimable)
- *  is taken over; otherwise an abandoned lock waits for an explicit unlock.
- *  Within an invocation deadline (withDeadline) the wait ends with it: a
- *  busy lock past it is E_DEADLINE, and nothing was done under it. */
+ *  is taken over; otherwise an abandoned lock waits for an explicit unlock. */
 export function withLock(path, fn, { waitMs = 0, reclaimDead = false } = {}) {
   safePath(path); fs.mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-  const own = Date.now() + waitMs, deadline = Math.min(own, invocationDeadline ?? Infinity);
+  const deadline = Date.now() + waitMs;
   for (let delay = 20;; delay = Math.min(delay * 2, 250)) {
     try { fs.mkdirSync(path, { mode: 0o700 }); break; }
     catch(e) {
       if(e.code !== 'EEXIST') throw e;
       if(reclaimDead && reclaim(path)) continue;
       if(Date.now() >= deadline) {
-        if(deadline < own) fail('E_DEADLINE', `busy lock: ${path}; this invocation's time budget is spent, so nothing was done under it, and what is persisted resumes`);
         const owner = lockOwner(join(path, 'owner.json'));
         if(owner?.host === hostname() && !pidAlive(owner.pid)) fail('E_LOCKED', `abandoned lock: ${path} is held by process ${owner.pid}, which is gone; once no oats okf process is running, release it with: oats okf unlock --lock ${quote(path)} --token ${quote(owner.token)} --soul <soul>`);
         if(owner?.host === hostname()) fail('E_LOCKED', `busy lock: ${path} is held by running process ${owner.pid}; try again once it finishes`);
@@ -141,26 +141,8 @@ export const identityKeys = ['OATS_INSTANCE','OATS_INSTANCE_HOME','OATS_HOME','P
 export function cleanEnv(env = process.env) {
   return Object.fromEntries(Object.entries(env).filter(([k]) => !/^(OATS_(?!HOME_DIR$|PACKAGE_CATALOG$)|PI_AGENT|GIT_)/.test(k)));
 }
-// okf 4.2.0: ONE invocation deadline. A checkpoint or a retire hook runs its
-// work within it (withDeadline): every blocking subprocess (git, gh, oats) gets
-// at most what is left of it, whatever its own timeout, and none starts once it
-// is spent (E_DEADLINE, before any effect). Without one, each call keeps its
-// own timeout. Synchronous callers only: the deadline is this process's.
-let invocationDeadline;
-export function withDeadline(deadline, fn) {
-  const outer = invocationDeadline;
-  if (deadline !== undefined) invocationDeadline = Math.min(deadline, outer ?? Infinity);
-  try { return fn(); } finally { invocationDeadline = outer; }
-}
-/** `timeout`, bounded by what is left of the invocation deadline. */
-export function bounded(timeout) {
-  if (invocationDeadline === undefined) return timeout;
-  const left = invocationDeadline - Date.now();
-  if (left <= 0) fail('E_DEADLINE', 'this invocation\'s time budget is spent: nothing further was started, and what is persisted resumes');
-  return Math.min(timeout, left);
-}
 export function exec(bin, args, { cwd, env = cleanEnv(), timeout = 30000, maxBuffer = 16*1024*1024, acceptedStatus = [0], input } = {}) {
-  const r = spawnSync(bin, args, { cwd, env, encoding: 'utf8', timeout: bounded(timeout), maxBuffer, input });
+  const r = spawnSync(bin, args, { cwd, env, encoding: 'utf8', timeout, maxBuffer, input });
   if(r.error || !acceptedStatus.includes(r.status)) throw Object.assign(new Error(`${bin} ${args[0]} failed: ${r.error?.message || r.stderr || `exit ${r.status}`}`),{code:'E_COMMAND',stdout:r.stdout,status:r.status});
   return r.stdout.trim();
 }

@@ -5,8 +5,7 @@
   "capability": "oats.okf",
   "settings": {
     "bindings-file": "/srv/oats/example/config/okf-bindings.json",
-    "state-dir": "/srv/oats/example/state",
-    "harvest-runtime": "pi"
+    "state-dir": "/srv/oats/example/state"
   },
   "input": {
     "model": {
@@ -205,11 +204,7 @@
       },
       "runtime": {
         "descriptorFile": "/srv/oats/example/config/okf-bindings.json",
-        "stateDir": "/srv/oats/example/state",
-        "execution": {
-          "runtime": "pi",
-          "model": null
-        }
+        "stateDir": "/srv/oats/example/state"
       }
     },
     "choices": {

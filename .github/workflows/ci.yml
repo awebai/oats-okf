@@ -5,12 +5,6 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
-    inputs:
-      consumer_version:
-        description: 'Optional exact published @awebai/oats version (>=0.23.0); empty skips consumer probes'
-        required: false
-        default: ''
-        type: string
 
 permissions:
   contents: read
@@ -20,104 +14,36 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          # The okf 4.1.1 compatibility test runs that release's code from history.
-          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Validate exported manifests and run the complete standalone v2 suite
+      - name: Validate exported manifests and run the standalone suite
         run: npm test
-      - name: Report default coverage limits (not a consumer probe)
+      - name: Report default coverage limits
         run: |
-          echo "npm test covers the exported v2 payload, schema parity/mutations and disposable Git/directory custody."
-          echo "SKIPPED by default: public CLI scaffold, native capture/scheduler, real home-dispatch and external-repo probes (10 opt-in tests)."
-          echo "The separate external-repo-041 job runs the external-repo regression on released OATS 0.41.0."
-          echo "NOT COVERED: OKF acquire/lock/restore/trust, remote GitHub PRs or fresh real-model learning."
-          echo "Use workflow_dispatch with an exact published consumer_version for the optional public CLI job; see SCHEMA-STATUS.md."
+          echo "npm test validates the manifests and runs the provider in-process and through its CLI with disposable Git/directory bases."
+          echo "SKIPPED here: test/okf5-real-kernel.test.mjs (needs OATS_OKF_REAL_CLI); the real-kernel-044 job runs it on released OATS 0.44.0."
+          echo "NOT COVERED: OKF acquire/lock/restore/trust, a model-run harvester, real GitHub PRs."
 
-  external-repo-041:
+  real-kernel-044:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          # The negative control archives the released v4.1.1 payload from history.
-          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Install the released OATS 0.41.0 kernel in a disposable prefix
+      - name: Install the released OATS 0.44.0 kernel in a disposable prefix
         run: |
-          npm install --prefix "$RUNNER_TEMP/okf-external-kernel" --ignore-scripts --no-audit --no-fund --package-lock=false @awebai/oats@0.41.0
-          echo "OATS_OKF_EXTERNAL_CLI=$RUNNER_TEMP/okf-external-kernel/node_modules/@awebai/oats/bin/oats.mjs" >> "$GITHUB_ENV"
-      - name: Released v4.1.1 negative control must reproduce the external-repo scope defect
-        run: |
-          mkdir -p "$RUNNER_TEMP/okf-external-baseline"
-          git archive e1d604f70c5e4cdc39602095f139383e61f69323 oats-package | tar -x -C "$RUNNER_TEMP/okf-external-baseline"
-          if OATS_OKF_EXTERNAL_PAYLOAD="$RUNNER_TEMP/okf-external-baseline/oats-package" node --test --test-reporter=spec test/external-repo-consumer.test.mjs > "$RUNNER_TEMP/okf-external-baseline.log" 2>&1; then
-            echo 'Baseline unexpectedly passed'; exit 1
-          fi
-          grep -F 'schedules belong to a workspace deployment' "$RUNNER_TEMP/okf-external-baseline.log"
-      - name: Real external-repo spawn, checkpoint to the real harvester spawn, and retire
+          npm install --prefix "$RUNNER_TEMP/okf-real-kernel" --ignore-scripts --no-audit --no-fund --package-lock=false @awebai/oats@0.44.0
+          echo "OATS_OKF_REAL_CLI=$RUNNER_TEMP/okf-real-kernel/node_modules/@awebai/oats/bin/oats.mjs" >> "$GITHUB_ENV"
+      - name: Real kernel - legacy-key cleanup, source spawn, proposal to a top-level harvester spawn, removed surfaces, retire
         shell: bash
         run: |
           set -o pipefail
-          node "$OATS_OKF_EXTERNAL_CLI" --version
-          node --test --test-reporter=spec test/external-repo-consumer.test.mjs | tee "$RUNNER_TEMP/okf-external-result.txt"
-          grep -E '^ℹ skipped 0$' "$RUNNER_TEMP/okf-external-result.txt"
+          node "$OATS_OKF_REAL_CLI" --version
+          node --test --test-reporter=spec test/okf5-real-kernel.test.mjs | tee "$RUNNER_TEMP/okf-real-kernel.txt"
+          grep -E '^ℹ skipped 0$' "$RUNNER_TEMP/okf-real-kernel.txt"
       - name: Evidence boundary
         run: |
-          echo 'Real released 0.41.0 CLI; isolated file-Git workspace and external clone; provider payload from this exact checkout.'
-          echo 'The harvester is spawned for real with --no-launch; no model, host timer, scheduler job, messaging cleanup, GitHub publication or production deployment.'
-
-  public-consumer:
-    if: github.event_name == 'workflow_dispatch' && inputs.consumer_version != ''
-    runs-on: ubuntu-latest
-    env:
-      CONSUMER_VERSION: ${{ inputs.consumer_version }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          # npm test runs the okf 4.1.1 compatibility test from history.
-          fetch-depth: 0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - name: Require an exact stable version at or above the declared floor
-        run: |
-          node --input-type=module <<'NODE'
-          import assert from 'node:assert/strict';
-          import { readFileSync } from 'node:fs';
-          const version=process.env.CONSUMER_VERSION;
-          assert.match(version,/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/,'supply an exact published version, not a tag/range/source');
-          const capability=JSON.parse(readFileSync('oats-package/oats-package.json')).capabilities[0];
-          const floor=JSON.parse(readFileSync(`oats-package/${capability}/oats.json`)).compatibility.oats;
-          assert.match(floor,/^>=\d+\.\d+\.\d+$/,'update this gate if the compatibility expression changes');
-          const requested=version.split('.').map(Number), minimum=floor.slice(2).split('.').map(Number);
-          const different=requested.findIndex((v,i)=>v!==minimum[i]);
-          assert.ok(different===-1 || requested[different]>minimum[different],`consumer must satisfy ${floor}`);
-          NODE
-      - name: Install only the selected public kernel in a disposable prefix
-        run: |
-          npm install --prefix "$RUNNER_TEMP/okf-consumer-kernel" --ignore-scripts --no-audit --no-fund --package-lock=false "@awebai/oats@$CONSUMER_VERSION"
-          node -e 'const p=require(process.argv[1]); if(p.version!==process.env.CONSUMER_VERSION) throw Error("consumer version mismatch"); console.log("Public consumer:",p.name,p.version)' "$RUNNER_TEMP/okf-consumer-kernel/node_modules/@awebai/oats/package.json"
-          echo "OATS_OKF_CONSUMER_CLI=$RUNNER_TEMP/okf-consumer-kernel/node_modules/@awebai/oats/bin/oats.mjs" >> "$GITHUB_ENV"
-      # okf 4.2.0: the real home-dispatch consent proof, on its own and before the
-      # full consumer run, so a later failure there (#51) cannot hide its result.
-      # It must run: a skip (a kernel older than 0.43.0) fails this step.
-      - name: Real home-dispatch consent proof (test/real-home-dispatch.test.mjs alone)
-        shell: bash
-        run: |
-          test -f "$OATS_OKF_CONSUMER_CLI"
-          node "$OATS_OKF_CONSUMER_CLI" --version
-          OATS_OKF_NATIVE_CLI="$OATS_OKF_CONSUMER_CLI" node --test --test-reporter=spec test/real-home-dispatch.test.mjs | tee "$RUNNER_TEMP/real-home-dispatch.log"
-          grep -q '^ℹ skipped 0$' "$RUNNER_TEMP/real-home-dispatch.log" || { echo 'real home-dispatch tests were skipped: they need the selected kernel at >= 0.43.0'; exit 1; }
-      - name: Run v2 suite including public CLI scaffold and native probes
-        run: |
-          test -f "$OATS_OKF_CONSUMER_CLI"
-          npm test
-      - name: Report consumer evidence boundaries
-        run: |
-          echo "This job uses an installed public kernel with the enumerated OKF source payload in disposable owned-capability fixtures."
-          echo "No model is launched, no host timer is installed, and no real GitHub PR is created."
-          echo "This is NOT an OKF distribution acquire/lock/restore/trust probe or fresh real-model learning."
+          echo 'Real released OATS 0.44.0 CLI; isolated file-Git workspace, package pinned from this exact checkout, a real on-disk Git knowledge base.'
+          echo 'Source and harvester are spawned for real with --no-launch; no model, messaging, GitHub PR, host timer or production deployment.'
