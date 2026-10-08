@@ -3,7 +3,7 @@
   "version": "4.1.1",
   "description": "Official OATS knowledge operations on Open Knowledge Format bases: the working-soul knowledge slot (consultation and instance knowledge), the knowledge harvester and maintainer capabilities and package souls, and the harvest-review trigger template.",
   "compatibility": {
-    "oats": ">=0.29.0"
+    "oats": ">=0.43.3"
   },
   "capabilities": [
     "capabilities/oats-okf",

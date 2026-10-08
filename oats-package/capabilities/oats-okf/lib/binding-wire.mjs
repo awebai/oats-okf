@@ -20,7 +20,7 @@ import { acceptedCommit, cacheDir, usableCache, verdict } from './consult.mjs';
 export const BINDING_WIRE_LIMITS=Object.freeze({bytes:1024*1024,depth:32,entries:16384});
 const CAPABILITY='oats.okf',SLOT='knowledge';
 const phases=new Set(['normalize','bind','check']);
-const unsupportedCapturedCommands=new Set(['setup','init','migrate','unlock']);
+const unsupportedCapturedCommands=new Set(['setup','init','migrate','unlock','owner-rebind']);
 const declarationKinds=new Set(['soul','workspace','adoption','operator']);
 const errorCodes=new Set(['needs-configuration','requirement-conflict','invalid-binding','authorization-required','host-requirement-missing','provider-unavailable','provider-not-qualified']);
 const obj=value=>value!==null && typeof value==='object' && !Array.isArray(value);

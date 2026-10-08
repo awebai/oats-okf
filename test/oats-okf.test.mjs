@@ -21,6 +21,8 @@ const {cat:consultCat,acceptedResolution}=await mod('consult');
 const readAccepted=(s,path='/expert/index.md',alias=Object.keys(s.bindings.bases)[0])=>consultCat(s,{base:alias},[path]).result;
 const {runSource,readRun,complete,completeInBackground,deliver,retry,completionArgv,completionCommand}=await mod('worker');
 const {harvestOnce}=await mod('once');
+const {ownerRebind,retainedOnceIdentity}=await mod('owner-rebind');
+const {sourceFor,describeSeat,installSource}=await mod('sources');
 const {initBase,migrate,deliverMigration,cutoverMigration}=await mod('migration');
 const {stageBase,baseLock,journalPath,directoryPublish}=await mod('stores');
 const {inspect:inspectSource,capturedAuthority}=await mod('inspection');
@@ -154,7 +156,7 @@ test('exported payload version, floor, required hooks and complete command inven
   assert.ok(fs.statSync(join(ROOT,'oats-package/souls/knowledge-harvester/AGENTS.md')).isFile(),'the harvester soul keeps its one canonical instruction file');
   const m=readJSON(join(CAP,'oats.json')),distribution=readJSON(join(ROOT,'oats-package/oats-package.json'));
   for(const manifest of [readJSON(join(ROOT,'package.json')),distribution,m])assert.equal(manifest.version,'4.1.1');
-  for(const manifest of [distribution,m])assert.equal(manifest.compatibility.oats,'>=0.29.0');
+  for(const manifest of [distribution,m])assert.equal(manifest.compatibility.oats,'>=0.43.3');
   assert.equal(m.hooks.spawn.required,true);
   for(const c of ['harvest','inspect','setup','run-source','complete','retry','migrate','read','refresh','init','bases','index','cat','ls','links','search','harvest-status']) assert.ok(m.commands[c]);
   const inj=fs.readFileSync(join(CAP,m.inject),'utf8');assert.doesNotMatch(inj,/memory-harvest|knowledge-theory/);assert.match(inj,/after compaction/);
@@ -2007,6 +2009,48 @@ test('4.0.1 registration records the soul directory for later switch re-reads', 
   const f = fixture(t); const s = f.source(); assert.equal(s.soulDir, fs.realpathSync(f.soul));
 });
 
+// #54 fixture models the released null-id/deleted-preview record; only the
+// operator's NEW decision authorizes replacement, never invented history.
+function legacyOnceOwner(t) {
+  const o=onceFixture(t,{notes:1}),f=o.f,seat=describeSeat(f.home,{fromHome:true});
+  const preview=join(f.dir,'oats-preview-soul-old','soul');fs.cpSync(f.soul,preview,{recursive:true});
+  const source=sourceFor(randomUUID(),{...seat,soul:preview,soulId:null},{once:{manifestHash:hash({old:true}),entries:1}});
+  const old={version:1,kind:'note',name:'historical.md',contentHash:hash('old'),text:'old'},id=hash(old);
+  save(join(dirname(source.file),'inputs',id+'.json'),old);
+  installSource(source,{marker:false,status:{auto:false,captured:{notes:[],threads:{},inputs:[id]},processed:[id]}});
+  save(join(dirname(source.file),'once.json'),{version:1,manifestHash:source.once.manifestHash,verifiedAt:'2026-10-05T00:00:00Z',entries:[{name:'historical.md',sha256:hash('old')}],inputs:[id],runs:[]});
+  fs.rmSync(dirname(preview),{recursive:true});
+  return {...o,source,pin:preview};
+}
+test('54 owner-rebind plan is read-only; explicit apply audits first, preserves custody and never launches',t=>{
+  const o=legacyOnceOwner(t),{f,source:s,pin}=o,record=join(dirname(s.file),'once.json');
+  assert.throws(()=>harvestOnce({home:f.home,records:o.file,noLaunch:true}),e=>e.code==='E_OWNER' && /owner-rebind.*--expect-pin/.test(e.message));
+  const before=tree(f.bindings.stateDir),descriptor=fs.readFileSync(s.file),receipt=readJSON(record),calls=fs.existsSync(f.calls)?fs.readFileSync(f.calls,'utf8'):'';
+  const args={source:s.file,expectPin:pin};
+  fs.chmodSync(join(f.home,'instance.json'),0o644); // the real kernel's record mode
+  const plan=ownerRebind({...args,plan:true});assert.equal(plan.changed,false);assert.equal(plan.to,process.env.OATS_SOUL_ID);assert.deepEqual(tree(f.bindings.stateDir),before);
+  const order=[];const done=ownerRebind({...args,by:'current owner decision',write:(file,value)=>{order.push(file);save(file,value);}});
+  assert.equal(done.changed,true);assert.equal(order.at(-1),join(f.bindings.stateDir,'owners.json'));
+  assert.deepEqual(fs.readFileSync(s.file),descriptor,'no retroactive soulId');
+  const after=readJSON(record);const {ownerDecisions,...old}=after;assert.deepEqual(old,receipt);assert.equal(ownerDecisions.length,1);assert.equal(ownerDecisions[0].kind,'explicit-operator-rebind');assert.equal(ownerDecisions[0].operator.host.length>0,true);
+  assert.equal(retainedOnceIdentity(s,process.env.OATS_SOUL_ID),true);
+  const effects=(fs.existsSync(f.calls)?fs.readFileSync(f.calls,'utf8'):'').slice(calls.length);assert.equal(effects,'','rebind invokes no external command, model or capture');
+  assert.throws(()=>ownerRebind(args),e=>e.code==='E_OWNER' && /already qualified/.test(e.message));
+  const fresh=harvestOnce({home:f.home,records:o.file,noLaunch:true});assert.equal(fresh.status,'ready');assert.equal(loadSource(fresh.source).soulId,process.env.OATS_SOUL_ID);
+});
+test('54 owner-rebind refuses conflicts and reports audit-before-owner partial failure without rollback',t=>{
+  const {f,source:s,pin}=legacyOnceOwner(t),args={source:s.file,expectPin:pin},registry=join(f.bindings.stateDir,'owners.json');
+  const before=tree(f.bindings.stateDir);
+  assert.throws(()=>ownerRebind({...args,expectPin:pin+'-changed'}),{code:'E_OWNER'});assert.deepEqual(tree(f.bindings.stateDir),before);
+  assert.throws(()=>ownerRebind({...args,env:{...process.env,OATS_SOUL_ID:'example.test/other#source'}}),{code:'E_OWNER'});assert.deepEqual(tree(f.bindings.stateDir),before);
+  const foreign=sourceFor(randomUUID(),describeSeat(f.home,{fromHome:true}),{once:{manifestHash:hash('foreign'),entries:0}});
+  const {file,...doc}=foreign;save(file,{...doc,soulId:'example.test/foreign#source'});
+  assert.throws(()=>ownerRebind(args),e=>e.code==='E_OWNER' && /different qualified/.test(e.message));fs.rmSync(dirname(file),{recursive:true});
+  assert.throws(()=>ownerRebind({...args,write:(file,value)=>{if(file===registry)throw Object.assign(Error('fixture'),{code:'EACCES'});save(file,value);}}),e=>e.result.changed===false && e.result.audited.length===1 && /No rollback/.test(e.message));
+  assert.equal(readJSON(registry)['owner-1'],pin);assert.equal(retainedOnceIdentity(s,process.env.OATS_SOUL_ID),false,'audit without pin replacement grants nothing');
+  const retry=ownerRebind(args);assert.equal(retry.changed,true);assert.equal(readJSON(join(dirname(s.file),'once.json')).ownerDecisions.length,1,'retry keeps one same decision');
+});
+
 // ------------------------------------------------------------------ 4.1.0 one-shot harvest (#37)
 const sha256=bytes=>createHash('sha256').update(bytes).digest('hex');
 /** A harvest-off seat run by the operator (no instance env), with notes in its
@@ -2014,7 +2058,10 @@ const sha256=bytes=>createHash('sha256').update(bytes).digest('hex');
 function onceFixture(t,{notes=2,body=''}={}) {
   const f=fixture(t,{kind:'git'});
   process.env.OATS_SETTINGS=JSON.stringify({'bindings-file':f.bindingFile,harvest:'off'});
-  for(const k of ['OATS_HOME','OATS_INSTANCE_HOME','OATS_INSTANCE','OATS_AGENT']) delete process.env[k];
+  for(const k of ['OATS_HOME','OATS_INSTANCE_HOME','OATS_INSTANCE']) delete process.env[k];
+  process.env.OATS_AGENT='source';process.env.OATS_SOUL_ID='example.test/source#source';
+  const meta=readJSON(join(f.home,'instance.json'));meta.workspace={soul:{repoKey:'example.test/source',id:process.env.OATS_SOUL_ID}};save(join(f.home,'instance.json'),meta);
+  save(join(f.dir,'version.json'),{schemaVersion:1,name:'@awebai/oats',version:'0.43.3',features:['harness']});
   const entries=[];
   for(let i=0;i<notes;i++) {const path=`notes/n${i}.md`,text=`---\ntype: Decision\ntitle: N${i}\n---\n\nNote ${i}: explicit custody prevents hidden fallback.${body}\n`;put(join(f.home,path),text);entries.push({path,sha256:sha256(text)});}
   const archive=join(f.dir,'archive');const old='---\ntype: Lesson\ntitle: Old\n---\n\nArchived lesson from the classic seat.\n';put(join(archive,'old.md'),old);

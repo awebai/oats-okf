@@ -9,10 +9,13 @@ import { runSource, complete, completeInBackground, retry, readRun, requireQuali
 import { initBase, migrate, deliverMigration, cutoverMigration, migrateSource, forgetMigration } from '../lib/migration.mjs';
 import { inspect, inspectConsultOnly } from '../lib/inspection.mjs';
 import { harvestOnce } from '../lib/once.mjs';
+import { ownerRebind } from '../lib/owner-rebind.mjs';
 import { loadInvocationKnowledgeBinding } from '../lib/binding-wire.mjs';
 import { loadCapturedOkfInvocation, loadOkfSourceReceiptInput, assertOkfInvocationAction, requireOkfAdmittedAction, assertOkfSourceContext, assertOkfRegisteredSourceReplay } from '../lib/invocation-context.mjs';
 const HELP=`oats okf inspect [--home PATH | --source FILE] [--json]
 oats okf harvest [--home PATH] [--no-launch] [--json]
+oats okf owner-rebind --source FILE --expect-pin OLD_PATH --soul SOUL [--by NOTE] [--plan] [--json]
+  (explicit operator decision: --plan reads only; bare applies, audits before pin change, never harvests)
 oats okf harvest --once --home PATH --records MANIFEST [--override-opt-out] [--no-launch] [--json]
   (operator, from the deployment with --soul: one reviewed harvest of a seat from a hash-verified manifest; registers nothing)
 oats okf run-source --source FILE [--manual] [--no-launch] [--json]
@@ -53,7 +56,7 @@ else {
   const consult=Object.hasOwn(CONSULT,event);
   let exit=0,answer,text,textMode=(consult || (event==='harvest' && args.includes('--once'))) && !args.includes('--json');
   try {
-    const flags={},positionals=[]; const boolean=new Set(['json','no-launch','manual','rejudge','launch','enable','disable','install-host','confirm','fresh','all','regex','case-sensitive','once','override-opt-out']);
+    const flags={},positionals=[]; const boolean=new Set(['json','no-launch','manual','rejudge','launch','enable','disable','install-host','confirm','fresh','all','regex','case-sensitive','once','override-opt-out','plan']);
     for(let i=1;i<args.length;i++) {
       if(consult && args[i]==='--') {positionals.push(...args.slice(i+1));break;}
       if(!args[i].startsWith('--')) {if(!consult) fail('E_USAGE',`unexpected argument ${args[i]}`);positionals.push(args[i]);continue;}
@@ -68,6 +71,7 @@ else {
       retry:['source','run','rejudge','launch','adopt-home'],read:['home','source','base','path','fresh'],refresh:['home','source'],'harvest-status':['home'],
       bases:['home','source','fresh'],index:['home','source','base','fresh'],cat:['home','source','base','from','fresh'],ls:['home','source','base','fresh'],
       links:['home','source','base','fresh'],search:['home','source','base','all','node','regex','case-sensitive','fresh'],
+      'owner-rebind':['source','expect-pin','by','plan'],
       setup:['source','enable','disable','install-host','harvest'],init:['base','nodes','output','confirm'],
       migrate:['source-home','legacy','base','node','output','deliver','cutover','soul-dir'],unlock:['lock','token']
     };
@@ -84,7 +88,7 @@ else {
       requireOkfAdmittedAction(execution.context);
       if(!flags['native-request']||!['prepare','launch'].includes(flags['worker-mode']||'launch'))fail('E_CAPTURED_HELPER','captured harvest needs explicit native-request and supported worker-mode');
     }
-    const unsupportedCaptured=new Set(['setup','init','migrate','unlock']);
+    const unsupportedCaptured=new Set(['setup','init','migrate','unlock','owner-rebind']);
     if(captured && unsupportedCaptured.has(event)) fail('E_MIGRATION',`captured ${event} is not supported; use an explicit operator administration path`);
     const target=execution?.context.instance;
     if(target && flags.home && resolve(flags.home)!==target.home) fail('E_INVOCATION','captured invocation target differs from requested home');
@@ -132,6 +136,10 @@ else {
     if(event==='read') fail('E_REMOVED','okf 4.0.0 removed read: use `oats okf cat --base ALIAS PATH` (same path, text and receipt)');
     if(consult) {const answer=CONSULT[event](consultOnly?consultSource(home):src(),flags,positionals);result=answer.result;text=answer.text;}
     else if(event==='refresh') fail('E_REMOVED','okf 3.0.0 has no per-instance views; index/cat always read the accepted state: run `oats okf index`, then `oats okf cat --base ALIAS PATH`');
+    else if(event==='owner-rebind') {
+      if(!flags.soul || !flags.source) fail('E_USAGE','owner-rebind requires --source and an explicit --soul naming the target');
+      result=ownerRebind({source:flags.source,expectPin:flags['expect-pin'],by:flags.by,plan:!!flags.plan});
+    }
     else if(event==='harvest-status') result=harvestStatus({home,flags});
     else if(event==='soul-scaffold') {
       // Souls are portable declarations, never an implicit knowledge store.

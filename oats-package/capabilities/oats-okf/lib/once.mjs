@@ -7,6 +7,8 @@ import { fs, join, dirname, resolve, safePath, readJSON, save, hash, fail, withi
 import { describeSeat, sourceFor, installSource, loadSource, loadStatus, input, inputCounts } from './sources.mjs';
 import { soulHarvest } from './harvest-switch.mjs';
 import { runSource, readRun } from './worker.mjs';
+import { checkOnceIdentity } from './once-identity.mjs';
+import { onceSeatLock as seatLock, requireOnceOwner, retainedOnceIdentity } from './owner-rebind.mjs';
 
 const MANIFEST_KEYS = ['version', 'instance', 'roots', 'notes', 'sessions'];
 const MAX_ENTRIES = 2000, MAX_FILE = 16 * 1024 * 1024, MAX_TOTAL = 256 * 1024 * 1024;
@@ -94,8 +96,6 @@ function onceId(instance, owner, manifestHash) {
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20, 32)}`;
 }
 const receiptPath = source => join(dirname(source.file), 'once.json');
-/** The seat's one-shot lock: its overlap checks and its install are one step. */
-const seatLock = (stateDir, instance, owner) => join(stateDir, `once-${hash({ instance, owner }).slice(0, 16)}.lock`);
 // Queue briefly behind another one-shot of the seat while it installs.
 const SEAT_LOCK_WAIT_MS = 10000;
 
@@ -160,11 +160,13 @@ export function harvestOnce({ home, records: manifestFile, overrideOptOut = fals
   const soulName = seat.meta.workspace?.soul?.name || String(seat.meta.workspace?.soul?.id || '').split('#')[1] || seat.agent;
   const named = /^name:\s*(\S+)\s*$/m.exec(fs.existsSync(join(seat.soul, 'soul.yaml')) ? fs.readFileSync(join(seat.soul, 'soul.yaml'), 'utf8') : '')?.[1]?.replace(/^['"]|['"]$/g, '');
   if (named !== soulName) fail('E_INVOCATION', `the soul given (${named || 'unnamed'}) is not this seat's soul (${soulName}); pass --soul ${soulName}`);
+  seat.soulId = checkOnceIdentity(seat, env);
   const override = checkOptOut(seat.soul, overrideOptOut);
   const { manifest, manifestHash } = loadManifest(manifestFile);
   const id = onceId(seat.instance, seat.decl.owner, manifestHash), stateDir = seat.bindings.stateDir;
   const source = withLock(seatLock(stateDir, seat.instance, seat.decl.owner), () => {
     const planned = sourceFor(id, seat);
+    requireOnceOwner(planned);
     // The receipt is written last: a one-shot without it was interrupted while
     // installing, and is installed again from the re-verified manifest. One
     // with it continues from custody (its inputs are verified on read), never
@@ -172,7 +174,11 @@ export function harvestOnce({ home, records: manifestFile, overrideOptOut = fals
     if (fs.existsSync(receiptPath(planned))) {
       const recorded = readJSON(receiptPath(planned)).manifestHash;
       if (recorded !== manifestHash) fail('E_RECORDS', `one-shot ${id} was started from manifest ${recorded}, not this one (${manifestHash}); its inputs are in custody (receipt ${receiptPath(planned)}); rerun with the manifest it was started from, unchanged, to continue it`);
-      return loadSource(planned.file);
+      const retained = loadSource(planned.file);
+      if (retained.home !== seat.home || retained.instance !== seat.instance || retained.agent !== seat.agent || retained.owner !== seat.decl.owner || !retainedOnceIdentity(retained, seat.soulId)) {
+        fail('E_OWNER', 'the retained one-shot lacks matching qualified target identity; preserve its receipt and inputs for evidence-guarded owner continuation. Do not rewrite or replay it as a different source');
+      }
+      return retained;
     }
     const notes = readManifest(manifest, home, seat.instance, entries => refuseHeld(stateDir, planned, entries));
     const payloads = notes.map(n => ({ version: 1, kind: 'note', name: n.name, contentHash: hash(n.text), text: n.text }));
@@ -190,8 +196,10 @@ export function harvestOnce({ home, records: manifestFile, overrideOptOut = fals
   if (!before.remaining && !before.status.activeRun) return answer(source, { status: 'already-delivered' });
   // An opt-out override is the run's: a soul may opt out between two runs.
   const result = runSource(source, { manual: true, noLaunch, runFields: { once: { override } } });
-  const receipt = readJSON(receiptPath(source));
-  if (result.run && !receipt.runs.some(r => r.run === result.run)) { receipt.runs.push({ run: result.run, override: readRun(source, result.run).once?.override ?? false }); save(receiptPath(source), receipt); }
+  withLock(seatLock(stateDir, seat.instance, seat.decl.owner), () => {
+    const receipt = readJSON(receiptPath(source));
+    if (result.run && !receipt.runs.some(r => r.run === result.run)) { receipt.runs.push({ run: result.run, override: readRun(source, result.run).once?.override ?? false }); save(receiptPath(source), receipt); }
+  }, { waitMs: SEAT_LOCK_WAIT_MS, reclaimDead: true });
   return answer(source, result);
 }
 

@@ -3,7 +3,7 @@
   "command": "okf",
   "version": "4.1.1",
   "compatibility": {
-    "oats": ">=0.29.0"
+    "oats": ">=0.43.3"
   },
   "layer": "knowledge",
   "description": "The OKF knowledge slot for working souls: consult the soul's accepted OKF bases remotely (no per-instance copy), keep instance knowledge with judgment, and \u2014 when the deployment switches harvest on \u2014 hand each instance's notes and session to the knowledge harvester through durable custody.",
@@ -66,7 +66,8 @@
     "binding-normalize": "bin/oats-okf-binding.mjs normalize",
     "binding-bind": "bin/oats-okf-binding.mjs bind",
     "binding-check": "bin/oats-okf-binding.mjs check",
-    "harvest-status": "bin/oats-okf.mjs harvest-status"
+    "harvest-status": "bin/oats-okf.mjs harvest-status",
+    "owner-rebind": "bin/oats-okf.mjs owner-rebind"
   },
   "binding": {
     "version": 1,
