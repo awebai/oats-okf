@@ -71,6 +71,9 @@ test('spawn hook creates instance knowledge and briefs the proposal + harvester 
   assert.equal(r.out.meta,undefined,'no meta: the kernel keeps meta as the receipt of external state');
   assert.ok(r.out.brief.includes(SPAWN),r.out.brief);
   assert.ok(!r.out.brief.includes('--relative-to'));
+  // 5.0.2 (#64): the proposal brief carries the personal-data sentence and the names it covers. An instruction, not a check.
+  assert.ok(r.out.brief.includes('Never include personal data about people outside the team (clients, correspondents, any other third party): a name, a contact detail, or anything else that identifies a person, including detail derived from correspondence. Keep the lesson and leave the person out. Naming the author of a published source you cite is fine.'),r.out.brief);
+  assert.ok(r.out.brief.includes('a note\'s file name, a task ref and an instance\'s name are published as provenance when knowledge is harvested'),r.out.brief);
   assert.match(r.out.brief,/owns: project\/expert; reads: project\/peer/);
   assert.equal(r.out.warning,undefined);
   assert.ok(fs.statSync(join(f.home,'STATE.md')).isFile());

@@ -1,5 +1,46 @@
 # Changelog
 
+## 5.0.2 — 2026-10-10
+
+Instruction wording only: this narrows an agent's judgement and guarantees
+nothing. No setting changes and nothing a harvest publishes changes; the one
+program output that differs is the text of the spawn brief.
+
+### Changed
+
+- **Personal data is named in the exclusions (#64).** One sentence, the same
+  at every place an agent is told what to leave out: the capture skill and
+  the inject, the proposal brief, the harvester's edit check and diff check,
+  the maintainer's review check, and the Exclusions of the doctrine skill.
+  "Never include personal data about people outside the team (clients,
+  correspondents, any other third party): a name, a contact detail, or
+  anything else that identifies a person, including detail derived from
+  correspondence. Keep the lesson and leave the person out. Naming the
+  author of a published source you cite is fine." Until now the exclusions
+  named secrets, credentials, private paths and verbatim third-party
+  messages. A person's name, or a detail paraphrased from a message, was
+  none of those.
+- **Provenance names are covered.** Note file names, task refs and instance
+  names are published as written. A working instance is told the sentence
+  covers the names it chooses. The harvester drops the claims that rest on a
+  note or task ref whose name carries such data, and publishes nothing when
+  the source instance's name does. The reviewer checks the PR title, the
+  body and the provenance names, and says in its verdict that a review comes
+  after the push.
+- **The README says what is enforced and what is an instruction.** The
+  exclusions are instructions. The soul's opt-out is the one control
+  enforced in code, with two limits: it is per soul, and it covers that
+  soul's own proposals, not what its instances write to other seats.
+
+Not in this release: any check before the push by anything other than the
+harvester. A harvester without push access, with publication done by a
+separate step after a human release, is recorded on #64 as a host and kernel
+design question.
+
+Compatibility remains OATS >=0.29.0. Tests pin the sentence at each place
+and the README statements. They prove the text ships, not that a model
+follows it.
+
 ## 5.0.1 — 2026-10-10
 
 ### Fixed
