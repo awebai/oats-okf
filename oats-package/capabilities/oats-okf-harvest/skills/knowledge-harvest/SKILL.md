@@ -227,7 +227,7 @@ if publish > "$report_file" 2>&1; then
 else
   # Every nonzero publication result reaches this failure-only block.
   publication_status=$?
-  printf '\nPublication failed (exit %s); DO NOT RETIRE. Retain this live home.\nCommit text: %s\nPR text: %s\nPublication report: %s\nPush output (if reached): %s\n' "$publication_status" "$commit_file" "$pr_file" "$report_file" "$push_output" >> "$report_file"
+  printf '\nPublication failed (exit %s); DO NOT RETIRE. Retain this live home.\nCommit repository (commit may not exist yet): %s\nCommit text: %s\nPR text: %s\nPublication report: %s\nPush output (if reached): %s\n' "$publication_status" "$PWD/work/<alias>" "$commit_file" "$pr_file" "$report_file" "$push_output" >> "$report_file"
   if notification_output=$(<source notification command or skipped notice> 2>&1); then
     : # A zero notification status is not proof of delivery.
   else
