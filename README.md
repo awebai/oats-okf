@@ -1,7 +1,7 @@
 # oats.okf 5 — external knowledge, consulted remotely, proposed at checkpoints
 
 The official OKF (Open Knowledge Format) knowledge package for OATS:
-**5.0.0**, requiring **OATS >=0.29.0**. CI runs it against the released
+**5.0.1**, requiring **OATS >=0.29.0**. CI runs it against the released
 OATS 0.44.0 kernel (see [Tests and CI](#tests-and-ci)).
 
 A working soul's knowledge lives outside the soul, in OKF bases: Git
@@ -40,7 +40,7 @@ capability's `schemas/`, with copies in the repository's `schemas/`.
 
 ## Configuration
 
-A workspace declares the package (`packages: { oats.okf: v5.0.0 }`) and
+A workspace declares the package (`packages: { oats.okf: v5.0.1 }`) and
 selects it as the knowledge capability (`defaults: { knowledge: { oats.okf:
 { from: package } } }`, or per soul). Each deployment points it at its
 bindings file in its own `oats-local.yaml`:
@@ -324,11 +324,28 @@ The harvester (`knowledge: none`, capability `oats.okf-harvest`) follows the
 7. **Validates** with `okf-validate.mjs --strict` and checks the diff touches
    only allowed paths and carries no secret or private path.
 8. **Publishes one PR per base** with plain `git` and `gh`: a branch
-   `okf-harvest/<source instance>-<timestamp>`, label `okf-harvest`, and a
-   body that ends with a version 2 provenance block (below). It never pushes
-   to the accepted branch, force-pushes or closes a PR.
-9. **Hands over** (the source, each PR URL, every dropped claim and why) and
-   **retires**. Nothing waits for it and nothing reports back to the source.
+   `okf-harvest/<UTC YYYYMMDD>-<fresh UUID>`, label `okf-harvest`, and a body
+   ending with a version 2 provenance block (below). No source or harvester
+   name enters the ref; Git checks the full ref. The push is create-only:
+   an exact destination with an empty expected-old lease, plus porcelain
+   new-ref confirmation (even an identical up-to-date ref is a collision).
+   It never updates an existing harvest ref, pushes to the accepted branch,
+   uses an ordinary force-push, or closes a PR. No automatic collision retry.
+   The source is explicit in the native-written commit text and PR provenance;
+   the harvester remains in provenance. Claims and identities stay data.
+9. **Hands over and retires only on success or nothing promotable** (the
+   source, each PR URL, every dropped claim and why). **On any publication
+   failure it does not retire:** the live home retains the clone, exact
+   error, commit/PR texts and their locations, and those are its final report.
+   The skill's failure-only block notifies the source through already-composed
+   messaging when reachable; no messaging or a gone/unreachable source is
+   explicitly skipped, never a send claim. Notification failure does not mask
+   the publication error or allow retirement. There is no maintainer
+   recipient/preflight before a PR and no new routing or messaging requirement.
+   Existing oats/core attention may show a harvest blocked on human help when
+   supported; otherwise its retained final report is the visibility path.
+   A `gh` failure may leave a remote side effect: report uncertainty, not a
+   claim that no PR exists or permission to retry/clean it up.
 
 Two limits hold throughout:
 
@@ -393,8 +410,9 @@ opened by 4.x harvesters stay reviewable.
 - It never silently supersedes a human-accepted decision: such a PR gets
   `okf-needs-human` and goes to a human, and that label is a hard stop.
 - `oats okf-maintenance notify-harvester` composes a message to the PR's
-  harvester. A 5.0 harvester has retired after handover, so sending it is
-  optional and the merged text says nothing else is needed.
+  harvester. A 5.0 harvester normally retires after successful handover;
+  publication failures retain it. Sending is optional and the merged text
+  says nothing else is needed.
 
 The maintainer is spawned per PR by the **`harvest-review` trigger
 template** (`oats.okf:harvest-review`): GitHub `pull_request` events
@@ -534,7 +552,7 @@ runs, completes or drains anything.
 | `OATS_SOURCE_RECEIPT_FILE` or `OATS_INVOCATION_CONTEXT_FILE` in the environment | nothing: captured receipts and invocation contexts are gone |
 | `oats okf-harvest complete`, `harvest-status` | the harvester opens the PR itself with `git` and `gh` |
 | settings `harvest`, `harvest-runtime`, `harvest-model` | remove them (see [Settings](#settings)) |
-| the `harvester-max-age` setting of `oats.okf-harvest` | none: a harvester retires after handover |
+| the `harvester-max-age` setting of `oats.okf-harvest` | none: a harvester retires after successful handover or nothing promotable; publication failure retains it |
 | the retire hook, and the spawn hook's `sourceReceipt` input | none |
 | binding `payloadVersion` 1 and its `execution` | `payloadVersion` 2 |
 

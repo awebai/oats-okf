@@ -1,5 +1,33 @@
 # Changelog
 
+## 5.0.1 — 2026-10-10
+
+### Fixed
+
+- **Harvest branch collisions and invalid refs (#62, #60).** A publication
+  uses `okf-harvest/<UTC YYYYMMDD>-<fresh UUID>`, independent of source and
+  harvester names, with a full Git ref check. An empty expected-old lease
+  plus Git's porcelain new-ref confirmation prevents updating or adopting
+  an existing harvest branch, including an identical up-to-date target.
+  Source identity remains explicit in the commit and PR provenance.
+- **No silent publication failure (#62).** A refused push or other
+  publication error retains the live harvester home, clone, exact error and
+  commit/PR text locations. It notifies the source through already-composed
+  messaging when available; failed/unavailable notification cannot mask the
+  original error or permit retirement. Existing attention may expose the
+  blocked home where supported. No maintainer recipient, messaging preflight,
+  new engine or automatic retries: maintainers exist only for labelled PRs.
+- **Conditional handover guidance.** Harvester and maintainer instructions
+  agree that only completed publication or nothing promotable permits the
+  ordinary handover/retire path. Partial or uncertain publication stays live;
+  maintainers continue reviewing their PRs without waiting for a harvester.
+
+Compatibility remains OATS >=0.29.0. Real-Git tests execute the published
+shell block with deterministic pre-existing refs, hostile names/paths and
+publication/notification failures. GitHub and messaging use test adapters;
+these tests do not prove live delivery, model adherence or attention.
+The pre-5.0 source-record admission rules and #59 are unchanged.
+
 ## 5.0.0 — 2026-10-07
 
 Knowledge is proposed at checkpoints and harvested by a directly spawned

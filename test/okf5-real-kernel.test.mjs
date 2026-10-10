@@ -1,4 +1,4 @@
-// oats.okf 5.0.0 on the REAL released kernel (@awebai/oats 0.44.0). CI-only:
+// This checkout's oats.okf on the REAL released kernel (@awebai/oats 0.44.0). CI-only:
 // it runs only when OATS_OKF_REAL_CLI names that kernel's bin/oats.mjs (the
 // real-kernel-044 CI job installs it and fails on any skip).
 //
@@ -44,7 +44,7 @@ const strings = (v, out = []) => { if (typeof v === 'string') out.push(v); else 
 const HARVESTER_DIR = 'oats-okf--knowledge-harvester'; // packageSoulAgentName('oats.okf', 'knowledge-harvester')
 const SPAWN_LINE = 'oats spawn oats.okf/knowledge-harvester --task-file <proposal> --relation unrelated';
 
-test(`5.0.0 real OATS ${KERNEL}: legacy-key cleanup, a source spawn, its checkpoint proposal spawning a top-level harvester, the harvester's source records, removed surfaces, and the source retired`, { skip: !cli }, async t => {
+test(`${json(join(root, 'package.json')).version} real OATS ${KERNEL}: legacy-key cleanup, a source spawn, its checkpoint proposal spawning a top-level harvester, the harvester's source records, removed surfaces, and the source retired`, { skip: !cli }, async t => {
   const base = real(fs.mkdtempSync(join(tmpdir(), 'okf5-real-kernel-')));
   t.after(() => fs.rmSync(base, { recursive: true, force: true }));
   assert.doesNotMatch(base, /harvest/, 'the cleanup reader looks for the word harvest in oats-local.yaml; the fixture path must not carry it');
