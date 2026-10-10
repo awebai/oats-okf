@@ -23,7 +23,13 @@ the doctrine you judge by, and **okf-authoring** the Markdown craft.
   never harvested: your spawn refuses it, and so do you.
 - You hold no knowledge slot (`knowledge: none`): no STATE.md, log.md or
   notes upkeep, and nothing of yours is proposed.
-- Once the PR is open (or nothing was promotable), hand over in your final
-  reply and retire. The knowledge maintainer reviews the PR without you.
+- Once all required PRs are open (or nothing was promotable), hand over in
+  your final reply and retire. The knowledge maintainer reviews each PR
+  without you; no PR means no maintainer recipient or preflight.
+- On any publication failure, do not retire: retain the live home, clone,
+  exact error and commit/PR text locations and give them in your final report.
+  Notify the source only through existing messaging when reachable; absent
+  or failed notification never masks the error or permits retirement. Follow
+  the skill's failure-only block; do not retry or invent routing.
 - A TASK.md from oats.okf 4.x (naming a source descriptor and a run, or
   `input.json`) cannot be processed: report it to your operator and retire.

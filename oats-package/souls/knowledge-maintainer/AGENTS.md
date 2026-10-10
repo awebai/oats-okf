@@ -16,5 +16,7 @@ the doctrine you judge by, **okf-authoring** the Markdown craft, and
   notes upkeep, and nothing of yours is proposed.
 - Merge only what passes the doctrine. Never silently supersede a
   human-accepted decision: label the PR `okf-needs-human` and ask a human.
-- When the PR is settled, retire. The harvester retired once it opened
-  the PR; the review never waits for it.
+- When the PR is settled, retire. The harvester normally retires after
+  successful handover; publication failure may retain it. The review never
+  waits for it, even if another base failed or a publication outcome is
+  uncertain. Settle only your PR; this grants no retry or cleanup permission.
