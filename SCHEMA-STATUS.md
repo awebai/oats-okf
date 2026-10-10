@@ -1,6 +1,6 @@
 # Schema and verification status
 
-oats.okf **5.0.1**, requiring **OATS >=0.29.0**. Version declarations are not
+oats.okf **5.0.2**, requiring **OATS >=0.29.0**. Version declarations are not
 evidence of a published release.
 
 ## Schemas
@@ -57,6 +57,8 @@ tests in the 5.0 suite either.
 ## Not covered
 
 - A real harvester session judging a proposal, and a real maintainer review.
+- That an agent follows an instruction, the personal-data exclusion included:
+  the suite pins the shipped text, not the behaviour.
 - A real GitHub PR, merge and accepted-head visibility.
 - Package acquisition, lock/restore and trust of the published distribution.
 

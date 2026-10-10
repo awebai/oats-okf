@@ -1,7 +1,7 @@
 # oats.okf 5 — external knowledge, consulted remotely, proposed at checkpoints
 
 The official OKF (Open Knowledge Format) knowledge package for OATS:
-**5.0.1**, requiring **OATS >=0.29.0**. CI runs it against the released
+**5.0.2**, requiring **OATS >=0.29.0**. CI runs it against the released
 OATS 0.44.0 kernel (see [Tests and CI](#tests-and-ci)).
 
 A working soul's knowledge lives outside the soul, in OKF bases: Git
@@ -40,7 +40,7 @@ capability's `schemas/`, with copies in the repository's `schemas/`.
 
 ## Configuration
 
-A workspace declares the package (`packages: { oats.okf: v5.0.1 }`) and
+A workspace declares the package (`packages: { oats.okf: v5.0.2 }`) and
 selects it as the knowledge capability (`defaults: { knowledge: { oats.okf:
 { from: package } } }`, or per soul). Each deployment points it at its
 bindings file in its own `oats-local.yaml`:
@@ -68,7 +68,9 @@ keep instance knowledge, but are never told to propose, and the harvester
 refuses to harvest them (its spawn hook checks the recorded soul in code). A
 public soul is reachable from outside, and its notes must not be harvested.
 5.0 removes the HOST harvest switch, not this author's safety opt-out. Absent
-means the normal 5.0 proposal flow.
+means the normal 5.0 proposal flow. The opt-out is the one harvest control
+enforced in code, and it has two limits: see
+[What is enforced and what is an instruction](#what-is-enforced-and-what-is-an-instruction).
 
 Every other 4.x harvest key is removed when someone SET it: a host or spawn
 `harvest` (even `off`; a host value also masks the soul's opt-out), and
@@ -322,7 +324,9 @@ The harvester (`knowledge: none`, capability `oats.okf-harvest`) follows the
    `okf-base.json` or another node. A claim whose home is a node the source
    does not own is dropped for that node's owner.
 7. **Validates** with `okf-validate.mjs --strict` and checks the diff touches
-   only allowed paths and carries no secret or private path.
+   only allowed paths and carries no secret, no private path and no personal
+   data about people outside the team. The validator is a program; the
+   checks of the diff are the harvester reading it.
 8. **Publishes one PR per base** with plain `git` and `gh`: a branch
    `okf-harvest/<UTC YYYYMMDD>-<fresh UUID>`, label `okf-harvest`, and a body
    ending with a version 2 provenance block (below). No source or harvester
@@ -364,6 +368,42 @@ oats.okf 5.0; convert it to a Git base or edit it in a reviewed change".
 A harvester given a 4.x TASK (one naming a source descriptor and a run)
 reports it and retires: `oats okf-harvest complete` and `harvest-status`
 answer `E_REMOVED` and never run a 4.x completion.
+
+### What is enforced and what is an instruction
+
+**Personal data is excluded by instruction. Nothing guarantees it stays
+out.** The capturing instance, the proposal brief, the harvester (when it
+edits, when it reads its diff, and for everything it publishes) and the
+maintainer are all given the same sentence:
+
+> Never include personal data about people outside the team (clients,
+> correspondents, any other third party): a name, a contact detail, or
+> anything else that identifies a person, including detail derived from
+> correspondence. Keep the lesson and leave the person out. Naming the
+> author of a published source you cite is fine.
+
+- This is an instruction to agents. It narrows their judgement and
+  guarantees nothing.
+- No program reads the content of a harvest. The validator checks
+  frontmatter, links and reachability.
+- The first reader other than the harvester is the reviewer of the open
+  pull request, after the branch has been pushed. Amending or closing the
+  pull request keeps content out of the accepted base. It removes nothing
+  that was pushed.
+- Provenance publishes names as written: note file names, task refs and
+  instance names. The same instruction covers them.
+
+**The soul's opt-out is the one control enforced in code.** With
+`knowledge: { harvest: off }` in soul.yaml, the spawn brief never tells the
+soul's instances to propose, and the harvester's required spawn hook refuses
+a proposal that names one of them. It has two limits:
+
+- **It is per soul.** No instance, note, host or spawn setting opts out.
+- **It covers that soul's own proposals.** The spawn hook checks the source
+  a proposal names. What an instance of that soul writes to other seats in
+  messages is theirs to capture and propose.
+
+A soul whose work is reading third-party correspondence should opt out.
 
 ### The provenance block (version 2)
 
