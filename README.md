@@ -153,7 +153,8 @@ What oats.okf 5.0 keeps under `stateDir`:
 ```
 
 4.x left `owners.json` and `sources/` there; 5.0 neither reads nor deletes
-them.
+them. [4.x source records after the pin](#4x-source-records-after-the-pin)
+says what they hold and when an operator may remove them.
 
 ### The soul declaration and base metadata
 
@@ -642,12 +643,73 @@ what an existing home already holds. Four separate things:
   the 4.x harvest until it is respawned, and only a home spawned under 5.0
   gets the proposal brief and runs the 5.0 modules. Respawn the homes that
   should propose.
-- **Registered 4.x sources: the pre-pin cutover is unchanged.** 5.0 neither
-  reads nor deletes 4.x custody (`<stateDir>/sources/`,
-  `owners.json`); finish or dispose of it under 4.x. A registered 4.x home
-  retired after the pin is kept with `E_HARVEST_CONSENT_UNKNOWN` from its
-  copied retire hook. 4.x harvest PRs (provenance version 1) stay
-  reviewable.
+- **Registered 4.x sources: finish them under 4.x, or leave them.** 5.0
+  code never reads 4.x state (`<stateDir>/sources/`, `owners.json`) and never
+  deletes it. Finish a source's harvest while 4.x is still pinned: after the
+  pin nothing processes it. No version of oats.okf has a command that removes
+  a source record.
+  [4.x source records after the pin](#4x-source-records-after-the-pin) says
+  what a home spawned on 4.x does when it retires, what a record can hold,
+  and when it may be removed by hand. 4.x harvest PRs (provenance version 1)
+  stay reviewable.
+
+### 4.x source records after the pin
+
+5.0 code never reads `<stateDir>/sources/` or `owners.json`. A home spawned
+on 4.x still does: it runs the 4.x modules copied into it, and they read the
+one record that the home's marker, `.okf-source.json`, names by id.
+
+**Retiring a registered 4.x home after the pin** depends on the version it
+was spawned on:
+
+- **A 4.2 home is kept.** Its copied retire hook asks the deployment for the
+  harvest switch with a command 5.0 removed, so the retirement is refused
+  with `E_HARVEST_CONSENT_UNKNOWN`.
+- **A 4.1 home retires, and leaves a scheduler job.** Its copied hook reads
+  its own spawn-time settings, registers its job `okf-<source id>` again,
+  takes a final capture, and leaves the job enabled while input is pending.
+  The job runs `oats okf run-source`, which 5.0 answers with `E_REMOVED`: the
+  capture stays unprocessed and the job fails each time it runs. Remove it
+  with `oats schedule remove <id> --dir <deployment>`
+  ([Upgrading from 4.1](#upgrading-from-41)). This is read from the 4.1.1
+  code; no test runs a 4.1 home against a 5.0 pin.
+
+**What a record can hold.** Captured notes and windows of session records,
+which can include what people outside the team wrote. They stay on disk
+until someone removes them. Nothing will ever prompt that: keeping or
+deleting them is the operator's decision.
+
+**Removal by hand** is the only removal there is. It is safe in two cases:
+
+1. **A record that holds nothing, at any time.** This is the record a failed
+   spawn leaves. All of these hold:
+   - no home's `.okf-source.json` names its id;
+   - its `status.json` has no captured input, nothing processed, delivered
+     or accepted and no active run, and it has no `inputs/` or `runs/`
+     directory;
+   - no scheduler job `okf-<id>` exists
+     (`oats schedule list --dir <deployment> --json`);
+   - it holds no `*.lock` and no `oats okf` process is running.
+2. **Any 4.x record, once nothing can use it.** The deployment pins 5.0, no
+   live home spawned on 4.x names the record, and its harvest is settled or
+   given up. 4.x said never to erase custody because 4.x had yet to process
+   it; under 5.0 nothing will.
+
+Remove a record's whole directory or nothing.
+
+**What is never touched:**
+
+- while any home spawned on 4.x is alive: the record its marker names, the
+  marker itself, and `owners.json`. Once none is alive, the whole `sources/`
+  directory and `owners.json` are the operator's files and no code reads
+  them;
+- at any time: `cache/` and `migrations/`, which 5.0 uses.
+
+**Two records for one home.** A respawn under the same name registers a new
+record with the same `home`. Tell them apart by the id in the home's marker,
+never by the `home` field in `source.json`. The other record cannot affect
+the home: 4.x finds a home's source through its marker only, and refuses to
+capture for a source whose id the marker does not name.
 
 ## Upgrading from 4.1
 
