@@ -80,6 +80,31 @@ const prose=p=>fs.readFileSync(join(ROOT,p),'utf8').replace(/^> ?/gm,'').replace
 const count=(text,s)=>text.split(s).length-1;
 const CAPDIR='oats-package/capabilities/';
 
+test('okf-trigger-setup hands host timer installation to the operator',()=>{
+  const text=fs.readFileSync(join(ROOT,CAPDIR,'oats-okf-maintenance/skills/okf-trigger-setup/SKILL.md'),'utf8');
+  const install='oats schedule host install';
+  const blocks=[...text.matchAll(/```[a-z]*\n([\s\S]*?)```/g)].filter(block=>block[1].includes(install));
+  assert.ok(blocks.length>0,'keep the install command visible for the operator to copy');
+  for(const block of blocks) {
+    const lines=block[1].split('\n').map(line=>line.replace(/#.*$/,'').trim()).filter(Boolean);
+    assert.ok(lines.every(line=>/^oats schedule host install(?:\s+--[\w-]+(?:\s+[\w-]+)?)*$/.test(line)),
+      'the operator block contains install lines alone, with no agent commands');
+    assert.ok(lines.every(line=>!/--print\b/.test(line)),'no agent-shell preview is offered');
+    const before=text.slice(0,block.index).trimEnd().split(/\n[ \t]*\n/).pop().replace(/\s+/g,' ');
+    for(const required of [/operator's step/,/never yours/,/their own terminal/,/deployment directory/,/outside every instance home/]) {
+      assert.match(before,required,'the immediately preceding paragraph hands installation to the operator');
+    }
+    assert.match(text.slice(0,block.index),/^oats schedule host status\s*(?:#.*)?$/m,'check status before offering installation');
+  }
+  const normalized=text.replace(/\*\*/g,'').replace(/\s+/g,' ');
+  assert.match(normalized,/If this host has none yet/,'installation is conditional on a missing timer');
+  assert.match(normalized,/Do not run it yourself, with or without flags\./);
+  assert.match(normalized,/On OATS 0\.52\.0 and later, do not offer its `--print` from your shell as a preview/);
+  assert.match(normalized,/After the operator has run it, check the result yourself with `oats schedule host status`/);
+  assert.match(normalized,/With no operator at the machine, the timer stays as it is until they run the command: say what is waiting, and do not run it in their place/);
+  assert.doesNotMatch(normalized,/Run it for this review trigger only/,'remove the contradictory installation imperative');
+});
+
 test('the personal-data exclusion is one sentence, the same at every place an agent is told what to exclude',()=>{
   const places={
     'oats-okf/skills/okf-instance-knowledge/SKILL.md':1,'oats-okf/injects/okf.md':1,'oats-okf/bin/oats-okf.mjs':1,
