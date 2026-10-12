@@ -1,5 +1,22 @@
 # Changelog
 
+## 5.0.3 — 2026-10-12
+
+### Fixed
+
+- **The host timer install in `okf-trigger-setup` is the operator's step
+  (#73).** The agent checks with `oats schedule host status` and, if the
+  timer is missing, hands the operator the install command to run in their
+  own terminal, from the deployment directory and outside every instance
+  home. Installation records the invoking shell's `PATH` and node, so the
+  agent must not run it or offer `--print` from its own shell. It checks
+  status again after the operator runs the command and reports what is
+  waiting when no operator is present.
+
+Compatibility remains OATS >=0.29.0. This changes setup guidance; the
+regression test checks the shipped instructions, not whether a model follows
+those instructions. No host timer is installed by the test.
+
 ## 5.0.2 — 2026-10-10
 
 Instruction wording only: this narrows an agent's judgement and guarantees
