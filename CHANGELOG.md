@@ -1,5 +1,33 @@
 # Changelog
 
+## 5.0.5 — 2026-10-14
+
+### Changed
+
+- **One harvester at a time.** The proposal brief in a working instance's
+  TASK.md (`PROPOSE`) said "One spawn per proposal". One checkpoint could
+  then become several proposals and several harvesters, and a harvester
+  drops a claim whose home is a node the source does not own. The brief now
+  says:
+  - one proposal per checkpoint, each concept a claim of its own in it,
+    and claims only for the nodes the soul owns; a lesson for a node it
+    only reads is named in one line in the instance's hand-back, for that
+    node's owner;
+  - one harvester at a time: the instance notes the harvester's instance
+    name in log.md and spawns no other while `oats status` still lists
+    it. A harvester retires once it has handed over, and what the instance
+    learns meanwhile goes into its next proposal. A harvester that stays
+    after reporting a failure is reported, never spawned around;
+  - backing notes are kept until the proposal's harvester has retired.
+
+  The README section "How knowledge is proposed" says the same. This is
+  instruction text only: nothing enforces it in code, and the harvester's
+  behaviour is unchanged. The new brief reaches instances spawned after
+  this version is pinned.
+
+No setting, binding field or hook output changes, apart from the text of
+the spawn brief. Compatibility remains OATS >=0.29.0.
+
 ## 5.0.4 — 2026-10-14
 
 ### Fixed
