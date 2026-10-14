@@ -153,7 +153,7 @@ test(`${json(join(root, 'package.json')).version} real OATS ${KERNEL}: legacy-ke
     assert.match(srcAgents, /IMPORTANT/);
     assert.match(srcAgents, /\*\*okf-propose\*\* skill is \*\*compulsory\*\*/);
     assert.match(srcAgents, /oats okf status/);
-    assert.deepEqual(ok(['okf', 'status', '--json'], { cwd: src, as: { instance: 'src', home: src } }).result, { harvest: 'on', reason: 'default' });
+    assert.deepEqual(ok(['okf', 'status'], { cwd: src, as: { instance: 'src', home: src } }).result, { harvest: 'on', reason: 'default' });
     assert.ok(fs.readFileSync(join(src, '.agents/skills/okf-propose/SKILL.md'), 'utf8').includes(SPAWN_LINE));
     const srcSkills = srcRecord.skills.map(s => s.name);
     for (const s of ['okf-consultation', 'okf-instance-knowledge', 'okf-propose', 'knowledge-theory']) {
@@ -355,7 +355,7 @@ test(`${json(join(root, 'package.json')).version} real OATS ${KERNEL}: legacy-ke
     assert.match(agents, /IMPORTANT/);
     assert.match(agents, /\*\*okf-propose\*\* skill is \*\*compulsory\*\*/);
     assert.match(agents, /knowledge: \{ harvest: off \}.*has no harvest duty/);
-    assert.deepEqual(ok(['okf', 'status', '--json'], { cwd: quiet, as: { instance: 'quiet-1', home: quiet } }).result, { harvest: 'off', reason: 'soul-opt-out' });
+    assert.deepEqual(ok(['okf', 'status'], { cwd: quiet, as: { instance: 'quiet-1', home: quiet } }).result, { harvest: 'off', reason: 'soul-opt-out' });
     assert.ok(fs.statSync(join(quiet, 'STATE.md')).isFile());
     ok(['okf', 'bases'], { cwd: quiet, as: { instance: 'quiet-1', home: quiet } });
     // Even if it proposed, the harvester's required spawn hook reads the RECORDED soul and refuses.
