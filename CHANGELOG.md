@@ -1,5 +1,42 @@
 # Changelog
 
+## 5.2.0 — 2026-10-14
+
+### Changed
+
+- **Harvest duty belongs to the capability (#86).** The oats.okf inject now
+  carries an IMPORTANT block requiring current instance knowledge and a
+  harvest at eligible checkpoints, with compulsory reading of `okf-propose`.
+  That new skill owns the proposal format, promotion/duplicate checks,
+  concurrency and memory gates, spawning and hand-back. Both old rules
+  making proposals depend on the task briefing are removed. No harvest or
+  proposal direction is written into the working instance's TASK.md.
+- **Bound the duty.** At most one proposal per finished task or PR hand-over,
+  not per commit, decision or review round; most checkpoints propose nothing.
+  One harvester at a time per instance, and no spawn under memory pressure
+  or with less than 8 GB available. Deferred claims are recorded and handed
+  back, not retried by polling. These remain agent instructions, not a
+  scheduler or a resource reservation.
+- **One provider-owned answer for the opt-out.** Spawn records the effective
+  duty in home; `oats okf status` exposes on/off without reading task text,
+  the soul file or remote bases. Missing state answers unknown and permits
+  no proposal. The shared inject and skill pointer always ship, with an
+  explicit opt-out exception; no kernel composition mechanism is added.
+  The harvester still refuses opted-out source material independently.
+
+### Upgrade
+
+- **Existing deployments start harvesting on their next spawn after adopting
+  5.2.0**, even when their task briefings never mentioned harvests. Eligible
+  claims can open knowledge PRs on their configured bases. Deployments not
+  ready for that must use the soul opt-out `knowledge: { harvest: off }`.
+  Consultation and working-memory upkeep remain. This behavior change makes
+  the release minor, not a patch; OATS >=0.49.0 remains the kernel floor.
+- Existing homes keep their captured provider and instructions. Restarting
+  does not upgrade them; respawn to obtain the duty, skill and policy record.
+  Do not hand-create or edit a missing policy. The 5.1.0 proposal, source
+  capture and reviewed-knowledge flow are unchanged.
+
 ## 5.1.0 — 2026-10-14
 
 ### Fixed

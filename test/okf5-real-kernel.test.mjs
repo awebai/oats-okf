@@ -147,12 +147,16 @@ test(`${json(join(root, 'package.json')).version} real OATS ${KERNEL}: legacy-ke
     assert.ok(fs.statSync(join(src, 'notes')).isDirectory());
     const srcRecord = json(join(src, 'instance.json'));
     assert.equal(srcRecord.capabilityMeta?.['oats.okf'], undefined, 'no meta: the hook creates no external state for the kernel to keep');
-    assert.ok(fs.readFileSync(join(src, 'TASK.md'), 'utf8').includes(SPAWN_LINE), 'the spawn brief (TASK.md) names the exact harvester spawn');
+    assert.doesNotMatch(fs.readFileSync(join(src, 'TASK.md'), 'utf8'), /harvest|propos|okf-propose/i, 'no harvest direction in TASK.md');
     const srcAgents = fs.readFileSync(join(src, 'AGENTS.md'), 'utf8');
     assert.ok(srcAgents.includes('## Knowledge: OKF'), 'the okf inject is composed');
-    assert.ok(!srcAgents.includes('oats spawn oats.okf/knowledge-harvester'), 'only the spawn brief carries the harvest direction, never the shared inject');
+    assert.match(srcAgents, /IMPORTANT/);
+    assert.match(srcAgents, /\*\*okf-propose\*\* skill is \*\*compulsory\*\*/);
+    assert.match(srcAgents, /oats okf status/);
+    assert.deepEqual(ok(['okf', 'status', '--json'], { cwd: src, as: { instance: 'src', home: src } }).result, { harvest: 'on', reason: 'default' });
+    assert.ok(fs.readFileSync(join(src, '.agents/skills/okf-propose/SKILL.md'), 'utf8').includes(SPAWN_LINE));
     const srcSkills = srcRecord.skills.map(s => s.name);
-    for (const s of ['okf-consultation', 'okf-instance-knowledge', 'knowledge-theory']) {
+    for (const s of ['okf-consultation', 'okf-instance-knowledge', 'okf-propose', 'knowledge-theory']) {
       assert.ok(srcSkills.includes(s), `source composes ${s}: ${srcSkills}`);
       assert.ok(fs.existsSync(join(src, '.agents/skills', s, 'SKILL.md')), `${s} materialized`);
     }
@@ -202,7 +206,7 @@ test(`${json(join(root, 'package.json')).version} real OATS ${KERNEL}: legacy-ke
       assert.ok(hSkills.includes(s), `harvester composes ${s}: ${hSkills}`);
       assert.ok(fs.existsSync(join(hHome, '.agents/skills', s, 'SKILL.md')), `${s} materialized`);
     }
-    for (const s of ['okf-consultation', 'okf-instance-knowledge']) assert.ok(!hSkills.includes(s), `harvester must not compose ${s}`);
+    for (const s of ['okf-consultation', 'okf-instance-knowledge', 'okf-propose']) assert.ok(!hSkills.includes(s), `harvester must not compose ${s}`);
     for (const p of ['STATE.md', 'log.md', 'notes']) assert.equal(fs.existsSync(join(hHome, p)), false, `${p}: the kernel seeds no instance knowledge; only the oats.okf hook does`);
     const hAgents = fs.readFileSync(join(hHome, 'AGENTS.md'), 'utf8');
     assert.ok(hAgents.includes('## Knowledge harvester (oats.okf-harvest)') && !hAgents.includes('## Knowledge: OKF'));
@@ -341,12 +345,17 @@ test(`${json(join(root, 'package.json')).version} real OATS ${KERNEL}: legacy-ke
     assert.equal(fs.existsSync(asked), false, 'no harness was ever asked to start a model');
   });
 
-  await t.test('f) a soul that opts out (knowledge: { harvest: off }) spawns and consults with no proposal instruction, and the harvester spawn hook refuses it in code', () => {
+  await t.test('f) an opted-out soul gets the shared conditional inject, status off, no TASK direction, and a refused harvester spawn', () => {
     const quiet = ok(['spawn', 'quiet', '--name', 'quiet-1', '--no-launch']).result.home;
     const record = json(join(quiet, 'instance.json'));
     assert.equal(record.capabilityMeta?.['oats.okf'], undefined, 'the soul opt-out is accepted (the spawn succeeded); the hook reports no meta');
     const task = fs.readFileSync(join(quiet, 'TASK.md'), 'utf8');
-    assert.ok(!task.includes('oats spawn') && task.includes('never propose knowledge'), 'no proposal instruction for an opted-out soul');
+    assert.doesNotMatch(task, /harvest|propos|okf-propose/i, 'even opt-out direction is absent from TASK.md');
+    const agents = fs.readFileSync(join(quiet, 'AGENTS.md'), 'utf8');
+    assert.match(agents, /IMPORTANT/);
+    assert.match(agents, /\*\*okf-propose\*\* skill is \*\*compulsory\*\*/);
+    assert.match(agents, /knowledge: \{ harvest: off \}.*has no harvest duty/);
+    assert.deepEqual(ok(['okf', 'status', '--json'], { cwd: quiet, as: { instance: 'quiet-1', home: quiet } }).result, { harvest: 'off', reason: 'soul-opt-out' });
     assert.ok(fs.statSync(join(quiet, 'STATE.md')).isFile());
     ok(['okf', 'bases'], { cwd: quiet, as: { instance: 'quiet-1', home: quiet } });
     // Even if it proposed, the harvester's required spawn hook reads the RECORDED soul and refuses.

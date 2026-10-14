@@ -4,7 +4,7 @@ import * as fs from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-// oats.okf 5.1.0 package shape: versions, kernel floor, the slot's settings and
+// oats.okf 5.2.0 package shape: versions, kernel floor, the slot's settings and
 // hooks, the shipped skills (shared copies identical) and the harvester soul.
 const ROOT=fileURLToPath(new URL('../',import.meta.url));
 const PKG=join(ROOT,'oats-package');
@@ -26,13 +26,13 @@ test('validate-manifests passes',()=>{
   assert.equal(r.status,0,r.stdout+r.stderr);
 });
 
-test('every manifest is version 5.1.0 with the >=0.49.0 kernel floor',()=>{
-  assert.equal(readJson(join(ROOT,'package.json')).version,'5.1.0');
+test('every manifest is version 5.2.0 with the >=0.49.0 kernel floor',()=>{
+  assert.equal(readJson(join(ROOT,'package.json')).version,'5.2.0');
   const pkg=readJson(join(PKG,'oats-package.json'));
-  assert.equal(pkg.version,'5.1.0');
+  assert.equal(pkg.version,'5.2.0');
   assert.deepEqual(pkg.compatibility,{oats:'>=0.49.0'});
   for(const name of CAPS) {
-    assert.equal(cap(name).version,'5.1.0',name);
+    assert.equal(cap(name).version,'5.2.0',name);
     assert.deepEqual(cap(name).compatibility,{oats:'>=0.49.0'},name);
   }
 });
@@ -49,8 +49,9 @@ test('oats.okf hooks are exactly soul-scaffold and a required spawn with no inpu
   assert.deepEqual(hooks.spawn,{command:'bin/oats-okf.mjs spawn',required:true});
 });
 
-test('oats.okf ships okf-consultation, okf-instance-knowledge and knowledge-theory',()=>{
-  assert.deepEqual(fs.readdirSync(join(PKG,'capabilities','oats-okf','skills')).sort(),['knowledge-theory','okf-consultation','okf-instance-knowledge']);
+test('oats.okf ships consultation, capture, compulsory proposing and theory skills plus its status command',()=>{
+  assert.deepEqual(fs.readdirSync(join(PKG,'capabilities','oats-okf','skills')).sort(),['knowledge-theory','okf-consultation','okf-instance-knowledge','okf-propose']);
+  assert.equal(cap('oats-okf').commands.status,'bin/oats-okf.mjs status');
 });
 
 test('the three knowledge-theory copies are byte-identical',()=>{
@@ -107,7 +108,7 @@ test('okf-trigger-setup hands host timer installation to the operator',()=>{
 
 test('the personal-data exclusion is one sentence, the same at every place an agent is told what to exclude',()=>{
   const places={
-    'oats-okf/skills/okf-instance-knowledge/SKILL.md':1,'oats-okf/injects/okf.md':1,'oats-okf/bin/oats-okf.mjs':1,
+    'oats-okf/skills/okf-instance-knowledge/SKILL.md':1,'oats-okf/injects/okf.md':1,'oats-okf/skills/okf-propose/SKILL.md':1,
     // The harvester reads it twice: when it edits, and when it reads its diff.
     'oats-okf-harvest/skills/knowledge-harvest/SKILL.md':2,'oats-okf-maintenance/skills/knowledge-review/SKILL.md':1,
     ...Object.fromEntries(CAPS.map(name=>[`${name}/skills/knowledge-theory/SKILL.md`,1]))
@@ -120,8 +121,8 @@ test('the personal-data exclusion is one sentence, the same at every place an ag
   assert.equal(count(prose('README.md'),PERSONAL_DATA),1,'README quotes the sentence');
 });
 
-test('the names a working instance chooses are covered: capture skill, inject and proposal brief',()=>{
-  for(const file of ['oats-okf/skills/okf-instance-knowledge/SKILL.md','oats-okf/injects/okf.md','oats-okf/bin/oats-okf.mjs']) assert.equal(count(prose(CAPDIR+file),NAMES),1,file);
+test('the names a working instance chooses are covered: capture skill, inject and proposing skill',()=>{
+  for(const file of ['oats-okf/skills/okf-instance-knowledge/SKILL.md','oats-okf/injects/okf.md','oats-okf/skills/okf-propose/SKILL.md']) assert.equal(count(prose(CAPDIR+file),NAMES),1,file);
 });
 
 test('the harvester and the reviewer apply it to what is published, provenance names included',()=>{

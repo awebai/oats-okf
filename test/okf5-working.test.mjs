@@ -60,26 +60,23 @@ test('--help prints usage and changes nothing',t=>{
   const r=run(f,['--help']);
   assert.equal(r.status,0);
   assert.match(r.stdout,/oats okf inspect/);
-  assert.ok(r.stdout.includes('oats spawn oats.okf/knowledge-harvester --task-file FILE --relation unrelated'));
+  assert.match(r.stdout,/oats okf status/);
+  assert.match(r.stdout,/okf-propose/);
+  assert.doesNotMatch(r.stdout,/TASK\.md/);
   assert.deepEqual(snapshot(f.home,f.stateDir,f.soul,f.base),before);
 });
 
-test('spawn hook creates instance knowledge and briefs the proposal + harvester spawn',t=>{
+test('spawn creates memory and default-on policy, with no harvest direction in its TASK brief',t=>{
   const f=fixture(t);
   const r=hook(f,'spawn');
   assert.equal(r.status,0,r.stdout+r.stderr);
   assert.equal(r.out.meta,undefined,'no meta: the kernel keeps meta as the receipt of external state');
-  assert.ok(r.out.brief.includes(SPAWN),r.out.brief);
-  assert.ok(!r.out.brief.includes('--relative-to'));
-  // 5.0.2 (#64): the proposal brief carries the personal-data sentence and the names it covers. An instruction, not a check.
-  assert.ok(r.out.brief.includes('Never include personal data about people outside the team (clients, correspondents, any other third party): a name, a contact detail, or anything else that identifies a person, including detail derived from correspondence. Keep the lesson and leave the person out. Naming the author of a published source you cite is fine.'),r.out.brief);
-  assert.ok(r.out.brief.includes('a note\'s file name, a task ref and an instance\'s name are published as provenance when knowledge is harvested'),r.out.brief);
+  assert.doesNotMatch(r.out.brief,/harvest|propos|okf-propose|oats spawn|--task-file/i);
   assert.match(r.out.brief,/owns: project\/expert; reads: project\/peer/);
-  // One harvester at a time: one proposal per checkpoint, claims only for owned nodes.
-  assert.ok(r.out.brief.includes('One proposal per checkpoint, with each concept a claim of its own in it, and claims only for the nodes you own: a lesson for a node you only read is not a claim'),r.out.brief);
-  assert.ok(r.out.brief.includes("One harvester at a time: note the proposal and the harvester's instance name in log.md. A harvester retires once it has handed over; while `oats status` still lists the last one you spawned, don't spawn another"),r.out.brief);
-  assert.ok(r.out.brief.includes("If you hand back with it still listed, name it and the claims still waiting in your hand-back; don't wait for it or spawn around it."),r.out.brief);
-  assert.ok(!r.out.brief.includes('One spawn per proposal'),r.out.brief);
+  const policy=run(f,['status','--json']);
+  assert.equal(policy.status,0,policy.stdout+policy.stderr);
+  assert.deepEqual(policy.out.result,{harvest:'on',reason:'default'});
+  assert.deepEqual(JSON.parse(fs.readFileSync(join(f.home,'okf-harvest-policy.json'),'utf8')),{version:1,harvest:'on',reason:'default'});
   assert.equal(r.out.warning,undefined);
   assert.ok(fs.statSync(join(f.home,'STATE.md')).isFile());
   assert.ok(fs.statSync(join(f.home,'log.md')).isFile());
@@ -93,8 +90,9 @@ test('a soul that opts out (knowledge: { harvest: off }) keeps consultation and 
   assert.equal(r.status,0,r.stdout+r.stderr);
   assert.equal(r.out.meta,undefined,'no meta: the kernel keeps meta as the receipt of external state');
   assert.match(r.out.brief,/oats okf index/);assert.match(r.out.brief,/okf-consultation and okf-instance-knowledge/);
-  assert.match(r.out.brief,/never propose knowledge or spawn a knowledge harvester/);
-  assert.doesNotMatch(r.out.brief,/oats spawn|--task-file|proposals\//);
+  assert.doesNotMatch(r.out.brief,/harvest|propos|okf-propose|oats spawn|--task-file/i);
+  // The answer is from spawn state, even without the opt-out in this invocation.
+  assert.deepEqual(run(f,['status','--json']).out.result,{harvest:'off',reason:'soul-opt-out'});
   assert.ok(fs.statSync(join(f.home,'STATE.md')).isFile());assert.ok(fs.statSync(join(f.home,'notes')).isDirectory());
   // Its commands work as well.
   const idx=run(f,['index','--json'],{extra:{OATS_SETTINGS:JSON.stringify({'bindings-file':f.bindingsFile,harvest:'off'}),OATS_SETTINGS_ORIGINS:JSON.stringify({'/harvest':{kind:'soul',at:'soul.yaml#/knowledge'}})}});
@@ -112,7 +110,8 @@ test('a 4.x home\'s recorded manifest defaults (harvest off, harvest-runtime pi)
   const f=fixture(t),extra=okf4Settings(f);
   const r=hook(f,'spawn',{extra});
   assert.equal(r.status,0,r.stdout+r.stderr);assert.equal(r.out.warning,undefined);
-  assert.ok(r.out.brief.includes(SPAWN),'a manifest-default off is no opt-out: the proposal brief');
+  assert.doesNotMatch(r.out.brief,/harvest|propos/i);
+  assert.deepEqual(run(f,['status','--json'],{extra}).out.result,{harvest:'on',reason:'default'},'a manifest-default off is no opt-out');
   for(const args of [['inspect','--json'],['bases','--json'],['index','--json'],['cat','--base','project','/expert/index.md','--json']]) {
     const c=run(f,args,{extra});
     assert.equal(c.status,0,`${args[0]}: ${c.stdout}${c.stderr}`);assert.equal(c.out.ok,true,args[0]);
@@ -129,13 +128,53 @@ test('on a 4.x home, an explicit host harvest key still refuses E_REMOVED with t
   assert.equal(unknown.status,1);assert.equal(unknown.out.error.code,'E_REMOVED');assert.match(unknown.out.error.message,/from an unknown origin/);
 });
 
-test('the shared inject and skills carry no harvest direction (only the spawn brief does)',()=>{
+test('the shared IMPORTANT block requires the proposing skill and explicitly exempts opted-out souls',()=>{
   const cap=join(ROOT,'oats-package/capabilities/oats-okf');
-  for(const file of ['injects/okf.md','skills/okf-consultation/SKILL.md','skills/okf-instance-knowledge/SKILL.md','skills/knowledge-theory/SKILL.md']) {
-    const text=fs.readFileSync(join(cap,file),'utf8');
-    assert.doesNotMatch(text,/oats spawn|--task-file|--relation/,file);
-    if(file!=='skills/knowledge-theory/SKILL.md') assert.doesNotMatch(text,/knowledge-harvester/,file);
+  const read=file=>fs.readFileSync(join(cap,file),'utf8');
+  const prose=text=>text.replace(/^> ?/gm,'').replace(/\*\*/g,'').replace(/\s+/g,' ');
+  const inject=prose(read('injects/okf.md'));
+  assert.match(inject,/IMPORTANT.*MUST keep STATE\.md, log\.md and notes\/ up to date/);
+  assert.match(inject,/MUST launch a knowledge harvest at important checkpoints when the procedure's gates pass/);
+  assert.match(inject,/Reading the okf-propose skill is compulsory/);
+  assert.match(inject,/Run `oats okf status` from instance home/);
+  assert.match(inject,/knowledge: \{ harvest: off \}.*has no harvest duty/);
+  const skill=prose(read('skills/okf-propose/SKILL.md'));
+  assert.ok(skill.includes(SPAWN));
+  for(const required of [/Most checkpoints propose nothing/,/at most one proposal/i,/Never launch per commit, per review round/,
+    /oats okf search/,/One harvester at a time per instance/,/free -g/,/less than 8 GB/,/do not spawn/,
+    /Record the checkpoint, proposal path and returned harvester instance name in log\.md/,/name the deferred proposal and claims/]) assert.match(skill,required);
+  for(const file of ['injects/okf.md','skills/okf-instance-knowledge/SKILL.md','skills/okf-propose/SKILL.md']) {
+    assert.doesNotMatch(prose(read(file)),/TASK\.md|without that instruction never propose|whenever your briefing gives no such instruction/,file);
   }
+});
+
+test('status reads only bounded spawn state, not live settings or the soul file, and never enables missing state',t=>{
+  const f=fixture(t);
+  assert.deepEqual(run(f,['status']).out.result,{harvest:'unknown',reason:'spawn-state-missing'});
+  assert.equal(hook(f,'spawn').status,0);
+  const before=snapshot(f.home);
+  fs.rmSync(f.soul,{recursive:true});fs.rmSync(f.bindingsFile);
+  const r=run(f,['status','--json'],{extra:{OATS_SETTINGS:'{}'},drop:['OATS_SOUL']});
+  assert.equal(r.status,0,r.stdout+r.stderr);
+  assert.deepEqual(r.out.result,{harvest:'on',reason:'default'});
+  assert.deepEqual(snapshot(f.home),before,'status is read-only');
+  const off={OATS_SETTINGS:JSON.stringify({harvest:'off'}),OATS_SETTINGS_ORIGINS:JSON.stringify({'/harvest':{kind:'soul'}})};
+  assert.deepEqual(run(f,['status'],{extra:off}).out.result,{harvest:'on',reason:'default'},'later settings do not rewrite recorded duty');
+  const other=join(f.dir,'other');write(join(other,'okf-harvest-policy.json'),JSON.stringify({version:1,harvest:'off',reason:'soul-opt-out'}));
+  assert.deepEqual(run(f,['status','--home',other]).out.result,{harvest:'off',reason:'soul-opt-out'},'explicit home is honored');
+});
+
+test('invalid, oversized, linked and non-file policy state cannot become permission to propose',t=>{
+  const f=fixture(t),file=join(f.home,'okf-harvest-policy.json');
+  for(const text of ['{}','null','{','{"version":1,"harvest":"on","reason":"soul-opt-out"}',' '.repeat(1025)]) {
+    write(file,text);const r=run(f,['status']);
+    assert.equal(r.status,1);assert.equal(r.out.error.code,'E_HARVEST_STATE');
+  }
+  fs.rmSync(file);fs.mkdirSync(file);
+  assert.equal(run(f,['status']).out.error.code,'E_HARVEST_STATE');fs.rmdirSync(file);
+  const target=join(f.dir,'target');write(target,'{"version":1,"harvest":"on","reason":"default"}');
+  fs.symlinkSync(target,file);assert.equal(run(f,['status']).out.error.code,'E_PATH');fs.rmSync(file);
+  fs.linkSync(target,file);assert.equal(run(f,['status']).out.error.code,'E_HARVEST_STATE');
 });
 
 test('spawn hook keeps existing working memory',t=>{
@@ -276,8 +315,8 @@ for(const [name,args] of REMOVED) test(`removed surface refuses with E_REMOVED: 
   assert.equal(r.out.ok,false);
   assert.equal(r.out.error.code,'E_REMOVED',r.out.error.message);
   assert.match(r.out.error.message,/was removed in oats\.okf 5\.0/);
-  assert.ok(r.out.error.message.includes('writes a short proposal'));
-  assert.ok(r.out.error.message.includes(SPAWN));
+  assert.match(r.out.error.message,/compulsory okf-propose skill/);
+  assert.match(r.out.error.message,/oats okf status/);
   assert.deepEqual(snapshot(f.home,f.stateDir),before);
 });
 
@@ -287,7 +326,7 @@ test('removed surface refuses with E_REMOVED: OATS_INVOCATION_CONTEXT_FILE set',
   assert.equal(r.status,1);
   assert.equal(r.out.error.code,'E_REMOVED');
   assert.match(r.out.error.message,/OATS_INVOCATION_CONTEXT_FILE/);
-  assert.ok(r.out.error.message.includes(SPAWN));
+  assert.match(r.out.error.message,/compulsory okf-propose skill/);
   assert.deepEqual(snapshot(f.home,f.stateDir),before);
 });
 
@@ -300,5 +339,5 @@ test('the harvest operation still points at the harvest command, which refuses',
   const r=run(f,[...args,'--json']);
   assert.equal(r.status,1);
   assert.equal(r.out.error.code,'E_REMOVED');
-  assert.ok(r.out.error.message.includes(SPAWN));
+  assert.match(r.out.error.message,/compulsory okf-propose skill/);
 });

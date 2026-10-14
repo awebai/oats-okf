@@ -35,9 +35,9 @@ test('an unknown command answers E_USAGE',()=>{
   const r=run(['deliver','--json']);assert.equal(r.status,1);assert.equal(r.out.error.code,'E_USAGE');assert.deepEqual(r.left,[]);
 });
 
-test('the harvest manifest declares only the two refusing commands, no settings, git and gh, version 5.1.0',()=>{
+test('the harvest manifest declares only the two refusing commands, no settings, git and gh, version 5.2.0',()=>{
   const m=JSON.parse(read('capabilities/oats-okf-harvest/oats.json'));
-  assert.equal(m.version,'5.1.0');assert.deepEqual(Object.keys(m.commands).sort(),['complete','harvest-status']);
+  assert.equal(m.version,'5.2.0');assert.deepEqual(Object.keys(m.commands).sort(),['complete','harvest-status']);
   assert.equal(Object.hasOwn(m,'settings'),false);assert.deepEqual(m.requires.map(r=>r.command).sort(),['gh','git']);
 });
 
@@ -293,16 +293,14 @@ test('the skill\'s v2 provenance example parses once its placeholders are filled
   assert.deepEqual(r.value.evidence,[{note:'notes/x.md',sha256:'ab'.repeat(32)},{note:'notes/x.md'}]);
 });
 
-test('only the oats-okf spawn brief teaches the proposal, with --relation unrelated alone',()=>{
-  const spawn='oats spawn oats.okf/knowledge-harvester --task-file';
-  const bin=fs.readFileSync(join(OKF,'bin/oats-okf.mjs'),'utf8'),inject=prose('capabilities/oats-okf/injects/okf.md'),skill=read('capabilities/oats-okf/skills/okf-instance-knowledge/SKILL.md');
-  assert.ok(bin.includes(`${spawn} <proposal> --relation unrelated`));assert.doesNotMatch(bin,/relative-to/);
-  assert.ok(bin.includes('exactly one line \\`Source: instance'),'the brief asks for exactly one Source line');
+test('the working skill teaches the proposal and the harvester agrees on its source format',()=>{
+  const skill=read('capabilities/oats-okf/skills/okf-propose/SKILL.md');
+  assert.ok(skill.includes('oats spawn oats.okf/knowledge-harvester --task-file <proposal> --relation unrelated'));
+  assert.match(skill,/Source: instance <your instance name>, home <your instance home>, soul <your soul's name>/);
+  assert.match(skill,/Use \*\*exactly one\*\* `Source:` line/);
   assert.match(prose('capabilities/oats-okf-harvest/skills/knowledge-harvest/SKILL.md'),/exactly one line `Source: instance <name>, home <path>, soul <name>` \(two or more `Source:` lines are ambiguous: STOP and report/);
-  // The shared texts reach opted-out souls too, so they defer to the brief and never direct a harvest.
-  assert.doesNotMatch(inject+skill,/oats spawn|knowledge-harvester/);
-  assert.match(inject,/Whether and how you propose knowledge is in your spawn briefing \(TASK\.md\)/);
-  assert.match(skill,/^## Proposing knowledge$/m);assert.match(prose('capabilities/oats-okf/skills/okf-instance-knowledge/SKILL.md'),/knowledge: \{ harvest: off \}/);
+  assert.match(prose('capabilities/oats-okf/injects/okf.md'),/Reading the okf-propose skill is compulsory/);
+  assert.match(prose('capabilities/oats-okf/skills/okf-instance-knowledge/SKILL.md'),/knowledge: \{ harvest: off \}/);
 });
 
 // The required spawn hook: the code check that a proposal's source is recorded
