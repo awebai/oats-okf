@@ -298,7 +298,9 @@ oats spawn oats.okf/knowledge-harvester --task-file proposals/<file>.md --relati
   `--relative-to`.
 - The kernel picks the harvester's harness and model from its own defaults;
   oats.okf passes none.
-- One spawn per proposal. A refused spawn is reported, not retried in a loop.
+- One proposal per checkpoint, each concept a claim in it, and claims only for
+  the nodes the soul owns. One harvester at a time: no new spawn while the last
+  one has not handed over. A refused spawn is reported, not retried in a loop.
 - The source keeps the backing notes until the harvester has handed over.
 
 Most checkpoints have nothing to propose. Proposing is procedure, not a
