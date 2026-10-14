@@ -1,7 +1,7 @@
 # oats.okf 5 — external knowledge, consulted remotely, proposed at checkpoints
 
 The official OKF (Open Knowledge Format) knowledge package for OATS:
-**5.0.4**, requiring **OATS >=0.29.0**. CI runs it against the released
+**5.0.5**, requiring **OATS >=0.29.0**. CI runs it against the released
 OATS 0.44.0 kernel (see [Tests and CI](#tests-and-ci)).
 
 A working soul's knowledge lives outside the soul, in OKF bases: Git
@@ -40,7 +40,7 @@ capability's `schemas/`, with copies in the repository's `schemas/`.
 
 ## Configuration
 
-A workspace declares the package (`packages: { oats.okf: v5.0.4 }`) and
+A workspace declares the package (`packages: { oats.okf: v5.0.5 }`) and
 selects it as the knowledge capability (`defaults: { knowledge: { oats.okf:
 { from: package } } }`, or per soul). Each deployment points it at its
 bindings file in its own `oats-local.yaml`:
@@ -298,8 +298,16 @@ oats spawn oats.okf/knowledge-harvester --task-file proposals/<file>.md --relati
   `--relative-to`.
 - The kernel picks the harvester's harness and model from its own defaults;
   oats.okf passes none.
-- One spawn per proposal. A refused spawn is reported, not retried in a loop.
-- The source keeps the backing notes until the harvester has handed over.
+- One proposal per checkpoint, each concept a claim in it, and claims only for
+  the nodes the soul owns. A lesson for a node the soul only reads is named in
+  one line in the source's hand-back, for that node's owner.
+- One harvester at a time. The source notes the harvester's instance name in
+  log.md and spawns no other while `oats status` still lists it; a harvester
+  retires once it has handed over. What the source learns meanwhile goes into
+  its next proposal. A source that hands back with the harvester still listed
+  names it and the claims still waiting in its hand-back; it does not wait for
+  it or spawn around it. A refused spawn is reported, not retried in a loop.
+- The source keeps a proposal's backing notes until its harvester has retired.
 
 Most checkpoints have nothing to propose. Proposing is procedure, not a
 command: oats.okf adds no CLI for it.
