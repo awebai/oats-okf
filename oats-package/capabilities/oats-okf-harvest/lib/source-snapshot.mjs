@@ -146,6 +146,7 @@ export function checkSource({ task = '', deployment, events = kernelEvents } = {
 // format refusal, not a successful empty capture. Paths still pass safeNote.
 export function backingNotes(task) {
   const notes = new Set();
+  const formatError = () => fail('E_PROPOSAL_FORMAT', 'unrecognized backing-note reference; reformat as a Backing notes list with one literal `- notes/<path>.md` entry per note; no snapshot was captured');
   let inSection = false;
   for (const line of String(task).split(/\r?\n/)) {
     if (/^Source:/.test(line)) continue; // the verified home is not a note locator
@@ -155,15 +156,20 @@ export function backingNotes(task) {
     if (entry && (entry.match(/notes\//g) || []).length <= 1 && /^(?:`[^`]+`|notes\/.*\.md|notes\/\S+|\/\S+)$/.test(entry)) {
       notes.add(entry.replace(/^`(.*)`$/, '$1')); continue;
     }
-    // Delimiters also cover inline code and Markdown link destinations.
-    // Do not extract a relative suffix from an absolute path or URL.
-    const pattern = /(^|[\s`"'(\[])(notes\/[^\s`"'<>\[\]()]*?\.md)(?=$|[\s`"')\],;.!?:])/g;
-    const matches = [...line.matchAll(pattern)];
-    for (const match of matches) notes.add(match[2]);
+    // Consume the WHOLE locator token, not a prefix ending at an internal
+    // .md. (notes/decision.md.v2.md is not notes/decision.md). Quotes/code and
+    // Markdown destinations are literal; only plain prose permits trailing
+    // sentence punctuation. Never take a suffix of an absolute path or URL.
+    const pattern = /(^|[\s`"'(\[])(notes\/[^\s`"'<>\[\]()]+)/g;
+    for (const match of line.matchAll(pattern)) {
+      const note = /^\s*$/.test(match[1]) ? match[2].replace(/[.,;!?:]+$/, '') : match[2];
+      if (!note.endsWith('.md')) formatError();
+      notes.add(note);
+    }
     // Remove exactly the recognized spans. A remaining notes/ locator may
     // have spaces/escaping/format we cannot interpret without guessing.
     const remainder = line.replace(pattern, (_, prefix) => prefix);
-    if (remainder.includes('notes/')) fail('E_PROPOSAL_FORMAT', 'unrecognized backing-note reference; reformat as a Backing notes list with one literal `- notes/<path>.md` entry per note; no snapshot was captured');
+    if (remainder.includes('notes/')) formatError();
   }
   return [...notes];
 }

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import { tmpdir } from 'node:os';
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -534,6 +535,32 @@ test('unsupported declared note syntax refuses with a format remedy rather than 
   assert.deepEqual(backingNotes('No backing evidence.'),[]);
   assert.deepEqual(backingNotes('See `notes/a.md` and [again](notes/a.md).'),['notes/a.md']);
   assert.deepEqual(backingNotes('### Backing notes\n- notes/a.md and notes/b.md\n'),['notes/a.md','notes/b.md']);
+});
+
+test('note normalization never accepts a filename prefix ending at an internal .md.',()=>{
+  for(const text of [
+    'Evidence is in `notes/decision.md.v2.md`.',
+    'Evidence is in notes/decision.md.v2.md.',
+    'See [decision](notes/decision.md.v2.md).',
+    '### Backing notes\n- notes/decision.md.v2.md\n',
+  ]) assert.deepEqual(backingNotes(text),['notes/decision.md.v2.md'],text);
+  for(const text of ['See `notes/decision.md.v2`.','See notes/decision.md.v2.','See [decision](notes/decision.md.).']) {
+    assert.throws(()=>backingNotes(text),e=>e.code==='E_PROPOSAL_FORMAT',text);
+  }
+});
+
+for(const form of [
+  'Evidence is in `notes/decision.md.v2.md`.',
+  'Evidence is in notes/decision.md.v2.md.',
+  'See [decision](notes/decision.md.v2.md).',
+]) test(`capture hashes the full named locator, never the shorter existing note: ${form}`,t=>{
+  const f=retiredSource(t),home=harvestHome(f),intended='Version 2: intended evidence, not the older note.';
+  fs.writeFileSync(join(f.recovery,'home/notes/decision.md.v2.md'),intended);
+  const summary=snapshotSource({task:proposal(f.home)+'\n'+form,deployment:f.d,home,events:f.events});
+  assert.deepEqual(summary.evidence,[{note:'notes/decision.md.v2.md',status:'copied',sha256:createHash('sha256').update(intended).digest('hex')}]);
+  fs.rmSync(f.recovery,{recursive:true});
+  assert.deepEqual(fs.readdirSync(join(home,'harvest-source/notes')),['decision.md.v2.md']);
+  assert.equal(fs.readFileSync(join(home,'harvest-source/notes/decision.md.v2.md'),'utf8'),intended);
 });
 
 test('an invalid live record cannot fall back to an older recovery',t=>{
