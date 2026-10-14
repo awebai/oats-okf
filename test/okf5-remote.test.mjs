@@ -21,16 +21,16 @@ function fixture(t,host=()=>{}) {
   t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
   const home=join(dir,'home'),xdg=join(dir,'xdg'),gitconfig=join(home,'.gitconfig');
   fs.mkdirSync(home);fs.writeFileSync(gitconfig,'');
-  const saved={HOME:process.env.HOME,XDG_CONFIG_HOME:process.env.XDG_CONFIG_HOME};
+  const saved={HOME:process.env.HOME,XDG_CONFIG_HOME:process.env.XDG_CONFIG_HOME,TMPDIR:process.env.TMPDIR};
   t.after(()=>{for(const [k,v] of Object.entries(saved)) if(v===undefined) delete process.env[k]; else process.env[k]=v;});
-  process.env.HOME=home;process.env.XDG_CONFIG_HOME=xdg;
+  process.env.HOME=home;process.env.XDG_CONFIG_HOME=xdg;process.env.TMPDIR=join(dir,'tmp');fs.mkdirSync(process.env.TMPDIR);
   const env={HOME:home,XDG_CONFIG_HOME:xdg,PATH:process.env.PATH,GIT_CONFIG_GLOBAL:gitconfig,GIT_CONFIG_NOSYSTEM:'1'};
   const git=(cwd,...args)=>{const r=spawnSync('git',['-C',cwd,...args],{env,encoding:'utf8'});assert.equal(r.status,0,r.stderr);return r.stdout.trim();};
-  const f={dir,canonical:join(dir,'canonical.git'),mirror:join(dir,'mirror.git'),clone:join(dir,'clone')};
+  const f={dir,tmp:process.env.TMPDIR,canonical:join(dir,'canonical.git'),mirror:join(dir,'mirror.git'),clone:join(dir,'clone')};
   Object.assign(f,{repository:`file://${f.canonical}`,mirrorUrl:`file://${f.mirror}`,base:{repository:`file://${f.canonical}`},
     global:(...args)=>git(dir,'config','--global',...args),local:(...args)=>git(f.clone,'config',...args),
-    getUrl:(...args)=>git(f.clone,'remote','get-url',...args,'origin')});
-  for(const bare of [f.canonical,f.mirror]) git(dir,'init','-q','--bare',bare);
+    getUrl:(...args)=>git(f.clone,'remote','get-url',...args,'origin'),bare:path=>git(dir,'init','-q','--bare',path)});
+  for(const bare of [f.canonical,f.mirror]) f.bare(bare);
   host(f);
   git(dir,'clone','-q','--',f.repository,f.clone);
   return f;
@@ -101,9 +101,12 @@ test('a worker that adds a repository-local pushInsteadOf is refused',t=>{
 });
 
 test('a worker that adds a repository-local insteadOf overriding the host rewrite is refused',t=>{
-  const f=fixture(t,f=>f.global(`url.${f.mirrorUrl}.insteadOf`,f.repository));
-  // Longest match wins: a longer local prefix replaces the host's rewrite.
-  f.local(`url.file://${f.dir}/elsewhere.git.insteadOf`,f.repository);
+  // The host rewrites a prefix of the repository; the longest match wins, so
+  // a local rule on the whole repository replaces the host's rewrite.
+  const f=fixture(t,f=>{f.bare(join(f.dir,'hosted','canonical.git'));f.global(`url.file://${f.dir}/hosted/.insteadOf`,`file://${f.dir}/`);});
+  assert.equal(f.getUrl(),`file://${f.dir}/hosted/canonical.git`);
+  verifyRemote(f.base,f.clone);
+  f.local(`url.${f.mirrorUrl}.insteadOf`,f.repository);
   refused(f,'fetch');
 });
 
@@ -117,4 +120,13 @@ test('the refusal redacts a credential in either URL',t=>{
   const f=fixture(t);
   f.local('remote.origin.url','https://user:s3cret@evil.invalid/knowledge.git');
   refused(f,'fetch','s3cret');
+});
+
+test('the host resolution leaves no scratch behind, passing or refused',t=>{
+  const f=fixture(t,f=>f.global(`url.${f.mirrorUrl}.insteadOf`,f.repository));
+  verifyRemote(f.base,f.clone);
+  assert.deepEqual(fs.readdirSync(f.tmp),[]);
+  f.local(`url.file://${f.dir}/elsewhere.git.pushInsteadOf`,f.repository);
+  refused(f,'push');
+  assert.deepEqual(fs.readdirSync(f.tmp),[]);
 });
