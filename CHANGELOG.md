@@ -16,8 +16,9 @@
   - one harvester at a time: the instance notes the harvester's instance
     name in log.md and spawns no other while `oats status` still lists
     it. A harvester retires once it has handed over, and what the instance
-    learns meanwhile goes into its next proposal. A harvester that stays
-    after reporting a failure is reported, never spawned around;
+    learns meanwhile goes into its next proposal. An instance that hands
+    back with the harvester still listed names it and the claims still
+    waiting in its hand-back; it does not wait for it or spawn around it;
   - backing notes are kept until the proposal's harvester has retired.
 
   The README section "How knowledge is proposed" says the same. This is

@@ -303,9 +303,10 @@ oats spawn oats.okf/knowledge-harvester --task-file proposals/<file>.md --relati
   one line in the source's hand-back, for that node's owner.
 - One harvester at a time. The source notes the harvester's instance name in
   log.md and spawns no other while `oats status` still lists it; a harvester
-  retires once it has handed over. One that stays after reporting a failure is
-  reported, never spawned around. A refused spawn is reported, not retried in
-  a loop.
+  retires once it has handed over. What the source learns meanwhile goes into
+  its next proposal. A source that hands back with the harvester still listed
+  names it and the claims still waiting in its hand-back; it does not wait for
+  it or spawn around it. A refused spawn is reported, not retried in a loop.
 - The source keeps a proposal's backing notes until its harvester has retired.
 
 Most checkpoints have nothing to propose. Proposing is procedure, not a

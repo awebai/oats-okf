@@ -78,7 +78,7 @@ test('spawn hook creates instance knowledge and briefs the proposal + harvester 
   // One harvester at a time: one proposal per checkpoint, claims only for owned nodes.
   assert.ok(r.out.brief.includes('One proposal per checkpoint, with each concept a claim of its own in it, and claims only for the nodes you own: a lesson for a node you only read is not a claim'),r.out.brief);
   assert.ok(r.out.brief.includes("One harvester at a time: note the proposal and the harvester's instance name in log.md. A harvester retires once it has handed over; while `oats status` still lists the last one you spawned, don't spawn another"),r.out.brief);
-  assert.ok(r.out.brief.includes('One that stays listed after reporting a failure is reported, never spawned around.'),r.out.brief);
+  assert.ok(r.out.brief.includes("If you hand back with it still listed, name it and the claims still waiting in your hand-back; don't wait for it or spawn around it."),r.out.brief);
   assert.ok(!r.out.brief.includes('One spawn per proposal'),r.out.brief);
   assert.equal(r.out.warning,undefined);
   assert.ok(fs.statSync(join(f.home,'STATE.md')).isFile());
