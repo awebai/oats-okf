@@ -6,6 +6,7 @@ import { join, dirname, delimiter } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { initBase } from '../oats-package/capabilities/oats-okf/lib/migration.mjs';
+import { isolatedGit } from './fixtures/isolated-git.mjs';
 // oats.okf 5.0.0 consultation of a Git base (a local repository, accepted
 // branch main): the host cache, reads at the accepted commit, --fresh, and
 // the locator/path refusals.
@@ -38,8 +39,8 @@ function fixture(t,{repository}={}) {
   json(join(f.home,'instance.json'),{name:'worker-1',kind:'agent'});
   return f;
 }
-function run(f,args) {
-  const env={HOME:f.user,PATH:[dirname(process.execPath),GIT_DIR].filter(Boolean).join(delimiter),GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:'/dev/null',
+function run(f,args,{gitBin}={}) {
+  const env={HOME:f.user,PATH:[gitBin,dirname(process.execPath),GIT_DIR].filter(Boolean).join(delimiter),GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:'/dev/null',
     OATS_SOUL:f.soul,OATS_INSTANCE_HOME:f.home,OATS_SETTINGS:JSON.stringify({'bindings-file':f.bindingsFile})};
   const r=spawnSync(process.execPath,[CLI,...args],{cwd:f.home,env,encoding:'utf8',timeout:60000});
   let out=null;try{out=JSON.parse(r.stdout);}catch{}
@@ -98,6 +99,19 @@ test('git base: a new commit on main is seen with --fresh',t=>{
   assert.equal(fresh.status,0,fresh.stdout);
   assert.match(fresh.out.result.text,/# Later/);
   assert.equal(fresh.out.result.receipt.commit,head);
+});
+
+test('git base: a host-wide insteadOf routing the bound repository elsewhere still reads it (#76)',t=>{
+  const repository='https://github.invalid/acme/knowledge.git';
+  const f=fixture(t,{repository}),head=f.git('rev-parse','HEAD');
+  // The host's global config, as a deploy key on an ssh alias needs it.
+  const gitconfig=join(f.dir,'gitconfig'),gitBin=isolatedGit(f.dir,gitconfig);
+  write(gitconfig,`[url "${f.repo}"]\n\tinsteadOf = ${repository}\n`);
+  for(const pass of ['clone','cached']) {
+    const r=run(f,['bases','--json'],{gitBin});
+    assert.equal(r.status,0,`${pass}: ${r.stdout}${r.stderr}`);
+    assert.equal(r.out.result.bases[0].commit,head);
+  }
 });
 
 test('git base: a repository locator embedding a credential is refused without echoing it',t=>{

@@ -1,5 +1,33 @@
 # Changelog
 
+## 5.0.4 — unreleased
+
+### Fixed
+
+- **A host's Git URL rewriting no longer breaks Git bases (#76).** The
+  frozen-remote guard compared the clone's origin, as Git rewrote it, with
+  the binding's `repository` as written. A host whose global or system Git
+  config routes the repository through `url.<base>.insteadOf` or
+  `pushInsteadOf` (a deploy key on an ssh alias, for example) therefore
+  failed every okf call with `E_OWNER`, although nothing had changed. The
+  guard now resolves the binding's `repository` with this host's global and
+  system Git config only, in a throwaway repository, and compares that with
+  the clone's effective fetch and push URLs. The binding stays as written:
+  no host-specific URL is needed.
+
+  The guard is not weakened. The clone's configured `remote.origin.url`
+  must still equal `repository` exactly, `remote.origin.pushurl` must be
+  unset, and a rewrite in the clone's own config redirects the clone away
+  from the host's resolution: each is refused with `E_OWNER`. URLs are now
+  compared byte for byte: Git's output was trimmed before, so a leading
+  space, which turns a path into a relative repository inside the clone,
+  went unnoticed. The message keeps its prefix and now names the side that
+  differed (fetch or push) and both URLs, quoted, with credentials
+  redacted.
+
+No setting, binding field or hook output changes. Compatibility remains
+OATS >=0.29.0.
+
 ## 5.0.3 — 2026-10-12
 
 ### Fixed

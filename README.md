@@ -134,6 +134,14 @@ The absolute bindings document is capability-owned JSON:
   carrying a credential (`user:token@`) is refused: use a credential helper
   or an SSH key. A local repository must be a canonical repository, not a
   linked worktree. Shallow repositories are refused (`E_BASE_SHALLOW`).
+- A Git base's `repository` is the URL as written. This host's global and
+  system Git `url.<base>.insteadOf` and `pushInsteadOf` rules apply to it,
+  so a host that routes the repository through an ssh alias needs no
+  host-specific binding. okf's clone must keep that URL as its only
+  `origin` URL, with no `pushurl`, and resolve to the destinations the host
+  gives the binding: a changed origin, or a rewrite in the clone's own
+  config, is refused (`E_OWNER`), naming the side (fetch or push) and both
+  URLs. URLs compare byte for byte, whitespace included.
 - **Directory bases** need no Git or `gh`. A directory inside any Git working
   tree is refused (`E_DIRECTORY_GIT`): relabelling tracked files must not
   bypass PR review. Directory bases can be consulted, initialized and
@@ -740,9 +748,14 @@ removed, not ported. It uses real temporary Git repositories, real
 directories and the package's CLI:
 
 - `okf5-consult`: Git bases read through the host cache at the accepted
-  state (`bases`, `cat`, `ls`, `links`, `search`, `--fresh`), and the
-  refusals of credential-bearing locators, escaping paths and unknown
-  aliases;
+  state (`bases`, `cat`, `ls`, `links`, `search`, `--fresh`), a host-wide
+  `insteadOf` on the bound repository, and the refusals of
+  credential-bearing locators, escaping paths and unknown aliases;
+- `okf5-remote`: the frozen-remote guard, passing under host-wide
+  `insteadOf` and `pushInsteadOf` rules and refusing a changed or added
+  origin URL (whitespace included), a `pushurl` and a clone-local
+  `insteadOf` or `pushInsteadOf`, with okf's own Git isolated from the
+  host's global and system config;
 - `okf5-working`: the spawn and soul-scaffold hooks, `inspect`, consulting
   from a home, `init`, `migrate --legacy/--deliver/--cutover`, and the
   removed surfaces and `harvest` operation answering `E_REMOVED`;
