@@ -100,6 +100,18 @@ test('git base: a new commit on main is seen with --fresh',t=>{
   assert.equal(fresh.out.result.receipt.commit,head);
 });
 
+test('git base: a host-wide insteadOf routing the bound repository elsewhere still reads it (#76)',t=>{
+  const repository='https://github.invalid/acme/knowledge.git';
+  const f=fixture(t,{repository}),head=f.git('rev-parse','HEAD');
+  // The host's global config, as a deploy key on an ssh alias needs it.
+  write(join(f.user,'.gitconfig'),`[url "${f.repo}"]\n\tinsteadOf = ${repository}\n`);
+  for(const pass of ['clone','cached']) {
+    const r=run(f,['bases','--json']);
+    assert.equal(r.status,0,`${pass}: ${r.stdout}${r.stderr}`);
+    assert.equal(r.out.result.bases[0].commit,head);
+  }
+});
+
 test('git base: a repository locator embedding a credential is refused without echoing it',t=>{
   const f=fixture(t,{repository:'https://user:s3cret-token@example.invalid/knowledge.git'});
   for(const args of [['bases','--json'],['index']]) {
