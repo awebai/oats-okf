@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-// oats.okf 5.0.3: the harvester is procedure-only (git + gh, skill
+// oats.okf 5.0.4: the harvester is procedure-only (git + gh, skill
 // knowledge-harvest); its 4.x commands refuse so an old TASK never completes.
 const ROOT=fileURLToPath(new URL('../',import.meta.url)),PKG=join(ROOT,'oats-package');
 const HARVEST=join(PKG,'capabilities/oats-okf-harvest'),OKF=join(PKG,'capabilities/oats-okf');
@@ -33,9 +33,9 @@ test('an unknown command answers E_USAGE',()=>{
   const r=run(['deliver','--json']);assert.equal(r.status,1);assert.equal(r.out.error.code,'E_USAGE');assert.deepEqual(r.left,[]);
 });
 
-test('the harvest manifest declares only the two refusing commands, no settings, git and gh, version 5.0.3',()=>{
+test('the harvest manifest declares only the two refusing commands, no settings, git and gh, version 5.0.4',()=>{
   const m=JSON.parse(read('capabilities/oats-okf-harvest/oats.json'));
-  assert.equal(m.version,'5.0.3');assert.deepEqual(Object.keys(m.commands).sort(),['complete','harvest-status']);
+  assert.equal(m.version,'5.0.4');assert.deepEqual(Object.keys(m.commands).sort(),['complete','harvest-status']);
   assert.equal(Object.hasOwn(m,'settings'),false);assert.deepEqual(m.requires.map(r=>r.command).sort(),['gh','git']);
 });
 

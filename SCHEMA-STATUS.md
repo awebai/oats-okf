@@ -1,6 +1,6 @@
 # Schema and verification status
 
-oats.okf **5.0.3**, requiring **OATS >=0.29.0**. Version declarations are not
+oats.okf **5.0.4**, requiring **OATS >=0.29.0**. Version declarations are not
 evidence of a published release.
 
 ## Schemas
