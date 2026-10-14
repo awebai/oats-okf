@@ -5,7 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-// oats.okf 5.0.5: the harvester is procedure-only (git + gh, skill
+import { snapshotSource } from '../oats-package/capabilities/oats-okf-harvest/lib/source-snapshot.mjs';
+// oats.okf 5.1.0: publication is procedure-only (git + gh, skill
 // knowledge-harvest); its 4.x commands refuse so an old TASK never completes.
 const ROOT=fileURLToPath(new URL('../',import.meta.url)),PKG=join(ROOT,'oats-package');
 const HARVEST=join(PKG,'capabilities/oats-okf-harvest'),OKF=join(PKG,'capabilities/oats-okf');
@@ -33,9 +34,9 @@ test('an unknown command answers E_USAGE',()=>{
   const r=run(['deliver','--json']);assert.equal(r.status,1);assert.equal(r.out.error.code,'E_USAGE');assert.deepEqual(r.left,[]);
 });
 
-test('the harvest manifest declares only the two refusing commands, no settings, git and gh, version 5.0.5',()=>{
+test('the harvest manifest declares only the two refusing commands, no settings, git and gh, version 5.1.0',()=>{
   const m=JSON.parse(read('capabilities/oats-okf-harvest/oats.json'));
-  assert.equal(m.version,'5.0.5');assert.deepEqual(Object.keys(m.commands).sort(),['complete','harvest-status']);
+  assert.equal(m.version,'5.1.0');assert.deepEqual(Object.keys(m.commands).sort(),['complete','harvest-status']);
   assert.equal(Object.hasOwn(m,'settings'),false);assert.deepEqual(m.requires.map(r=>r.command).sort(),['gh','git']);
 });
 
@@ -308,11 +309,14 @@ test('only the oats-okf spawn brief teaches the proposal, with --relation unrela
 function deployment(t,{harvest,origins,record,soulYaml='schemaVersion: 2\nname: source\n',okf={'bindings-file':'/srv/okf/bindings.json'},records=['src-agent']}={}) {
   const d=fs.realpathSync(fs.mkdtempSync(join(tmpdir(),'okf5-hook-')));t.after(()=>fs.rmSync(d,{recursive:true,force:true}));
   const soul=join(d,'agents','src-agent','souls','abc');fs.mkdirSync(soul,{recursive:true});fs.writeFileSync(join(soul,'soul.yaml'),soulYaml);
+  fs.writeFileSync(join(soul,'okf.json'),JSON.stringify({version:1,owner:'source',owns:['kb/expert'],reads:[]}));
+  const bindings=join(d,'bindings.json');fs.writeFileSync(bindings,JSON.stringify({version:1,bases:{kb:{kind:'git',repository:'https://example.invalid/kb.git'}}}));
+  if(okf?.['bindings-file']==='/srv/okf/bindings.json') okf={...okf,'bindings-file':bindings};
   let home;
   for(const agent of records) {
     home=join(d,'agents',agent,'instances','src');fs.mkdirSync(home,{recursive:true});
     const settings=okf?{...okf,...(harvest?{harvest}:{})}:null;
-    fs.writeFileSync(join(home,'instance.json'),record?record({home,soul}):JSON.stringify({agent,instance:'src',home,soulDir:soul,providers:settings?{'oats.okf':settings}:{},
+    fs.writeFileSync(join(home,'instance.json'),record?record({home,soul}).replaceAll('/srv/okf/bindings.json',bindings):JSON.stringify({agent,instance:'src',home,createdAt:'2026-10-14T00:00:00.000Z',soulDir:soul,providers:settings?{'oats.okf':settings}:{},
       ...(origins?{capabilities:[{id:'oats.okf',settings,settingsOrigins:origins}]}:{})}));
   }
   return {d,home:home??join(d,'agents','src-agent','instances','src'),soul};
@@ -321,7 +325,7 @@ const proposal=(home,{instance='src',soul='source'}={})=>`# OKF proposal: retry 
 function spawnHook(task,deploymentDir) {
   const cwd=fs.realpathSync(fs.mkdtempSync(join(tmpdir(),'okf5-hook-cwd-')));
   try {
-    const r=spawnSync(process.execPath,[join(HARVEST,'bin/okf-harvest.mjs'),'spawn'],{cwd,env:{PATH:process.env.PATH,HOME:cwd,OATS_EVENT:'spawn',OATS_TASK:task,...(deploymentDir?{OATS_WORKSPACE:deploymentDir}:{})},encoding:'utf8',timeout:30000});
+    const r=spawnSync(process.execPath,[join(HARVEST,'bin/okf-harvest.mjs'),'spawn'],{cwd,env:{PATH:process.env.PATH,HOME:cwd,OATS_EVENT:'spawn',OATS_INSTANCE_HOME:cwd,OATS_TASK:task,...(deploymentDir?{OATS_WORKSPACE:deploymentDir}:{})},encoding:'utf8',timeout:30000});
     return {status:r.status,out:JSON.parse(r.stdout||'null'),left:fs.readdirSync(cwd)};
   } finally {fs.rmSync(cwd,{recursive:true,force:true});}
 }
@@ -331,7 +335,7 @@ test('the harvester spawn hook is declared required and admits a recorded source
   const m=JSON.parse(read('capabilities/oats-okf-harvest/oats.json'));
   assert.deepEqual(m.hooks,{spawn:{command:'bin/okf-harvest.mjs spawn',required:true}});
   const f=deployment(t),r=spawnHook(proposal(f.home),f.d);
-  assert.equal(r.status,0,JSON.stringify(r.out));assert.deepEqual(r.out,{},'no meta (it creates nothing) and no source name: no proposer link');assert.deepEqual(r.left,[]);
+  assert.equal(r.status,0,JSON.stringify(r.out));assert.deepEqual(r.out,{},'no external-state meta or lifecycle link');assert.deepEqual(r.left,['harvest-source']);
 });
 
 test('the harvester spawn hook refuses a source whose RECORDED soul opts out, whatever the proposal says',t=>{
@@ -376,7 +380,7 @@ test('on a 4.x record, a soul off still denies, and an unproven or explicit remo
 test('the harvester spawn hook fails closed when the source cannot be established',t=>{
   const f=deployment(t);
   refused(spawnHook('# 4.x TASK\nsource: /srv/state/sources/x/source.json run: 1234\n',f.d),'E_SOURCE',/not an oats\.okf 5\.0 proposal/);
-  refused(spawnHook(proposal(f.home,{instance:'gone'}),f.d),'E_SOURCE',/no record of source instance gone/);
+  refused(spawnHook(proposal(join(f.home,'..','gone'),{instance:'gone'}),f.d),'E_SOURCE',/retired-source lookup/);
   refused(spawnHook(proposal(f.home,{instance:'../src'}),f.d),'E_SOURCE',/plain names/);
   refused(spawnHook(proposal('/elsewhere/src'),f.d),'E_SOURCE',/does not match the proposal's home/);
   refused(spawnHook(proposal(f.home,{soul:'other'}),f.d),'E_SOURCE',/is not other/);
@@ -392,8 +396,87 @@ test('the harvester spawn hook fails closed when the source cannot be establishe
   refused(spawnHook(proposal(two.home),two.d),'E_SOURCE',/more than one record/);
   const noSlot=deployment(t,{okf:null});
   refused(spawnHook(proposal(noSlot.home),noSlot.d),'E_SOURCE',/no oats\.okf knowledge slot/);
-  // A retirement copy is never the record.
+  // An arbitrary retirement copy is never a record: only the kernel's event
+  // can locate one, and its manifest + copied record must match the Source.
   const retired=deployment(t,{records:[]}),copy=join(retired.d,'agents','.oats-retirement','instances','src');
   fs.mkdirSync(copy,{recursive:true});fs.writeFileSync(join(copy,'instance.json'),JSON.stringify({instance:'src',home:copy,soulDir:retired.soul,providers:{'oats.okf':{}}}));
-  refused(spawnHook(proposal(copy),retired.d),'E_SOURCE',/no record/);
+  refused(spawnHook(proposal(copy),retired.d),'E_SOURCE',/does not match/);
+});
+
+// Event fixture models OATS >=0.49.0's public `instance events --home` answer.
+// The real-kernel CI test, not this fake, proves lookup after actual retirement.
+function retiredSource(t, { afterHooks = false } = {}) {
+  const f=deployment(t);
+  fs.mkdirSync(join(f.home,'notes'));fs.writeFileSync(join(f.home,'notes/decision.md'),'Before hooks.');
+  const recovery=join(f.d,'agents/src-agent/instances/.oats-retirement/recovery/src-abc123');
+  fs.mkdirSync(recovery,{recursive:true});fs.cpSync(f.home,join(recovery,'home'),{recursive:true});
+  if(afterHooks) {fs.cpSync(f.home,join(recovery,'after-hooks/home'),{recursive:true});fs.writeFileSync(join(recovery,'after-hooks/home/notes/decision.md'),'After hooks.');}
+  fs.writeFileSync(join(recovery,'recovery.json'),JSON.stringify({version:1,phase:'complete',instance:'src',sourceHome:f.home,...(afterHooks?{afterHooks:{home:true,work:false}}:{})}));
+  const history={eventsApi:2,instance:'src',home:f.home,truncated:false,integrity:{unreadableRows:0,foreignRows:0,sources:[{path:'home',status:'absent'},{path:'workspace',status:'ok'}]},events:[{eventsApi:2,kind:'retired',producer:'kernel',instance:'src',home:f.home,incarnation:'2026-10-14T00:00:00.000Z',data:{agent:'src-agent',workRecovery:recovery}}]};
+  fs.rmSync(f.home,{recursive:true});
+  return {...f,recovery,history,events:()=>history};
+}
+const harvestHome=f=>{const home=join(f.d,'harvester');fs.mkdirSync(home);return home;};
+const withNotes=home=>proposal(home)+'\n## Backing notes\n- notes/decision.md\n';
+
+for(const afterHooks of [false,true]) test(`snapshot uses only event-addressed recovery, afterHooks=${afterHooks}; disposal cannot lose it`,t=>{
+  const f=retiredSource(t,{afterHooks}),home=harvestHome(f);
+  const summary=snapshotSource({task:withNotes(f.home),deployment:f.d,home,events:f.events});
+  assert.equal(summary.from,'recovery');assert.equal(summary.evidence[0].status,'copied');assert.match(summary.evidence[0].sha256,/^[a-f0-9]{64}$/);
+  fs.rmSync(f.recovery,{recursive:true});fs.rmSync(f.soul,{recursive:true});
+  assert.equal(fs.readFileSync(join(home,'harvest-source/notes/decision.md'),'utf8'),afterHooks?'After hooks.':'Before hooks.');
+  assert.equal(fs.readFileSync(join(home,'harvest-source/proposal.md'),'utf8'),withNotes(f.home));
+  assert.ok(fs.existsSync(join(home,'harvest-source/okf.json')));
+  assert.throws(()=>snapshotSource({task:withNotes(f.home),deployment:f.d,home,events:f.events}),/already exists/);
+});
+
+test('live snapshot is complete before retirement; no later read of the source is required',t=>{
+  const f=deployment(t),home=harvestHome(f);
+  fs.mkdirSync(join(f.home,'notes'));fs.writeFileSync(join(f.home,'notes/decision.md'),'Decision.');
+  fs.writeFileSync(join(f.home,'notes/other.md'),'Do not copy.');fs.writeFileSync(join(f.home,'STATE.md'),'Do not read.');
+  const summary=snapshotSource({task:withNotes(f.home),deployment:f.d,home,events:()=>{throw Error('no events needed for a live home');}});
+  fs.rmSync(f.home,{recursive:true});
+  assert.equal(summary.from,'live');assert.deepEqual(fs.readdirSync(join(home,'harvest-source/notes')),['decision.md']);
+  assert.equal(fs.existsSync(join(home,'harvest-source/STATE.md')),false);
+});
+
+for(const mode of ['no-event','outside','wrong-home','wrong-incarnation','reused-name','truncated','torn','missing-copy','unlisted-after-hooks','symlink-copy']) test(`retired snapshot refuses ${mode} without leaving a partial capture`,t=>{
+  const f=retiredSource(t),home=harvestHome(f),event=f.history.events[0];
+  if(mode==='no-event') f.history.events=[];
+  if(mode==='outside') event.data.workRecovery=join(f.d,'elsewhere');
+  if(mode==='wrong-home') {const p=join(f.recovery,'recovery.json'),r=JSON.parse(fs.readFileSync(p));r.sourceHome='/unrelated';fs.writeFileSync(p,JSON.stringify(r));}
+  if(mode==='wrong-incarnation') event.incarnation='old';
+  if(mode==='reused-name') f.history.events.unshift({...event,kind:'spawned',incarnation:'old'});
+  if(mode==='truncated') f.history.truncated=true;
+  if(mode==='torn') f.history.integrity.unreadableRows=1;
+  if(mode==='missing-copy') fs.rmSync(f.recovery,{recursive:true});
+  if(mode==='unlisted-after-hooks') {fs.mkdirSync(join(f.recovery,'after-hooks'));fs.renameSync(join(f.recovery,'home'),join(f.recovery,'after-hooks/home'));}
+  if(mode==='symlink-copy') {fs.renameSync(join(f.recovery,'home'),join(f.d,'foreign'));fs.symlinkSync(join(f.d,'foreign'),join(f.recovery,'home'));}
+  assert.throws(()=>snapshotSource({task:withNotes(f.home),deployment:f.d,home,events:f.events}));
+  assert.deepEqual(fs.readdirSync(home),[]);
+});
+
+test('retired soul opt-out still refuses before capturing any bytes',t=>{
+  const f=retiredSource(t),home=harvestHome(f);
+  fs.writeFileSync(join(f.soul,'soul.yaml'),'schemaVersion: 2\nname: source\nknowledge: { harvest: off }\n');
+  assert.throws(()=>snapshotSource({task:withNotes(f.home),deployment:f.d,home,events:f.events}),e=>e.code==='E_OPTED_OUT');
+  assert.deepEqual(fs.readdirSync(home),[]);
+});
+
+test('missing/traversing/symlinked notes have no hash or copy; prose and other sections are never inputs',t=>{
+  const f=deployment(t),home=harvestHome(f);
+  fs.mkdirSync(join(f.home,'notes'));fs.writeFileSync(join(f.home,'notes/decision.md'),'Decision.');
+  fs.symlinkSync(join(f.home,'instance.json'),join(f.home,'notes/link.md'));
+  fs.symlinkSync(f.soul,join(f.home,'notes/dir'));
+  const task=withNotes(f.home)+'- notes/missing.md\n- notes/../instance.json\n- /elsewhere/private.md\n- notes/link.md\n- notes/dir/soul.md\n\n## Other\n- notes/other.md\n';
+  const summary=snapshotSource({task,deployment:f.d,home});
+  assert.deepEqual(summary.evidence.map(e=>e.status),['copied','missing','refused','refused','refused','refused']);
+  assert.ok(summary.evidence.slice(1).every(e=>!Object.hasOwn(e,'sha256')));
+  assert.deepEqual(fs.readdirSync(join(home,'harvest-source/notes')),['decision.md']);
+});
+
+test('an invalid live record cannot fall back to an older recovery',t=>{
+  const f=deployment(t),home=harvestHome(f);fs.writeFileSync(join(f.home,'instance.json'),'{}');
+  assert.throws(()=>snapshotSource({task:withNotes(f.home),deployment:f.d,home,events:()=>{assert.fail('must not look for older authority');}}),/does not match/);
+  assert.deepEqual(fs.readdirSync(home),[]);
 });

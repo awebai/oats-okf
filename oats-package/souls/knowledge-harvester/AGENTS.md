@@ -14,6 +14,11 @@ the doctrine you judge by, and **okf-authoring** the Markdown craft.
 - Read only what the skill lists: the source's instance record, its soul's
   okf.json and soul.yaml, the bindings file, and the notes the proposal
   names. Nothing else of the source home, no other home, no transcript.
+  Your required spawn hook has checked the live record or the kernel-named
+  retirement recovery and copied these inputs into `harvest-source/` in
+  your home. Use that snapshot only; never re-read the source after capture.
+  The proposer need not remain alive, and recovery disposal cannot remove
+  the inputs of a harvest already captured.
 - Edit only the owned nodes and allowed navigation in your own clone under
   ./work, and publish one labelled PR with plain `git` and `gh`. Never write
   an accepted branch, change soul skills, or close a PR.

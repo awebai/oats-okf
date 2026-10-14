@@ -4,7 +4,7 @@ import * as fs from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-// oats.okf 5.0.5 package shape: versions, kernel floor, the slot's settings and
+// oats.okf 5.1.0 package shape: versions, kernel floor, the slot's settings and
 // hooks, the shipped skills (shared copies identical) and the harvester soul.
 const ROOT=fileURLToPath(new URL('../',import.meta.url));
 const PKG=join(ROOT,'oats-package');
@@ -26,14 +26,14 @@ test('validate-manifests passes',()=>{
   assert.equal(r.status,0,r.stdout+r.stderr);
 });
 
-test('every manifest is version 5.0.5 with the >=0.29.0 kernel floor',()=>{
-  assert.equal(readJson(join(ROOT,'package.json')).version,'5.0.5');
+test('every manifest is version 5.1.0 with the >=0.49.0 kernel floor',()=>{
+  assert.equal(readJson(join(ROOT,'package.json')).version,'5.1.0');
   const pkg=readJson(join(PKG,'oats-package.json'));
-  assert.equal(pkg.version,'5.0.5');
-  assert.deepEqual(pkg.compatibility,{oats:'>=0.29.0'});
+  assert.equal(pkg.version,'5.1.0');
+  assert.deepEqual(pkg.compatibility,{oats:'>=0.49.0'});
   for(const name of CAPS) {
-    assert.equal(cap(name).version,'5.0.5',name);
-    assert.deepEqual(cap(name).compatibility,{oats:'>=0.29.0'},name);
+    assert.equal(cap(name).version,'5.1.0',name);
+    assert.deepEqual(cap(name).compatibility,{oats:'>=0.49.0'},name);
   }
 });
 
@@ -139,6 +139,6 @@ test('the README says what is an instruction and what is enforced, with the opt-
   const readme=prose('README.md');
   for(const s of ['Personal data is excluded by instruction. Nothing guarantees it stays out.','It narrows their judgement and guarantees nothing.',
     'No program reads the content of a harvest.','It removes nothing that was pushed.',
-    'The soul\'s opt-out is the one control enforced in code.','It is per soul. No instance, note, host or spawn setting opts out.',
+    'The soul\'s opt-out and source capture checks are enforced in code.','It is per soul. No instance, note, host or spawn setting opts out.',
     'It covers that soul\'s own proposals. The spawn hook checks the source a proposal names. What an instance of that soul writes to other seats in messages is theirs to capture and propose.']) assert.ok(readme.includes(s),s);
 });
