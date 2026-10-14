@@ -1,6 +1,7 @@
 # Schema and verification status
 
-oats.okf **5.0.5**, requiring **OATS >=0.29.0**. Version declarations are not
+oats.okf **5.1.0**, requiring **OATS >=0.49.0** for the public gone-home
+instance-event lookup used by source capture. Version declarations are not
 evidence of a published release.
 
 ## Schemas
@@ -36,23 +37,26 @@ Unknown keys are refused in both.
 
 `npm test` runs `scripts/validate-manifests.mjs` (package and capability
 manifests against the vendored schema keywords, exported resources inside
-the distribution, skill trees) and the fresh 5.0 suite (`test/okf5-*.test.mjs`;
+the distribution, skill trees) and the 5.x suite (`test/okf5-*.test.mjs`;
 the 4.x tests of the removed machinery were removed, not ported):
 consultation of Git bases through the host cache, the hooks, `inspect`,
 `init` and `migrate`, the removed surfaces, the legacy-settings guard and
-cleanup, and the provenance parser for versions 1 and 2.
+cleanup, the provenance parser for versions 1 and 2, and source capture
+(including legacy note forms, full delimited filenames and refusal paths).
 
-CI's `real-kernel-044` job installs the released **OATS 0.44.0** in a
+CI's `real-kernel-049` job installs the released **OATS 0.49.0** in a
 disposable prefix and runs `test/okf5-real-kernel.test.mjs` through it: the
 legacy-key cleanup, a real spawn, a checkpoint proposal spawning a top-level
-harvester, the removed surfaces and the source's retirement, with
-`--no-launch` (no model, messaging or GitHub).
+harvester, and the removed surfaces. After the source retires, a new harvester
+captures from its event-named recovery and retains the input after recovery
+disposal; reusing the source address for a new live incarnation then refuses
+the old proposal. All spawns use `--no-launch` (no model, messaging or GitHub).
 
 The schemas themselves are not exercised by the suite: no test validates
 documents or the `examples/portable-binding/` data against them, or checks
 that the repository copies match the capability's. The binding wire
 (`binding-normalize`, `binding-bind`, `binding-check`) and `unlock` have no
-tests in the 5.0 suite either.
+tests in the 5.x suite either.
 
 ## Not covered
 

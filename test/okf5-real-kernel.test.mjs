@@ -1,6 +1,6 @@
-// This checkout's oats.okf on the REAL released kernel (@awebai/oats 0.44.0). CI-only:
+// This checkout's oats.okf on the REAL released kernel (@awebai/oats 0.49.0). CI-only:
 // it runs only when OATS_OKF_REAL_CLI names that kernel's bin/oats.mjs (the
-// real-kernel-044 CI job installs it and fails on any skip).
+// real-kernel-049 CI job installs it and fails on any skip).
 //
 // Evidence boundary. What is real: the released kernel's sync, operator and
 // in-home command dispatch, spawn (soul resolution, module materialization,
@@ -27,7 +27,7 @@ import { fileURLToPath } from 'node:url';
 import { parseProvenance } from '../oats-package/capabilities/oats-okf-maintenance/lib/provenance.mjs';
 
 const cli = process.env.OATS_OKF_REAL_CLI;
-const KERNEL = '0.44.0';
+const KERNEL = '0.49.0';
 const root = fileURLToPath(new URL('../', import.meta.url));
 const write = (file, text) => { fs.mkdirSync(dirname(file), { recursive: true }); fs.writeFileSync(file, text); };
 const json = file => JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -101,7 +101,7 @@ test(`${json(join(root, 'package.json')).version} real OATS ${KERNEL}: legacy-ke
   // The kernel this file qualifies, exactly (bin/oats.mjs versionCmd: top-level `version`).
   const version = run(['version']);
   assert.equal(version.status, 0, version.text);
-  assert.equal(version.out?.version, KERNEL, 'this test qualifies the released 0.44.0 kernel, not another one');
+  assert.equal(version.out?.version, KERNEL, 'this test qualifies the released 0.49.0 kernel, not another one');
   ok(['sync']);
 
   const state = {};
@@ -160,12 +160,12 @@ test(`${json(join(root, 'package.json')).version} real OATS ${KERNEL}: legacy-ke
 
     // The checkpoint, as okf-instance-knowledge says: a backing note and a self-contained proposal in the home.
     write(join(src, 'notes/decision.md'), '---\ntype: Decision\ntitle: Retry budget is per request\ndescription: The retry budget is counted per request, not per connection.\ngenerality: soul\n---\n\nPer-connection budgets let one slow request starve the others.\n');
-    const proposal = `# OKF proposal: Retry budget is per request\n\nSource: instance src, home ${src}, soul source\n\n## What\nThe retry budget is counted per request, not per connection.\n\n## Why\nA per-connection budget let one slow request starve the others.\n\n## Evidence\nObserved in the fixture load test.\n\n## Backing notes\n- notes/decision.md\n`;
+    const proposal = `# OKF proposal: Retry budget is per request\n\nSource: instance src, home ${src}, soul source\n\n## What\nThe retry budget is counted per request, not per connection.\n\n## Why\nA per-connection budget let one slow request starve the others.\n\n## Evidence\nObserved in the fixture load test.\n\n### Backing notes\n- notes/decision.md\n`;
     write(join(src, 'proposals/2026-10-07-retry-budget.md'), proposal);
     const srcBefore = fs.readFileSync(join(src, 'instance.json'));
     const as = { instance: 'src', home: src };
 
-    // Why the procedure never passes --relative-to: 0.44 refuses it with unrelated (bin/oats.mjs), nothing spawned.
+    // Why the procedure never passes --relative-to: 0.49 refuses it with unrelated (bin/oats.mjs), nothing spawned.
     const bad = refused(['spawn', 'oats.okf/knowledge-harvester', '--task-file', 'proposals/2026-10-07-retry-budget.md', '--relation', 'unrelated', '--relative-to', 'src', '--no-launch'], 'E_BAD_ARGS', { cwd: src, as });
     assert.match(bad.message, /--relation unrelated takes no --relative-to/);
     assert.deepEqual(harvesterHomes(), []);
@@ -190,7 +190,7 @@ test(`${json(join(root, 'package.json')).version} real OATS ${KERNEL}: legacy-ke
     for (const k of ['parentInstance', 'siblingInstance', 'relation', 'relativeTo']) assert.equal(hRecord[k], undefined, `${k}: ${JSON.stringify(hRecord[k])}`);
     assert.equal(hRecord.spawnOrigin, 'operator', 'not an instance-origin (child) spawn: ambient OATS_INSTANCE is not parentage');
     assert.ok(!strings(hRecord).some(v => v === 'src' || v.includes(src)), 'nothing in the harvester record names the source');
-    assert.equal(hRecord.capabilityMeta?.['oats.okf-harvest'], undefined, 'the source check reports no meta (it creates nothing); its enforcement is the refusal above and in f)');
+    assert.equal(hRecord.capabilityMeta?.['oats.okf-harvest'], undefined, 'the source check reports no external-state meta; its home-local capture rolls back with spawn');
     assert.deepEqual(fs.readFileSync(join(src, 'instance.json')), srcBefore, 'the source record gained no child or lineage');
 
     // Composition: oats.okf-harvest only, knowledge: none (no oats.okf, its hook, skills or instance knowledge).
@@ -207,6 +207,9 @@ test(`${json(join(root, 'package.json')).version} real OATS ${KERNEL}: legacy-ke
     const hAgents = fs.readFileSync(join(hHome, 'AGENTS.md'), 'utf8');
     assert.ok(hAgents.includes('## Knowledge harvester (oats.okf-harvest)') && !hAgents.includes('## Knowledge: OKF'));
     assert.equal(fs.existsSync(asked), false, 'no harness was asked to start');
+    assert.equal(json(join(hHome,'harvest-source/source.json')).from,'live');
+    assert.equal(fs.readFileSync(join(hHome,'harvest-source/proposal.md'),'utf8'),proposal);
+    assert.deepEqual(fs.readFileSync(join(hHome,'harvest-source/notes/decision.md')),fs.readFileSync(join(src,'notes/decision.md')));
     Object.assign(state, { src, hHome, harvester: h.instance });
   });
 
@@ -295,7 +298,7 @@ test(`${json(join(root, 'package.json')).version} real OATS ${KERNEL}: legacy-ke
     assert.deepEqual(listing(hHome), before, 'a legacy 4.x TASK\'s complete writes nothing in the harvester home');
   });
 
-  await t.test('e) the source retires; its record is gone, so a harvester following the skill stops; the harvester outlives it', () => {
+  await t.test('e) a real retirement precedes a new harvester spawn; public events resolve its source, then recovery disposal cannot lose either snapshot', () => {
     const { src, hHome } = state;
     assert.ok(src && hHome, 'needs (b)');
     const hBefore = fs.readFileSync(join(hHome, 'instance.json'));
@@ -304,11 +307,36 @@ test(`${json(join(root, 'package.json')).version} real OATS ${KERNEL}: legacy-ke
     assert.equal(r.out?.retired, 'src', r.text); assert.equal(r.out.removedDir, true, r.text);
     assert.equal(r.out.relinked, undefined, 'no instance pointed at the source: nothing to relink');
     assert.equal(fs.existsSync(src), false);
-    // Step 2.1 of the skill, again: no record (a kernel recovery copy under instances/.oats-retirement/ is not one).
-    const D = dirname(dirname(dirname(dirname(hHome))));
-    const records = fs.readdirSync(join(D, 'agents')).filter(a => !a.startsWith('.')).map(a => join(D, 'agents', a, 'instances', 'src', 'instance.json')).filter(f => fs.existsSync(f));
-    assert.deepEqual(records, [], 'source authority cannot be established: the harvester STOPS and reports');
-    assert.ok(fs.existsSync(join(hHome, 'TASK.md')), 'the harvester home is kept');
+    const recovery=r.out.workRecovery.path;
+    const events=ok(['instance','events','src','--home',src,'--limit','2000']).result;
+    assert.equal(events.eventsApi,2);
+    assert.equal(events.events.filter(e=>e.kind==='retired').at(-1).data.workRecovery,recovery);
+    const manifest=json(join(recovery,'recovery.json'));
+    const sourceCopy=join(recovery,...(manifest.afterHooks?.home?['after-hooks','home']:['home']));
+    const recoveredProposal=join(sourceCopy,'proposals/2026-10-07-retry-budget.md');
+    const retiredHarvester=ok(['spawn','oats.okf/knowledge-harvester','--task-file',recoveredProposal,'--relation','unrelated','--no-launch']).result;
+    const snapshot=join(retiredHarvester.home,'harvest-source');
+    const captured=json(join(snapshot,'source.json'));
+    assert.equal(captured.from,'recovery');assert.equal(captured.source.home,src);assert.equal(captured.recovery,recovery);
+    assert.deepEqual(fs.readFileSync(join(snapshot,'notes/decision.md')),fs.readFileSync(join(sourceCopy,'notes/decision.md')));
+    // Only this test's disposable source/recovery is ever removed.
+    fs.rmSync(recovery,{recursive:true});
+    for(const home of [hHome,retiredHarvester.home]) {
+      assert.ok(fs.existsSync(join(home,'harvest-source/notes/decision.md')));
+      assert.ok(fs.existsSync(join(home,'harvest-source/okf.json')));
+    }
+    const absent=run(['spawn','oats.okf/knowledge-harvester','--task-file',join(snapshot,'proposal.md'),'--relation','unrelated','--no-launch']);
+    assert.notEqual(absent.status,0,absent.text);
+    // Reuse the retired address with a real new incarnation. The old proposal
+    // must not capture the replacement's notes merely because its home exists.
+    const replacement=ok(['spawn','source','--name','src','--no-launch']).result;
+    assert.equal(replacement.home,src);
+    assert.notEqual(json(join(src,'instance.json')).createdAt,captured.source.incarnation);
+    write(join(src,'notes/decision.md'),'Replacement incarnation: unrelated evidence.\n');
+    const beforeReuse=harvesterHomes();
+    const reused=run(['spawn','oats.okf/knowledge-harvester','--task-file',join(snapshot,'proposal.md'),'--relation','unrelated','--no-launch']);
+    assert.notEqual(reused.status,0,reused.text);assert.match(reused.text,/never choose a reused name/);
+    assert.deepEqual(harvesterHomes(),beforeReuse,'no harvester exists for an ambiguous live incarnation');
     assert.deepEqual(fs.readFileSync(join(hHome, 'instance.json')), hBefore, 'retiring the source does not touch the harvester record');
     assert.equal(fs.existsSync(asked), false, 'no harness was ever asked to start a model');
   });

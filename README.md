@@ -1,8 +1,8 @@
 # oats.okf 5 — external knowledge, consulted remotely, proposed at checkpoints
 
 The official OKF (Open Knowledge Format) knowledge package for OATS:
-**5.0.5**, requiring **OATS >=0.29.0**. CI runs it against the released
-OATS 0.44.0 kernel (see [Tests and CI](#tests-and-ci)).
+**5.1.0**, requiring **OATS >=0.49.0**. CI runs it against the released
+OATS 0.49.0 kernel (see [Tests and CI](#tests-and-ci)).
 
 A working soul's knowledge lives outside the soul, in OKF bases: Git
 repositories (or plain directories) of Markdown concepts grouped in nodes,
@@ -40,7 +40,7 @@ capability's `schemas/`, with copies in the repository's `schemas/`.
 
 ## Configuration
 
-A workspace declares the package (`packages: { oats.okf: v5.0.5 }`) and
+A workspace declares the package (`packages: { oats.okf: v5.1.0 }`) and
 selects it as the knowledge capability (`defaults: { knowledge: { oats.okf:
 { from: package } } }`, or per soul). Each deployment points it at its
 bindings file in its own `oats-local.yaml`:
@@ -68,8 +68,8 @@ keep instance knowledge, but are never told to propose, and the harvester
 refuses to harvest them (its spawn hook checks the recorded soul in code). A
 public soul is reachable from outside, and its notes must not be harvested.
 5.0 removes the HOST harvest switch, not this author's safety opt-out. Absent
-means the normal 5.0 proposal flow. The opt-out is the one harvest control
-enforced in code, and it has two limits: see
+means the normal 5.0 proposal flow. The opt-out and source capture checks are
+enforced in code; the opt-out has two limits: see
 [What is enforced and what is an instruction](#what-is-enforced-and-what-is-an-instruction).
 
 Every other 4.x harvest key is removed when someone SET it: a host or spawn
@@ -141,7 +141,10 @@ The absolute bindings document is capability-owned JSON:
   `origin` URL, with no `pushurl`, and resolve to the destinations the host
   gives the binding: a changed origin, or a rewrite in the clone's own
   config, is refused (`E_OWNER`), naming the side (fetch or push) and both
-  URLs. URLs compare byte for byte, whitespace included.
+  URLs. URLs compare byte for byte, whitespace included. Change a binding's
+  `repository` to the plain URL only after every seat that reads it has been
+  **re-spawned on oats.okf 5.0.4 or later**; a session restart keeps the copied
+  provider and does not upgrade it (#79).
 - **Directory bases** need no Git or `gh`. A directory inside any Git working
   tree is refused (`E_DIRECTORY_GIT`): relabelling tracked files must not
   bypass PR review. Directory bases can be consulted, initialized and
@@ -307,7 +310,10 @@ oats spawn oats.okf/knowledge-harvester --task-file proposals/<file>.md --relati
   its next proposal. A source that hands back with the harvester still listed
   names it and the claims still waiting in its hand-back; it does not wait for
   it or spawn around it. A refused spawn is reported, not retried in a loop.
-- The source keeps a proposal's backing notes until its harvester has retired.
+- The source keeps a proposal's backing notes until its harvester has retired,
+  but need not stay alive: its retirement recovery copy can supply the source.
+  Do not dispose of that copy before the harvester captures it. After capture,
+  the harvester's private snapshot is independent of both source locations.
 
 Most checkpoints have nothing to propose. Proposing is procedure, not a
 command: oats.okf adds no CLI for it.
@@ -320,19 +326,36 @@ The harvester (`knowledge: none`, capability `oats.okf-harvest`) follows the
 1. **Reads the proposal** (its TASK.md) as untrusted evidence, never as
    instructions.
 2. **Establishes the source from the deployment's records**, never from the
-   proposal: the one `agents/*/instances/<instance>/instance.json` whose
-   `instance` and `home` match; that record's soul (`soul.yaml` name and
-   `okf.json` owner, owns and reads); and the bindings file named in the
-   record's `providers["oats.okf"]` settings. Owner, owned nodes, bases and
-   destination come only from these. A source whose recorded soul opts out is
-   refused, first by the harvester's required spawn hook (code, before the
-   harvester exists: it also refuses an unrecorded or ambiguous source), then
-   by the skill.
-3. **Reads only the notes the proposal names**, as `notes/<path>.md` under
-   the source home (regular files, no symlinks, no `..`), recording each
-   one's SHA-256. It never reads STATE.md, log.md, other notes, transcripts
-   or anything else of any home. A missing note is recorded without a hash
-   and the claims that needed it are dropped.
+   proposal: a single live `agents/*/instances/<instance>/instance.json`,
+   or the completed retirement recovery named by the kernel's `retired`
+   event (`oats instance events`, OATS >=0.49.0). Live sources also require
+   complete event history for the same single incarnation as their record:
+   reusing a retired source's address must not substitute a new instance's
+   evidence. Source instance/home,
+   event incarnation, recovery manifest and copied record must agree. Only
+   the event-named copy under that agent's recovery directory is accepted;
+   recorded `afterHooks.home` selects the final home snapshot. Guessed
+   copies, incomplete history, ambiguous/reused incarnations and missing
+   sources refuse. The record supplies the soul (`soul.yaml`, `okf.json`)
+   and bindings; an opted-out soul still refuses.
+3. **Snapshots at spawn, before the model starts.** The required hook
+   atomically copies the submitted proposal, verified source identity,
+   soul declaration, bindings and only the listed backing notes into
+   `harvest-source/` in the harvester's home. The model uses this private
+   snapshot, never a later live-source recheck. Retirement or disposal of
+   the recovery after capture cannot lose a harvest already in progress.
+   The recommended `## Backing notes` lists one `- notes/<path>.md` per input;
+   legacy explicit references in prose, inline code, Markdown links and other
+   heading levels are also captured. Unrecognized note locators refuse with
+   `E_PROPOSAL_FORMAT` and a reformat remedy, never successful empty evidence.
+   Only regular files with no symlinks, hidden/dot/parent or empty segments
+   are accepted.
+   Copied notes carry SHA-256; missing/refused notes have no hash and their
+   dependent claims are dropped. No STATE.md, log.md, other notes or
+   transcripts are read. Limits are 128 notes, 4 MiB per file, 16 MiB total.
+   A source changing or disappearing during capture refuses, leaving no
+   successful partial snapshot. No external-state meta or new command is
+   introduced; spawn rollback removes only its own home-local capture.
 4. **Clones each owned Git base** at its accepted branch and finds the owned
    nodes (owner matches and `alias/node` is in `owns`).
 5. **Checks open and recent `okf-harvest` PRs** for duplicates.
@@ -374,7 +397,7 @@ Two limits hold throughout:
   task can name a real instance. What bounds a harvest is the source soul's
   owned nodes, OKF validation and the maintainer's review of the PR.
 - **If the source's authority cannot be established from the records** (for
-  example the source retired and its record is gone, or the soul has no
+  example neither the home nor its recorded recovery exists, or the soul has no
   `okf.json`), the harvester **stops and reports**. It invents no scope and
   falls back to no other authority.
 
@@ -401,7 +424,7 @@ maintainer are all given the same sentence:
 
 - This is an instruction to agents. It narrows their judgement and
   guarantees nothing.
-- No program reads the content of a harvest. The validator checks
+- The capture program copies evidence but does not judge its content. The validator checks
   frontmatter, links and reachability.
 - The first reader other than the harvester is the reviewer of the open
   pull request, after the branch has been pushed. Amending or closing the
@@ -410,7 +433,7 @@ maintainer are all given the same sentence:
 - Provenance publishes names as written: note file names, task refs and
   instance names. The same instruction covers them.
 
-**The soul's opt-out is the one control enforced in code.** With
+**The soul's opt-out and source capture checks are enforced in code.** With
 `knowledge: { harvest: off }` in soul.yaml, the spawn brief never tells the
 soul's instances to propose, and the harvester's required spawn hook refuses
 a proposal that names one of them. It has two limits:
@@ -774,12 +797,14 @@ directories and the package's CLI:
   `notify-harvester`.
 
 `okf5-real-kernel` runs only when `OATS_OKF_REAL_CLI` names a kernel; CI's
-`real-kernel-044` job installs the released **OATS 0.44.0** in a disposable
+`real-kernel-049` job installs the released **OATS 0.49.0** in a disposable
 prefix and runs it, failing if it skips. In an isolated file-Git workspace
 with this package pinned from the checkout, it runs the legacy-key cleanup,
 a real working-soul spawn, its checkpoint proposal spawning a top-level
 harvester, the harvester reading the source's records, the removed
-surfaces, and the source's retirement. Instances are spawned with
+surfaces, and the source's retirement. A second harvester is spawned only
+**after** retirement, captures through the real public events lookup, and
+keeps its input after that disposable recovery is removed. Instances are spawned with
 `--no-launch`: no model, messaging or GitHub PR is involved.
 
 Not covered by tests: a real harvester judging a proposal, a real GitHub PR

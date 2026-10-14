@@ -1,5 +1,43 @@
 # Changelog
 
+## 5.1.0 — 2026-10-14
+
+### Fixed
+
+- **A harvest survives its proposer's retirement (#81).** The required
+  harvester spawn hook accepts a live source record or the completed
+  recovery named by the kernel's retirement event, verifies Source against
+  that record and the recorded soul's opt-out, then atomically captures the
+  submitted proposal, source identity, soul declaration, bindings and only
+  named notes in the harvester's own home. The model reads this snapshot,
+  not the source again. Later recovery disposal cannot lose a capture.
+  Missing or ambiguous provenance and unavailable sources still refuse;
+  guessed copies and proposal-supplied destinations are never authority.
+  Live sources receive the same historical-incarnation check, so an old
+  proposal cannot capture a replacement instance at the same address.
+  A mid-capture source change refuses rather than committing partial input.
+  Unrelated harvesters and the no-wait rule stay: proposers need not stay alive.
+- **Binding URL upgrade sequencing (#79).** Change a binding's `repository`
+  to the plain URL only after every seat reading it has been re-spawned on
+  oats.okf 5.0.4 or later. A session restart keeps its copied provider.
+
+### Upgrade
+
+- **Requires OATS >=0.49.0**, the first released kernel whose public
+  `instance events --home` lookup works after a source home is removed.
+  Upgrade the kernel before pinning this provider. This is a minor release
+  because the supported kernel range narrows; no binding field, publication
+  command, lineage relation or accepted-knowledge boundary changes.
+- Re-spawn harvesters to obtain the new capture hook and instructions;
+  existing homes keep their copied provider. The recommended backing-note
+  form is a `## Backing notes` section, one `- notes/<path>.md` entry per note.
+  Legacy explicit references in other heading levels, prose, inline code
+  and Markdown links are preserved; unrecognized note locators refuse with
+  `E_PROPOSAL_FORMAT` and a reformat remedy, rather than losing evidence. Source
+  and recovery evidence must remain available until capture; do not dispose
+  of recovery beforehand. Local input limits: 128 notes, 4 MiB per file,
+  16 MiB total. Snapshot files are private evidence, not accepted knowledge.
+
 ## 5.0.5 — 2026-10-14
 
 ### Changed
