@@ -18,9 +18,12 @@
   The guard is not weakened. The clone's configured `remote.origin.url`
   must still equal `repository` exactly, `remote.origin.pushurl` must be
   unset, and a rewrite in the clone's own config redirects the clone away
-  from the host's resolution: each is refused with `E_OWNER`. The message
-  keeps its prefix and now names the side that differed (fetch or push)
-  and both URLs, with credentials redacted.
+  from the host's resolution: each is refused with `E_OWNER`. URLs are now
+  compared byte for byte: Git's output was trimmed before, so a leading
+  space, which turns a path into a relative repository inside the clone,
+  went unnoticed. The message keeps its prefix and now names the side that
+  differed (fetch or push) and both URLs, quoted, with credentials
+  redacted.
 
 No setting, binding field or hook output changes. Compatibility remains
 OATS >=0.29.0.

@@ -141,7 +141,7 @@ The absolute bindings document is capability-owned JSON:
   `origin` URL, with no `pushurl`, and resolve to the destinations the host
   gives the binding: a changed origin, or a rewrite in the clone's own
   config, is refused (`E_OWNER`), naming the side (fetch or push) and both
-  URLs.
+  URLs. URLs compare byte for byte, whitespace included.
 - **Directory bases** need no Git or `gh`. A directory inside any Git working
   tree is refused (`E_DIRECTORY_GIT`): relabelling tracked files must not
   bypass PR review. Directory bases can be consulted, initialized and
@@ -753,7 +753,9 @@ directories and the package's CLI:
   credential-bearing locators, escaping paths and unknown aliases;
 - `okf5-remote`: the frozen-remote guard, passing under host-wide
   `insteadOf` and `pushInsteadOf` rules and refusing a changed or added
-  origin URL, a `pushurl` and a clone-local `insteadOf` or `pushInsteadOf`;
+  origin URL (whitespace included), a `pushurl` and a clone-local
+  `insteadOf` or `pushInsteadOf`, with okf's own Git isolated from the
+  host's global and system config;
 - `okf5-working`: the spawn and soul-scaffold hooks, `inspect`, consulting
   from a home, `init`, `migrate --legacy/--deliver/--cutover`, and the
   removed surfaces and `harvest` operation answering `E_REMOVED`;
