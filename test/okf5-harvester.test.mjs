@@ -563,6 +563,31 @@ for(const form of [
   assert.equal(fs.readFileSync(join(home,'harvest-source/notes/decision.md.v2.md'),'utf8'),intended);
 });
 
+test('delimited locators consume through their closing delimiter, never whitespace or parentheses',()=>{
+  for(const filename of ['notes/decision.md (v2).md','notes/decision.md(v2).md']) {
+    for(const delimiter of ['`','"',"'"]) {
+      const text=`Evidence is in ${delimiter}${filename}${delimiter}.`;
+      assert.deepEqual(backingNotes(text),[filename],text);
+    }
+  }
+  for(const text of [
+    'Evidence is in `notes/decision.md (v2).md.',
+    'Evidence is in notes/decision.md(v2).md.',
+    'See [the note](notes/decision.md(v2).md).',
+    'See [the note](notes/decision.md)v2.md).',
+  ]) assert.throws(()=>backingNotes(text),e=>e.code==='E_PROPOSAL_FORMAT',text);
+});
+
+for(const filename of ['notes/decision.md (v2).md','notes/decision.md(v2).md']) test(`quoted capture selects the whole filename with distinct evidence: ${filename}`,t=>{
+  const f=retiredSource(t),home=harvestHome(f),intended='Literal quoted filename: the intended new evidence.';
+  fs.writeFileSync(join(f.recovery,'home',filename),intended);
+  const summary=snapshotSource({task:proposal(f.home)+`\nEvidence is in \`${filename}\`.`,deployment:f.d,home,events:f.events});
+  assert.deepEqual(summary.evidence,[{note:filename,status:'copied',sha256:createHash('sha256').update(intended).digest('hex')}]);
+  fs.rmSync(f.recovery,{recursive:true});
+  assert.equal(fs.existsSync(join(home,'harvest-source/notes/decision.md')),false);
+  assert.equal(fs.readFileSync(join(home,'harvest-source',filename),'utf8'),intended);
+});
+
 test('an invalid live record cannot fall back to an older recovery',t=>{
   const f=deployment(t),home=harvestHome(f);fs.writeFileSync(join(f.home,'instance.json'),'{}');
   assert.throws(()=>snapshotSource({task:withNotes(f.home),deployment:f.d,home,events:()=>{assert.fail('must not look for older authority');}}),/does not match/);

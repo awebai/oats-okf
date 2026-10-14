@@ -104,8 +104,11 @@ files, not the live or recovered source. The hook normalizes explicit
 `Backing notes` (heading levels 1–6, case-insensitive). Literal paths in
 prose, inline code and Markdown link targets are supported for frozen 5.0
 proposers. A locator is consumed in full, including internal `.md.` filename
-segments; quoted/code/link destinations stay literal, while bare prose may
-end with sentence punctuation. An unrecognized note locator refuses with `E_PROPOSAL_FORMAT` and
+segments. Quotes and inline code consume through the closing delimiter,
+including spaces or parentheses in the filename. Basic Markdown destinations
+are supported; unclosed delimiters or nested destination syntax refuse rather
+than taking a filename prefix. Bare prose may end with sentence punctuation.
+An unrecognized note locator refuses with `E_PROPOSAL_FORMAT` and
 an actionable list-format remedy; it never silently becomes note-free input.
 Only source-relative paths with no empty, dot or parent segment, hidden
 segment, backslash, symlink or non-regular file can be copied. It reads no

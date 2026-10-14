@@ -156,20 +156,39 @@ export function backingNotes(task) {
     if (entry && (entry.match(/notes\//g) || []).length <= 1 && /^(?:`[^`]+`|notes\/.*\.md|notes\/\S+|\/\S+)$/.test(entry)) {
       notes.add(entry.replace(/^`(.*)`$/, '$1')); continue;
     }
-    // Consume the WHOLE locator token, not a prefix ending at an internal
-    // .md. (notes/decision.md.v2.md is not notes/decision.md). Quotes/code and
-    // Markdown destinations are literal; only plain prose permits trailing
-    // sentence punctuation. Never take a suffix of an absolute path or URL.
-    const pattern = /(^|[\s`"'(\[])(notes\/[^\s`"'<>\[\]()]+)/g;
-    for (const match of line.matchAll(pattern)) {
-      const note = /^\s*$/.test(match[1]) ? match[2].replace(/[.,;!?:]+$/, '') : match[2];
+    // Find starts, then consume through the ACTUAL delimiter. A character
+    // class is not a quote parser: whitespace or '(' inside `notes/a.md (v2).md`
+    // cannot terminate the path. Unsupported forms refuse, never use a prefix.
+    let consumed = 0;
+    for (const match of line.matchAll(/notes\//g)) {
+      const start = match.index;
+      if (start < consumed) continue; // part of an already consumed literal
+      const before = start ? line[start - 1] : '';
+      let end, note;
+      if (['`', '"', "'", '[', '('].includes(before)) {
+        const closing = before === '[' ? ']' : before === '(' ? ')' : before;
+        end = line.indexOf(closing, start);
+        if (end < 0) formatError();
+        note = line.slice(start, end);
+        // Basic Markdown destinations only. Nested parentheses or a title
+        // need richer parsing: refuse rather than stopping at an inner ')'.
+        if (before === '(' && /[\s()]/.test(note)) formatError();
+        const following = line.slice(end + 1);
+        if (following && !/^(?:\s|[.,;!?:)\]]+(?:\s|$))/.test(following)) formatError();
+        consumed = end + 1;
+      } else if (!before || /\s/.test(before)) {
+        const token = /^[^\s`"'<>\[\]()]+/.exec(line.slice(start))?.[0];
+        if (!token) formatError();
+        end = start + token.length;
+        // Bare prose locators must end at whitespace/end, not at a delimiter
+        // inside an unsupported filename. Quote filenames with these bytes.
+        if (end < line.length && !/\s/.test(line[end])) formatError();
+        note = token.replace(/[.,;!?:]+$/, '');
+        consumed = end;
+      } else formatError(); // an absolute path/URL suffix is not a locator
       if (!note.endsWith('.md')) formatError();
       notes.add(note);
     }
-    // Remove exactly the recognized spans. A remaining notes/ locator may
-    // have spaces/escaping/format we cannot interpret without guessing.
-    const remainder = line.replace(pattern, (_, prefix) => prefix);
-    if (remainder.includes('notes/')) formatError();
   }
   return [...notes];
 }
