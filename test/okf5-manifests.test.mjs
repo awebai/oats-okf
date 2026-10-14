@@ -138,7 +138,7 @@ test('the harvester and the reviewer apply it to what is published, provenance n
 test('the README says what is an instruction and what is enforced, with the opt-out\'s two limits',()=>{
   const readme=prose('README.md');
   for(const s of ['Personal data is excluded by instruction. Nothing guarantees it stays out.','It narrows their judgement and guarantees nothing.',
-    'No program reads the content of a harvest.','It removes nothing that was pushed.',
+    'The capture program copies evidence but does not judge its content.','It removes nothing that was pushed.',
     'The soul\'s opt-out and source capture checks are enforced in code.','It is per soul. No instance, note, host or spawn setting opts out.',
     'It covers that soul\'s own proposals. The spawn hook checks the source a proposal names. What an instance of that soul writes to other seats in messages is theirs to capture and propose.']) assert.ok(readme.includes(s),s);
 });
