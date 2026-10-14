@@ -160,7 +160,7 @@ test(`${json(join(root, 'package.json')).version} real OATS ${KERNEL}: legacy-ke
 
     // The checkpoint, as okf-instance-knowledge says: a backing note and a self-contained proposal in the home.
     write(join(src, 'notes/decision.md'), '---\ntype: Decision\ntitle: Retry budget is per request\ndescription: The retry budget is counted per request, not per connection.\ngenerality: soul\n---\n\nPer-connection budgets let one slow request starve the others.\n');
-    const proposal = `# OKF proposal: Retry budget is per request\n\nSource: instance src, home ${src}, soul source\n\n## What\nThe retry budget is counted per request, not per connection.\n\n## Why\nA per-connection budget let one slow request starve the others.\n\n## Evidence\nObserved in the fixture load test.\n\n## Backing notes\n- notes/decision.md\n`;
+    const proposal = `# OKF proposal: Retry budget is per request\n\nSource: instance src, home ${src}, soul source\n\n## What\nThe retry budget is counted per request, not per connection.\n\n## Why\nA per-connection budget let one slow request starve the others.\n\n## Evidence\nObserved in the fixture load test.\n\n### Backing notes\n- notes/decision.md\n`;
     write(join(src, 'proposals/2026-10-07-retry-budget.md'), proposal);
     const srcBefore = fs.readFileSync(join(src, 'instance.json'));
     const as = { instance: 'src', home: src };
@@ -327,6 +327,16 @@ test(`${json(join(root, 'package.json')).version} real OATS ${KERNEL}: legacy-ke
     }
     const absent=run(['spawn','oats.okf/knowledge-harvester','--task-file',join(snapshot,'proposal.md'),'--relation','unrelated','--no-launch']);
     assert.notEqual(absent.status,0,absent.text);
+    // Reuse the retired address with a real new incarnation. The old proposal
+    // must not capture the replacement's notes merely because its home exists.
+    const replacement=ok(['spawn','source','--name','src','--no-launch']).result;
+    assert.equal(replacement.home,src);
+    assert.notEqual(json(join(src,'instance.json')).createdAt,captured.source.incarnation);
+    write(join(src,'notes/decision.md'),'Replacement incarnation: unrelated evidence.\n');
+    const beforeReuse=harvesterHomes();
+    const reused=run(['spawn','oats.okf/knowledge-harvester','--task-file',join(snapshot,'proposal.md'),'--relation','unrelated','--no-launch']);
+    assert.notEqual(reused.status,0,reused.text);assert.match(reused.text,/never choose a reused name/);
+    assert.deepEqual(harvesterHomes(),beforeReuse,'no harvester exists for an ambiguous live incarnation');
     assert.deepEqual(fs.readFileSync(join(hHome, 'instance.json')), hBefore, 'retiring the source does not touch the harvester record');
     assert.equal(fs.existsSync(asked), false, 'no harness was ever asked to start a model');
   });

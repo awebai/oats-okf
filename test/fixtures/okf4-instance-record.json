@@ -2,6 +2,7 @@
   "_comment": "An instance.json of a working instance spawned under oats.okf 4.x, trimmed to the fields oats.okf 5.0 reads. The 4.x manifest defaulted harvest (off) and harvest-runtime (pi), so the kernel recorded them in providers and in the oats.okf capability entry with origin manifest-default (resolve.mjs: oats.json#/settings/<key>/default). <HOME>, <SOUL_DIR> and <BINDINGS_FILE> are filled in by the tests.",
   "agent": "src-agent",
   "instance": "src",
+  "createdAt": "2026-10-07T00:00:00.000Z",
   "home": "<HOME>",
   "soulDir": "<SOUL_DIR>",
   "providers": {

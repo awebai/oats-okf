@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { snapshotSource } from '../oats-package/capabilities/oats-okf-harvest/lib/source-snapshot.mjs';
+import { snapshotSource, backingNotes } from '../oats-package/capabilities/oats-okf-harvest/lib/source-snapshot.mjs';
 // oats.okf 5.1.0: publication is procedure-only (git + gh, skill
 // knowledge-harvest); its 4.x commands refuse so an old TASK never completes.
 const ROOT=fileURLToPath(new URL('../',import.meta.url)),PKG=join(ROOT,'oats-package');
@@ -319,13 +319,25 @@ function deployment(t,{harvest,origins,record,soulYaml='schemaVersion: 2\nname: 
     fs.writeFileSync(join(home,'instance.json'),record?record({home,soul}).replaceAll('/srv/okf/bindings.json',bindings):JSON.stringify({agent,instance:'src',home,createdAt:'2026-10-14T00:00:00.000Z',soulDir:soul,providers:settings?{'oats.okf':settings}:{},
       ...(origins?{capabilities:[{id:'oats.okf',settings,settingsOrigins:origins}]}:{})}));
   }
-  return {d,home:home??join(d,'agents','src-agent','instances','src'),soul};
+  const history=home?{
+    eventsApi:2,instance:'src',home,incarnation:JSON.parse(fs.readFileSync(join(home,'instance.json'))).createdAt,
+    truncated:false,integrity:{unreadableRows:0,foreignRows:0,sources:[{path:'home',status:'ok'},{path:'workspace',status:'ok'}]},
+    events:[{kind:'spawned',producer:'kernel',instance:'src',home,incarnation:JSON.parse(fs.readFileSync(join(home,'instance.json'))).createdAt}],
+  }:null;
+  fs.writeFileSync(join(d,'fixture-events.json'),JSON.stringify(history));
+  // A bounded fake of the 0.49 public CLI shape/argv, not a fake that accepts
+  // arbitrary commands. Real-kernel CI owns proof of the actual lifecycle.
+  fs.writeFileSync(join(d,'fixture-kernel.mjs'),`import fs from 'node:fs';import assert from 'node:assert/strict';
+const d=${JSON.stringify(d)},result=JSON.parse(fs.readFileSync(d+'/fixture-events.json'));
+assert.deepEqual(process.argv.slice(2),['instance','events',result.instance,'--home',result.home,'--dir',d,'--limit','2000','--json']);
+process.stdout.write(JSON.stringify({schemaVersion:1,ok:true,result}));\n`);
+  return {d,home:home??join(d,'agents','src-agent','instances','src'),soul,history,events:()=>history};
 }
 const proposal=(home,{instance='src',soul='source'}={})=>`# OKF proposal: retry budget\n\nSource: instance ${instance}, home ${home}, soul ${soul}\n\n## What\nA claim.\n`;
 function spawnHook(task,deploymentDir) {
   const cwd=fs.realpathSync(fs.mkdtempSync(join(tmpdir(),'okf5-hook-cwd-')));
   try {
-    const r=spawnSync(process.execPath,[join(HARVEST,'bin/okf-harvest.mjs'),'spawn'],{cwd,env:{PATH:process.env.PATH,HOME:cwd,OATS_EVENT:'spawn',OATS_INSTANCE_HOME:cwd,OATS_TASK:task,...(deploymentDir?{OATS_WORKSPACE:deploymentDir}:{})},encoding:'utf8',timeout:30000});
+    const r=spawnSync(process.execPath,[join(HARVEST,'bin/okf-harvest.mjs'),'spawn'],{cwd,env:{PATH:process.env.PATH,HOME:cwd,OATS_EVENT:'spawn',OATS_INSTANCE_HOME:cwd,OATS_TASK:task,...(deploymentDir?{OATS_WORKSPACE:deploymentDir,OATS_CLI_BIN:join(deploymentDir,'fixture-kernel.mjs')}:{})},encoding:'utf8',timeout:30000});
     return {status:r.status,out:JSON.parse(r.stdout||'null'),left:fs.readdirSync(cwd)};
   } finally {fs.rmSync(cwd,{recursive:true,force:true});}
 }
@@ -380,7 +392,7 @@ test('on a 4.x record, a soul off still denies, and an unproven or explicit remo
 test('the harvester spawn hook fails closed when the source cannot be established',t=>{
   const f=deployment(t);
   refused(spawnHook('# 4.x TASK\nsource: /srv/state/sources/x/source.json run: 1234\n',f.d),'E_SOURCE',/not an oats\.okf 5\.0 proposal/);
-  refused(spawnHook(proposal(join(f.home,'..','gone'),{instance:'gone'}),f.d),'E_SOURCE',/retired-source lookup/);
+  refused(spawnHook(proposal(join(f.home,'..','gone'),{instance:'gone'}),f.d),'E_SOURCE',/source event lookup/);
   refused(spawnHook(proposal(f.home,{instance:'../src'}),f.d),'E_SOURCE',/plain names/);
   refused(spawnHook(proposal('/elsewhere/src'),f.d),'E_SOURCE',/does not match the proposal's home/);
   refused(spawnHook(proposal(f.home,{soul:'other'}),f.d),'E_SOURCE',/is not other/);
@@ -434,7 +446,7 @@ test('live snapshot is complete before retirement; no later read of the source i
   const f=deployment(t),home=harvestHome(f);
   fs.mkdirSync(join(f.home,'notes'));fs.writeFileSync(join(f.home,'notes/decision.md'),'Decision.');
   fs.writeFileSync(join(f.home,'notes/other.md'),'Do not copy.');fs.writeFileSync(join(f.home,'STATE.md'),'Do not read.');
-  const summary=snapshotSource({task:withNotes(f.home),deployment:f.d,home,events:()=>{throw Error('no events needed for a live home');}});
+  const summary=snapshotSource({task:withNotes(f.home),deployment:f.d,home,events:f.events});
   fs.rmSync(f.home,{recursive:true});
   assert.equal(summary.from,'live');assert.deepEqual(fs.readdirSync(join(home,'harvest-source/notes')),['decision.md']);
   assert.equal(fs.existsSync(join(home,'harvest-source/STATE.md')),false);
@@ -463,16 +475,65 @@ test('retired soul opt-out still refuses before capturing any bytes',t=>{
   assert.deepEqual(fs.readdirSync(home),[]);
 });
 
-test('missing/traversing/symlinked notes have no hash or copy; prose and other sections are never inputs',t=>{
+test('missing/traversing/symlinked notes have no hash or copy; legacy named references in other sections are captured too',t=>{
   const f=deployment(t),home=harvestHome(f);
   fs.mkdirSync(join(f.home,'notes'));fs.writeFileSync(join(f.home,'notes/decision.md'),'Decision.');
   fs.symlinkSync(join(f.home,'instance.json'),join(f.home,'notes/link.md'));
   fs.symlinkSync(f.soul,join(f.home,'notes/dir'));
   const task=withNotes(f.home)+'- notes/missing.md\n- notes/../instance.json\n- /elsewhere/private.md\n- notes/link.md\n- notes/dir/soul.md\n\n## Other\n- notes/other.md\n';
-  const summary=snapshotSource({task,deployment:f.d,home});
-  assert.deepEqual(summary.evidence.map(e=>e.status),['copied','missing','refused','refused','refused','refused']);
+  const summary=snapshotSource({task,deployment:f.d,home,events:f.events});
+  assert.deepEqual(summary.evidence.map(e=>e.status),['copied','missing','refused','refused','refused','refused','missing']);
   assert.ok(summary.evidence.slice(1).every(e=>!Object.hasOwn(e,'sha256')));
   assert.deepEqual(fs.readdirSync(join(home,'harvest-source/notes')),['decision.md']);
+});
+
+test('retired A proposal cannot capture replacement live B at the same source address',t=>{
+  const f=retiredSource(t),home=harvestHome(f),task=withNotes(f.home);
+  const record=JSON.parse(fs.readFileSync(join(f.recovery,'home/instance.json')));
+  fs.mkdirSync(join(f.home,'notes'),{recursive:true});
+  record.createdAt='2026-10-14T01:00:00.000Z';
+  fs.writeFileSync(join(f.home,'instance.json'),JSON.stringify(record));
+  fs.writeFileSync(join(f.home,'notes/decision.md'),'Replacement B: must never substitute for A.');
+  f.history.incarnation=record.createdAt;
+  f.history.events.push({kind:'spawned',producer:'kernel',instance:'src',home:f.home,incarnation:record.createdAt});
+  assert.throws(()=>snapshotSource({task,deployment:f.d,home,events:f.events}),/never choose a reused name/);
+  assert.deepEqual(fs.readdirSync(home),[]);
+  assert.equal(fs.readFileSync(join(f.recovery,'home/notes/decision.md'),'utf8'),'Before hooks.');
+});
+
+for(const mode of ['truncated','unknown-incarnation','record-mismatch','empty-history']) test(`live snapshot refuses ${mode}, not only retired snapshots`,t=>{
+  const f=deployment(t),home=harvestHome(f);
+  if(mode==='truncated') f.history.truncated=true;
+  if(mode==='unknown-incarnation') f.history.events[0].incarnation=null;
+  if(mode==='record-mismatch') f.history.events[0].incarnation='another-instance';
+  if(mode==='empty-history') f.history.events=[];
+  assert.throws(()=>snapshotSource({task:withNotes(f.home),deployment:f.d,home,events:f.events}),e=>e.code==='E_SOURCE');
+  assert.deepEqual(fs.readdirSync(home),[]);
+});
+
+for(const form of [
+  '### Backing notes\n- notes/decision.md\n',
+  '# Backing Notes:\n* `notes/decision.md`\n',
+  'Backing note: notes/decision.md.\n',
+  'Evidence is in `notes/decision.md`.\n',
+  '## Evidence\nSee [the decision](notes/decision.md).\n',
+  '### notes/decision.md\n',
+]) test(`legacy proposal form retains named evidence: ${JSON.stringify(form)}`,t=>{
+  const f=retiredSource(t),home=harvestHome(f),task=proposal(f.home)+'\n'+form;
+  const summary=snapshotSource({task,deployment:f.d,home,events:f.events});
+  assert.deepEqual(summary.evidence.map(e=>[e.note,e.status]),[['notes/decision.md','copied']]);
+  fs.rmSync(f.recovery,{recursive:true});
+  assert.equal(fs.readFileSync(join(home,'harvest-source/notes/decision.md'),'utf8'),'Before hooks.');
+});
+
+test('unsupported declared note syntax refuses with a format remedy rather than capturing no evidence',t=>{
+  const f=deployment(t),home=harvestHome(f);
+  const task=proposal(f.home)+'\n### Backing notes\nSee notes/a note.md\n';
+  assert.throws(()=>snapshotSource({task,deployment:f.d,home,events:f.events}),e=>e.code==='E_PROPOSAL_FORMAT' && /reformat/.test(e.message));
+  assert.deepEqual(fs.readdirSync(home),[]);
+  assert.deepEqual(backingNotes('No backing evidence.'),[]);
+  assert.deepEqual(backingNotes('See `notes/a.md` and [again](notes/a.md).'),['notes/a.md']);
+  assert.deepEqual(backingNotes('### Backing notes\n- notes/a.md and notes/b.md\n'),['notes/a.md','notes/b.md']);
 });
 
 test('an invalid live record cannot fall back to an older recovery',t=>{

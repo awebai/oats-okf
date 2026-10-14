@@ -328,7 +328,10 @@ The harvester (`knowledge: none`, capability `oats.okf-harvest`) follows the
 2. **Establishes the source from the deployment's records**, never from the
    proposal: a single live `agents/*/instances/<instance>/instance.json`,
    or the completed retirement recovery named by the kernel's `retired`
-   event (`oats instance events`, OATS >=0.49.0). Source instance/home,
+   event (`oats instance events`, OATS >=0.49.0). Live sources also require
+   complete event history for the same single incarnation as their record:
+   reusing a retired source's address must not substitute a new instance's
+   evidence. Source instance/home,
    event incarnation, recovery manifest and copied record must agree. Only
    the event-named copy under that agent's recovery directory is accepted;
    recorded `afterHooks.home` selects the final home snapshot. Guessed
@@ -341,8 +344,12 @@ The harvester (`knowledge: none`, capability `oats.okf-harvest`) follows the
    `harvest-source/` in the harvester's home. The model uses this private
    snapshot, never a later live-source recheck. Retirement or disposal of
    the recovery after capture cannot lose a harvest already in progress.
-   `## Backing notes` lists one `- notes/<path>.md` per input; only regular
-   files with no symlinks, hidden/dot/parent or empty segments are accepted.
+   The recommended `## Backing notes` lists one `- notes/<path>.md` per input;
+   legacy explicit references in prose, inline code, Markdown links and other
+   heading levels are also captured. Unrecognized note locators refuse with
+   `E_PROPOSAL_FORMAT` and a reformat remedy, never successful empty evidence.
+   Only regular files with no symlinks, hidden/dot/parent or empty segments
+   are accepted.
    Copied notes carry SHA-256; missing/refused notes have no hash and their
    dependent claims are dropped. No STATE.md, log.md, other notes or
    transcripts are read. Limits are 128 notes, 4 MiB per file, 16 MiB total.

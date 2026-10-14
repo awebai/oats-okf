@@ -13,6 +13,8 @@
   not the source again. Later recovery disposal cannot lose a capture.
   Missing or ambiguous provenance and unavailable sources still refuse;
   guessed copies and proposal-supplied destinations are never authority.
+  Live sources receive the same historical-incarnation check, so an old
+  proposal cannot capture a replacement instance at the same address.
   A mid-capture source change refuses rather than committing partial input.
   Unrelated harvesters and the no-wait rule stay: proposers need not stay alive.
 - **Binding URL upgrade sequencing (#79).** Change a binding's `repository`
@@ -27,8 +29,11 @@
   because the supported kernel range narrows; no binding field, publication
   command, lineage relation or accepted-knowledge boundary changes.
 - Re-spawn harvesters to obtain the new capture hook and instructions;
-  existing homes keep their copied provider. Backing notes use a
-  `## Backing notes` section, one `- notes/<path>.md` entry per note. Source
+  existing homes keep their copied provider. The recommended backing-note
+  form is a `## Backing notes` section, one `- notes/<path>.md` entry per note.
+  Legacy explicit references in other heading levels, prose, inline code
+  and Markdown links are preserved; unrecognized note locators refuse with
+  `E_PROPOSAL_FORMAT` and a reformat remedy, rather than losing evidence. Source
   and recovery evidence must remain available until capture; do not dispose
   of recovery beforehand. Local input limits: 128 notes, 4 MiB per file,
   16 MiB total. Snapshot files are private evidence, not accepted knowledge.
