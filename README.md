@@ -1,7 +1,7 @@
 # oats.okf 5 — external knowledge, consulted remotely, proposed at checkpoints
 
 The official OKF (Open Knowledge Format) knowledge package for OATS:
-**5.1.0**, requiring **OATS >=0.49.0**. CI runs it against the released
+**5.2.0**, requiring **OATS >=0.49.0**. CI runs it against the released
 OATS 0.49.0 kernel (see [Tests and CI](#tests-and-ci)).
 
 A working soul's knowledge lives outside the soul, in OKF bases: Git
@@ -12,6 +12,11 @@ it learned. A knowledge harvester turns a proposal into a reviewed PR on the
 base, and a knowledge maintainer reviews and merges it. Nothing writes
 accepted knowledge except a merged PR (or an explicit operator change).
 
+**Upgrade to 5.2:** new spawns gain the harvest duty even when their task
+briefings never mentioned it. Deployments not ready for knowledge PRs must
+use the soul opt-out `knowledge: { harvest: off }`. Existing homes keep their
+captured instructions; see [CHANGELOG.md](CHANGELOG.md) for the upgrade details.
+
 5.0 replaces the 4.x harvest machinery (source custody, capture of notes and
 transcripts, runs, drains, the worker and delivery engine, the harvest
 switch); see [Upgrading to 5.0](#upgrading-to-50). The history of earlier
@@ -21,7 +26,7 @@ versions is in [CHANGELOG.md](CHANGELOG.md).
 
 | Capability | For | Skills | Commands |
 |---|---|---|---|
-| `oats.okf` (knowledge slot) | every working soul with OKF knowledge | `okf-consultation`, `okf-instance-knowledge`, `knowledge-theory` | consult (`bases index cat ls links search`), `inspect`, `init`, `migrate`, `unlock`, `setup --remove-legacy-settings`; the spawn and soul-scaffold hooks |
+| `oats.okf` (knowledge slot) | every working soul with OKF knowledge | `okf-consultation`, `okf-instance-knowledge`, `okf-propose`, `knowledge-theory` | consult (`bases index cat ls links search`), `status`, `inspect`, `init`, `migrate`, `unlock`, `setup --remove-legacy-settings`; the spawn and soul-scaffold hooks |
 | `oats.okf-harvest` | the harvester soul | `knowledge-harvest`, `knowledge-theory`, `okf-authoring` | none (its `complete` and `harvest-status` answer `E_REMOVED`) |
 | `oats.okf-maintenance` | the maintainer soul | `knowledge-review`, `knowledge-theory`, `okf-authoring`, `okf-trigger-setup` | `okf-maintenance review-context`, `okf-maintenance notify-harvester` |
 
@@ -40,7 +45,7 @@ capability's `schemas/`, with copies in the repository's `schemas/`.
 
 ## Configuration
 
-A workspace declares the package (`packages: { oats.okf: v5.1.0 }`) and
+A workspace declares the package (`packages: { oats.okf: v5.2.0 }`) and
 selects it as the knowledge capability (`defaults: { knowledge: { oats.okf:
 { from: package } } }`, or per soul). Each deployment points it at its
 bindings file in its own `oats-local.yaml`:
@@ -64,7 +69,7 @@ Any other key is refused (`E_CONFIG`).
 
 **The soul's opt-out stays.** A soul author can write
 `knowledge: { harvest: off }` in soul.yaml: its instances still consult and
-keep instance knowledge, but are never told to propose, and the harvester
+keep instance knowledge, but have no harvest duty, and the harvester
 refuses to harvest them (its spawn hook checks the recorded soul in code). A
 public soul is reachable from outside, and its notes must not be harvested.
 5.0 removes the HOST harvest switch, not this author's safety opt-out. Absent
@@ -245,32 +250,53 @@ The `oats.okf` spawn hook is required. For a working instance it:
    refusal);
 2. creates the home's instance knowledge if missing: `STATE.md`, `log.md`
    and `notes/`;
-3. answers a brief that names the consult commands, the owned and read
-   nodes, and the exact spawn command for proposals (for a soul that opts
-   out, the instruction never to propose).
+3. writes `okf-harvest-policy.json` in home with the effective soul opt-out,
+   exposed by `oats okf status`;
+4. answers a brief naming consultation commands and owned/read nodes only.
+   No harvest or proposal direction goes into TASK.md.
 
 A service (capability) instance gets a brief and no knowledge upkeep. A
 failure answers `{warning: "oats-okf <CODE>: <message>"}` with exit 1, so the
 kernel refuses the spawn. The hook never answers `meta`: the kernel keeps a
 hook's meta as the receipt of external state, and a capability without a
 retire hook that reported one is quarantined when a spawn rolls back. This
-hook creates only the home's own files (removed with the home) and primes the
+hook creates only the home's own memory and policy files (removed with the home) and primes the
 shared host cache, so there is nothing to undo and there is no retire hook.
 The oats.okf-harvest spawn hook answers the same way: `{}` when the source
 checks out, `{warning: "oats-okf-harvest <CODE>: ..."}` with exit 1 when it
 refuses.
 
-The inject teaches the work mode: consult soul and instance knowledge at task
-start, after compaction and before decisions; update STATE.md (rewritten),
-log.md (append-only) and notes/ (one concept per note) before compaction and
-at checkpoints. The `okf-instance-knowledge` skill teaches what is worth
-capturing and how to propose. Instances never write accepted knowledge.
+The inject's **IMPORTANT** block requires current STATE.md (rewritten),
+log.md (append-only) and notes/ (one concept per note), and harvesting at the
+checkpoints below. Reading **okf-propose** is compulsory. This shared text
+ships even for an opted-out soul, with an explicit exception removing its
+harvest duty. There is no conditional kernel composition. The
+`okf-instance-knowledge` skill teaches capture; `okf-propose` holds the proposal
+procedure. Both are capability instructions, independent of task wording.
+Instances never write accepted knowledge.
+
+### Read the spawn-recorded duty
+
+Run `oats okf status` from instance home (`--home PATH` selects an explicit
+home). It returns the usual JSON envelope, with `result.harvest: "on"` and
+`reason: "default"`, or `harvest: "off"` and `reason: "soul-opt-out"`.
+The command reads only the provider's spawn-written state: no network, base
+fetch, TASK.md interpretation or soul-file lookup. Later invocation settings
+do not rewrite it. A missing record yields `harvest: "unknown"` with
+`reason: "spawn-state-missing"`; malformed state refuses. Neither permits a
+proposal: report it and respawn with the current provider, never repair the
+record by hand. It is instruction state, not publication authority; the
+harvester's source opt-out check remains independent.
 
 ## How knowledge is proposed
 
-**At an important checkpoint** (a decision made, a PR opened or handed over,
-a task finished) the working agent first updates STATE.md, log.md and its
-notes. If it learned something that passes the promotion test
+**At a harvest checkpoint** (a finished task or PR hand-over) the working
+agent first updates STATE.md, log.md and its notes. It reads `okf-propose`
+and `oats okf status`; `off`, `unknown` or an error means no proposal.
+Capture decisions as they happen, but never launch per commit, per decision,
+per review round or merely because a PR was opened. Make at most one proposal
+for a completed unit of work: handing over its PR and then closing the same
+task are not two opportunities. If it learned something that passes the promotion test
 (`knowledge-theory`: it would change how a future instance of the soul
 decides or acts, and it is not already in the code, the tracker, the docs or
 the accepted knowledge), it writes **one short, self-contained proposal**, a
@@ -288,9 +314,9 @@ Source: instance <instance name>, home <instance home>, soul <soul name>
 - notes/<file>.md
 ```
 
-and spawns a harvester on it, from its instance home. The spawn brief (not
-the shared inject or skills) carries this procedure, and only for a soul that
-has not opted out:
+and, after the concurrency and memory gates below, spawns a harvester from
+instance home. The capability inject and compulsory `okf-propose` skill own
+this procedure, not the spawn brief:
 
 ```sh
 oats spawn oats.okf/knowledge-harvester --task-file proposals/<file>.md --relation unrelated
@@ -301,8 +327,8 @@ oats spawn oats.okf/knowledge-harvester --task-file proposals/<file>.md --relati
   `--relative-to`.
 - The kernel picks the harvester's harness and model from its own defaults;
   oats.okf passes none.
-- One proposal per checkpoint, each concept a claim in it, and claims only for
-  the nodes the soul owns. A lesson for a node the soul only reads is named in
+- At most one proposal per finished task or PR hand-over, each concept a
+  claim in it, and claims only for the nodes the soul owns. A lesson for a node the soul only reads is named in
   one line in the source's hand-back, for that node's owner.
 - One harvester at a time. The source notes the harvester's instance name in
   log.md and spawns no other while `oats status` still lists it; a harvester
@@ -310,6 +336,13 @@ oats spawn oats.okf/knowledge-harvester --task-file proposals/<file>.md --relati
   its next proposal. A source that hands back with the harvester still listed
   names it and the claims still waiting in its hand-back; it does not wait for
   it or spawn around it. A refused spawn is reported, not retried in a loop.
+- No spawn under memory pressure. On Linux run `free -g` immediately before
+  spawning; less than 8 GB `available` means defer. Elsewhere use the host's
+  documented available-memory check; if at least 8 GB cannot be established,
+  defer. Record the reason and pending proposal/claims in STATE.md, log.md and
+  the hand-back; reconsider at a natural task boundary, never by polling or
+  by changing somebody else's host/session state. These are instructions,
+  not an enforced scheduler or memory reservation.
 - The source keeps a proposal's backing notes until its harvester has retired,
   but need not stay alive: its retirement recovery copy can supply the source.
   Do not dispose of that copy before the harvester captures it. After capture,
@@ -434,9 +467,10 @@ maintainer are all given the same sentence:
   instance names. The same instruction covers them.
 
 **The soul's opt-out and source capture checks are enforced in code.** With
-`knowledge: { harvest: off }` in soul.yaml, the spawn brief never tells the
-soul's instances to propose, and the harvester's required spawn hook refuses
-a proposal that names one of them. It has two limits:
+`knowledge: { harvest: off }` in soul.yaml, the provider records duty off at
+spawn and the shared instructions exempt the soul's instances. Independently,
+the harvester's required spawn hook refuses a proposal that names one of
+them. No TASK brief carries harvest direction. The opt-out has two limits:
 
 - **It is per soul.** No instance, note, host or spawn setting opts out.
 - **It covers that soul's own proposals.** The spawn hook checks the source

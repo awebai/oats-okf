@@ -1,6 +1,6 @@
-# Kernel surfaces oats.okf 5.1 relies on
+# Kernel surfaces oats.okf 5.2 relies on
 
-oats.okf 5.1.0 declares **OATS >=0.49.0** for the public gone-home
+oats.okf 5.2.0 declares **OATS >=0.49.0** for the public gone-home
 instance-event lookup and is tested in CI against released **OATS 0.49.0**. It needs no private
 kernel API and no knowledge-specific kernel behaviour. The capability, not
 the kernel, owns OKF validation, consultation, the host cache, provisioning
@@ -34,6 +34,10 @@ used; their presence answers `E_REMOVED`.
   deployment with `--soul`.
 - The `knowledge:inspect` view and the `knowledge:harvest` action (the
   latter kept only to answer `E_REMOVED`).
+- `oats okf status` reads the provider's home-local, spawn-written harvest
+  policy. Static inject/skill composition carries a conditional duty and an
+  explicit opt-out exception; no conditional kernel injection is needed.
+  The spawn hook's TASK brief contains no harvest/proposal direction.
 - The binding wire's `check` phase for readiness, with `binding.reasons` as
   the allowlist of text that may cross it.
 
