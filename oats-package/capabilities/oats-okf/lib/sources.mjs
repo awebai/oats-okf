@@ -49,7 +49,7 @@ function primeGitBases(bindings,decl) {
   if(!aliases.length) return {warnings:[],primed:{}};
   const currentSettings=settings();
   const primingSettings={...currentSettings,'git-timeout':Math.min(currentSettings['git-timeout'] ?? 20,20)};
-  const result=spawnSync(process.execPath,[primeBasesScript],{input:JSON.stringify({bindings,aliases,refs}),encoding:'utf8',timeout:25000,killSignal:'SIGTERM',env:{...process.env,OATS_SETTINGS:JSON.stringify(primingSettings)}});
+  const result=spawnSync(process.execPath,[primeBasesScript],{input:JSON.stringify({bindings,aliases,refs,decl}),encoding:'utf8',timeout:25000,killSignal:'SIGTERM',env:{...process.env,OATS_SETTINGS:JSON.stringify(primingSettings)}});
   const skippedWarnings=skipped.map(alias=>`okf base ${alias} not primed: too many git bases to prime concurrently; run \`oats okf bases\``);
   const warnAll=reason=>({warnings:[...aliases.map(alias=>`okf base ${alias} not primed: ${firstLine(reason)}; run \`oats okf bases\``),...skippedWarnings],primed:{}});
   if(result.error?.code==='ETIMEDOUT') return warnAll('timed out');
@@ -80,8 +80,9 @@ export function consultSource(home) {
 }
 /** The spawn's check: the soul's declared nodes resolve in the accepted bases
  *  (only owns/reads bases are primed; a usable cached commit is checked offline,
- *  and cold Git bases get bounded priming). Unavailable priming is a warning,
- *  not a refusal. Consultation, not spawn, owns freshness. → { decl, warnings }. */
+ *  with one bounded normal resolution on a due node/owner mismatch). Cold Git
+ *  bases retain bounded priming; unavailable priming warns rather than refusing.
+ *  Successful cached checks leave freshness to consultation. → { decl, warnings }. */
 export function checkSeat(home) {
   const {decl,bindings}=consultSource(home),priming=primeGitBases(bindings,decl);
   validateRefs(bindings,decl,priming.primed);

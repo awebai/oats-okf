@@ -103,10 +103,11 @@ function resolveGit(bindings, alias, base, { fresh = false, preferCached = false
   const cache = cacheDir(bindings, base), lock = cacheLock(bindings, base);
   fs.mkdirSync(dirname(cache), { recursive: true, mode: 0o700 });
   const due = s => fresh || Date.now() - Math.max(Date.parse(s.fetchedAt) || 0, Date.parse(s.attemptedAt) || 0) >= consultMaxAgeMs();
-  const cachedContext = state => ({ ...gitContext(bindings, alias, base, cache, state, { offline: preferCached }), ...(preferCached ? { offline: true } : {}) });
+  const cachedContext = state => ({ ...gitContext(bindings, alias, base, cache, state, { offline: preferCached }), ...(preferCached ? { offline: true, refreshDue: due(state) } : {}) });
   let state = usableCache(cache, base, { offline: preferCached });
   // Spawn reuses the last accepted commit without renewing its freshness or
-  // clearing a failed-fetch receipt. The first consultation still uses due().
+  // clearing a failed-fetch receipt. A due node/owner resolution failure may
+  // retry normal resolution; successful spawns leave freshness to consultation.
   if (state && (preferCached || !due(state))) return cachedContext(state);
   clearDeadCacheLock(lock);
   try {

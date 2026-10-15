@@ -246,8 +246,12 @@ The `oats.okf` spawn hook is required. For a working instance it:
 
 1. checks only bases referenced by the soul's `owns` or `reads`, validating
    the whole base before resolving its nodes/owners. A usable cached Git
-   commit is checked offline, regardless of age, without renewing its fetch
-   timestamps. A cold cache is primed within a bounded time (at most 64 Git
+   commit is checked offline first, regardless of age, without renewing its
+   fetch timestamps. If a referenced node or owner fails to resolve and the
+   cache is due, the same bounded worker tries normal online resolution once
+   before refusing. Fresh caches and recently failed fetches retain the normal
+   TTL/`attemptedAt` rule; successful cached checks never fetch. A cold cache
+   is primed within a bounded time (at most 64 Git
    bases); unavailable priming, including cached objects missing for
    validation, warns with `oats okf bases` rather than refusing. An invalid
    base or unresolved node/owner still refuses. Validation reads blobs in

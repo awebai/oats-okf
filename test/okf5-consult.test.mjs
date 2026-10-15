@@ -246,6 +246,70 @@ test('cached priming refuses unresolved nodes and wrong owners; no metadata bypa
   }
 });
 
+test('spawn refreshes a due cache exactly once when a newly accepted node cannot resolve offline',t=>{
+  const f=fixture(t),trace=tracedGit(f);
+  assert.equal(run(f,['bases','--json']).status,0);
+  const meta=JSON.parse(fs.readFileSync(join(f.repo,'okf-base.json')));
+  meta.nodes.later={path:'later',owner:'owner-1'};
+  json(join(f.repo,'okf-base.json'),meta);
+  write(join(f.repo,'later','index.md'),'# Later\n');write(join(f.repo,'later','log.md'),'# Log\n');
+  fs.appendFileSync(join(f.repo,'index.md'),'\n* [Later](later/index.md) - added node.\n');
+  f.git('add','-A');f.git('commit','-q','-m','new accepted node');
+  json(join(f.soul,'okf.json'),{version:1,owner:'owner-1',owns:[],reads:['project/later']});
+  // While fresh the old cached resolution is still authoritative, as in 5.2.0.
+  const fresh=run(f,['spawn'],trace);
+  assert.equal(fresh.status,1,fresh.stdout);assert.match(fresh.out.warning,/E_CONFIG.*unresolved node/);
+  assert.equal(trace.calls().some(a=>a.includes('fetch')),false);
+  expire(f);trace.clear();
+  const r=run(f,['spawn'],trace);
+  assert.equal(r.status,0,r.stdout+r.stderr);assert.equal(r.out.warning,undefined);
+  assert.equal(trace.calls().filter(a=>a.includes('fetch')).length,1);
+  assert.equal(run(f,['index','--json']).out.result.indexes[0].receipt.commit,f.git('rev-parse','HEAD'));
+});
+
+test('spawn refreshes a due ownership mismatch once, but never bypasses the owner check',t=>{
+  const f=fixture(t),trace=tracedGit(f);
+  assert.equal(run(f,['bases','--json']).status,0);
+  const meta=JSON.parse(fs.readFileSync(join(f.repo,'okf-base.json')));
+  meta.nodes.expert.owner='owner-next';json(join(f.repo,'okf-base.json'),meta);
+  f.git('add','-A');f.git('commit','-q','-m','accepted ownership move');
+  json(join(f.soul,'okf.json'),{version:1,owner:'owner-next',owns:['project/expert'],reads:[]});
+  const fresh=run(f,['spawn'],trace);
+  assert.equal(fresh.status,1,fresh.stdout);assert.match(fresh.out.warning,/E_OWNER/);
+  assert.equal(trace.calls().some(a=>a.includes('fetch')),false);
+  expire(f);trace.clear();
+  const r=run(f,['spawn'],trace);
+  assert.equal(r.status,0,r.stdout+r.stderr);assert.equal(r.out.warning,undefined);
+  assert.equal(trace.calls().filter(a=>a.includes('fetch')).length,1);
+  // A genuinely wrong owner still refuses after that single refresh.
+  json(join(f.soul,'okf.json'),{version:1,owner:'wrong',owns:['project/expert'],reads:[]});
+  expire(f);trace.clear();
+  const wrong=run(f,['spawn'],trace);
+  assert.equal(wrong.status,1,wrong.stdout);assert.match(wrong.out.warning,/E_OWNER/);
+  assert.equal(trace.calls().filter(a=>a.includes('fetch')).length,1);
+});
+
+test('a missing node still refuses after one due refresh; a failed fetch is not retried in a loop',t=>{
+  const f=fixture(t),trace=tracedGit(f);
+  assert.equal(run(f,['bases','--json']).status,0);expire(f);
+  json(join(f.soul,'okf.json'),{version:1,owner:'owner-1',owns:[],reads:['project/missing']});
+  const missing=run(f,['spawn'],trace);
+  assert.equal(missing.status,1,missing.stdout);assert.match(missing.out.warning,/E_CONFIG.*unresolved node/);
+  assert.equal(trace.calls().filter(a=>a.includes('fetch')).length,1);
+  expire(f);trace.clear();
+  const failing=tracedGit(f,{failFetch:true});
+  const failed=run(f,['spawn'],failing);
+  assert.equal(failed.status,1,failed.stdout);assert.match(failed.out.warning,/E_CONFIG.*unresolved node/);
+  assert.equal(failing.calls().filter(a=>a.includes('fetch')).length,1);
+  const before=fs.readFileSync(cacheState(f),'utf8');
+  assert.match(JSON.parse(before).error,/fetch.*failed/);
+  failing.clear();
+  const again=run(f,['spawn'],failing);
+  assert.equal(again.status,1,again.stdout);assert.match(again.out.warning,/E_CONFIG/);
+  assert.equal(failing.calls().some(a=>a.includes('fetch')),false,'a recent attemptedAt prevents immediate retry');
+  assert.equal(fs.readFileSync(cacheState(f),'utf8'),before);
+});
+
 test('one batch validates UTF-8, NULs, empty and duplicate blobs byte-for-byte, including a chunk boundary',t=>{
   const f=fixture(t),trace=tracedGit(f);
   write(join(f.repo,'expert','decision.md'),CONCEPT+'\n'+('multibyte é 🌱\0\n'.repeat(10000)));

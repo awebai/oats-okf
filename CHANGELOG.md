@@ -5,9 +5,12 @@
 ### Fixed
 
 - **Faster spawn checks (awebai/oats#1246, P1).** Prime only bases referenced
-  by the soul's `owns` or `reads`. Reuse usable cached Git commits offline,
-  without refreshing the accepted branch or renewing fetch timestamps. Cold
-  caches retain bounded priming and unavailable-base warnings. Consultation
+  by the soul's `owns` or `reads`. Check usable cached Git commits offline
+  first; successful checks do not refresh the branch or renew fetch timestamps.
+  A node/owner mismatch on a due cache gets one bounded normal resolution
+  before refusing, so a newly accepted node or ownership move is not rejected
+  solely because of an old cache. Cold caches retain bounded priming and
+  unavailable-base warnings. Consultation
   still honors `consult-max-age`, `--fresh`, and failed-fetch stale receipts,
   including the first read after spawn; no background fetch is introduced.
 - **Batch accepted-tree validation.** One `git cat-file --batch` replaces
