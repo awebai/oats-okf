@@ -1,7 +1,7 @@
 # oats.okf 5 — external knowledge, consulted remotely, proposed at checkpoints
 
 The official OKF (Open Knowledge Format) knowledge package for OATS:
-**5.2.0**, requiring **OATS >=0.49.0**. CI runs it against the released
+**5.2.1**, requiring **OATS >=0.49.0**. CI runs it against the released
 OATS 0.49.0 kernel (see [Tests and CI](#tests-and-ci)).
 
 A working soul's knowledge lives outside the soul, in OKF bases: Git
@@ -45,7 +45,7 @@ capability's `schemas/`, with copies in the repository's `schemas/`.
 
 ## Configuration
 
-A workspace declares the package (`packages: { oats.okf: v5.2.0 }`) and
+A workspace declares the package (`packages: { oats.okf: v5.2.1 }`) and
 selects it as the knowledge capability (`defaults: { knowledge: { oats.okf:
 { from: package } } }`, or per soul). Each deployment points it at its
 bindings file in its own `oats-local.yaml`:
@@ -244,10 +244,16 @@ The `okf-consultation` skill teaches the consult CLI.
 
 The `oats.okf` spawn hook is required. For a working instance it:
 
-1. checks the soul's declared nodes against the accepted bases (Git bases are
-   primed into the host cache within a bounded time, at most 64 of them; a
-   base that cannot be primed is a warning naming `oats okf bases`, not a
-   refusal);
+1. checks only bases referenced by the soul's `owns` or `reads`, validating
+   the whole base before resolving its nodes/owners. A usable cached Git
+   commit is checked offline, regardless of age, without renewing its fetch
+   timestamps. A cold cache is primed within a bounded time (at most 64 Git
+   bases); unavailable priming, including cached objects missing for
+   validation, warns with `oats okf bases` rather than refusing. An invalid
+   base or unresolved node/owner still refuses. Validation reads blobs in
+   one byte-framed `git cat-file --batch`, with paths/modes confined first;
+   consultation still refetches on `consult-max-age` or `--fresh`, including
+   the first read after spawn. There is no background fetch;
 2. creates the home's instance knowledge if missing: `STATE.md`, `log.md`
    and `notes/`;
 3. writes `okf-harvest-policy.json` in home with the effective soul opt-out,

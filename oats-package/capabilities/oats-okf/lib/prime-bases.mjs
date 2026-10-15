@@ -29,8 +29,8 @@ function killGroup(child, signal = 'SIGKILL') {
 }
 
 export function runWorker(bindings, alias, refs = null) {
-  return withBase(bindings, alias, {}, ctx => {
-    const v = verdict(ctx), wanted = Array.isArray(refs?.[alias]) ? refs[alias] : null;
+  return withBase(bindings, alias, { preferCached: true }, ctx => {
+    const v = verdict(ctx, { fetchMissing: !ctx.offline }), wanted = Array.isArray(refs?.[alias]) ? refs[alias] : null;
     const nodes = v.ok ? Object.fromEntries((wanted || []).filter(node => Object.hasOwn(v.nodes, node)).map(node => [node, v.nodes[node]])) : v.nodes;
     return v.ok
       ? { alias, primed: true, ok: true, receipt: ctx.receipt, digest: v.digest, nodes }
