@@ -786,11 +786,15 @@ harvest on or off. Portable/captured bindings instead key stores and runtime
 aliases by the stable store ID; they require alias == ID.
 
 Readiness checks accepted nodes and ownership when harvest is on. Identity or
-configuration errors in those bindings report the approved binding diagnostic
+structural configuration errors in bindings report the approved diagnostic
 `OKF bindings file missing or invalid: repair configured bindings file, or
-deactivate oats.okf`, rather than a harvest-runtime remedy. The binding wire
+deactivate oats.okf`. Unresolved declared nodes instead report
+`OKF binding missing or invalid: provision soul OKF declaration and bindings
+file, or deactivate oats.okf`, which includes the soul declaration in the remedy.
+Failed base validation reports its own problem without a second node-resolution
+problem caused by missing accepted metadata. The binding wire
 uses a closed reason vocabulary: it does not disclose supplied alias/ID names,
-paths or caught exception text in this diagnostic. Missing/invalid harvest
+paths or caught exception text in these diagnostics. Missing/invalid harvest
 runtime settings and ownership failures keep their own diagnostics.
 
 With OATS 0.62.0, `oats readiness` is a report, not a capture or worker-launch
