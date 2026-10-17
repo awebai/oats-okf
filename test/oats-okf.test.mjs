@@ -3223,7 +3223,12 @@ test('detached capture pending defers checkpoint/manual and refuses retire; skip
   const receipt=join(dirname(s.file),'capture-attempts',current.id,'receipt.json');
   fs.rmSync(join(f.dir,'capture-hold'));
   const end=Date.now()+15000;while(!fs.existsSync(receipt)){assert.ok(Date.now()<end);await new Promise(r=>setTimeout(r,20));}
+  // A new native tail after the retained receipt must be captured by a
+  // fresh final attempt, not hidden by the earlier final-purpose request.
+  save(join(f.dir,'turns.json'),[{id:'tail',thread:'pi:session:tail',kind:'session',ts:'2026-10-17',source:'pi',text:[]}]);
+  save(join(f.dir,'capture.json'),{status:'complete',complete:true,sessions:[{thread:'pi:session:tail',lastTurnId:'tail'}]});
   assert.equal(capture(s,{final:true}).complete,true);assert.equal(loadStatus(s).retired,true);
+  assert.equal(loadStatus(s).captured.threads['pi:session:tail'],'tail');
   const g=fixture(t),other=g.source();note(g);
   save(join(g.dir,'capture.json'),{status:'skipped',complete:false,sessions:[{thread:'pi:session:old',lastTurnId:'old'}]});
   save(join(g.dir,'turns.json'),[{id:'old',thread:'pi:session:old',kind:'session',ts:'2026-10-06',source:'pi',text:[]}]);

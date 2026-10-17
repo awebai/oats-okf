@@ -154,7 +154,7 @@ function observeCapture(source, { deadline, final = false }) {
   try { budget = Math.min(budget, bounded(Math.max(1, budget))); } catch { budget = 0; }
   deadline = started + budget;
   const base = join(dirname(source.file), 'capture-attempts'), current = join(base, 'current.json');
-  let request, dir;
+  let request, dir, dispatched = false;
   const proof = sourceProof(source);
   const root = captureRoot(source.context), owner = process.env.TURN_RECORD_OWNER ?? hostname().split('.')[0];
   const pending = (status, reason) => ({ observation: { status, complete: false, attempt: request.id,
@@ -190,7 +190,7 @@ function observeCapture(source, { deadline, final = false }) {
     const env = { ...cleanEnv(), TURN_RECORD_ROOT: root, TURN_RECORD_OWNER: owner };
     try {
       const child = spawn(process.execPath, [runner, dir], { cwd: source.context, env, detached: true, stdio: 'ignore' });
-      child.on('error', () => {}); child.unref();
+      child.on('error', () => {}); child.unref(); dispatched = true;
     } catch { return pending('uncertain', `capture attempt ${request.id} dispatch is uncertain`); }
   }
   while (!fs.existsSync(join(dir, 'receipt.json'))) {
@@ -203,5 +203,5 @@ function observeCapture(source, { deadline, final = false }) {
   const receipt = receiptFor(dir, request);
   releaseGate(dir, request);
   const report = reportFrom(receipt, request);
-  return { report, attempt: request, env: { ...cleanEnv(), TURN_RECORD_ROOT: root, TURN_RECORD_OWNER: owner } };
+  return { report, attempt: request, dispatched, env: { ...cleanEnv(), TURN_RECORD_ROOT: root, TURN_RECORD_OWNER: owner } };
 }

@@ -1071,8 +1071,8 @@ deadline or kill. Queued/running attempts defer checkpoint/manual harvest
 without starting a worker; holds/skips/incomplete receipts retain custody and
 retry at a future invocation. Malformed or uncertain receipts stay held for
 explicit recovery. Retirement refuses while capture/recall is pending, even
-if harvest has since been switched off. A complete receipt from an earlier
-checkpoint is recalled before a fresh final attempt can certify retirement.
+if harvest has since been switched off. A complete receipt dispatched by an earlier
+invocation is recalled before a fresh final attempt can certify retirement.
 See [capture attempts and recovery](CAPTURE-ATTEMPTS.md). A single turn over 1 MiB fails closed rather
 than truncating. A genuinely empty source record is reported honestly. Record
 privacy exclusions remain excluded; no raw excluded session files are copied.

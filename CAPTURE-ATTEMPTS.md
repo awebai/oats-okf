@@ -54,8 +54,9 @@ session boundaries must identify consistent thread/source/session/stream and a
 cwd within the source home. Recall validates the first boundary and every
 planned turn's identity/source before persisting windows. Exit zero, shared
 capture health, a dead PID or elapsed age cannot substitute for this proof.
-A completed checkpoint attempt cannot alone certify retirement: its windows are
-recalled and then a new final-purpose attempt is taken.
+An attempt dispatched by an earlier invocation cannot alone certify retirement:
+its windows are recalled and then a fresh final-purpose attempt is taken, so a
+later session tail is not hidden by a delayed receipt.
 
 Gate mutations use a short provider coordination lock. Its dead-owner recovery
 only serializes gate metadata; it does not authorize native dispatch. Gate

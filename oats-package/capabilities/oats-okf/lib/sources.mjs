@@ -525,9 +525,11 @@ function capturePass(source,{final,deadline},enter) {
       status.lastCapture={status:report.status,complete:true,attempt:attempt.id,ignored:report.ignored||0,at:new Date().toISOString()};
       // The retire hook hands the final input to a drain (worker.mjs
       // retireDrain, which records it with recordDrain); capture itself only
-      // certifies custody.
+      // certifies custody. A receipt observed across invocations can be older
+      // than a new session tail; final custody needs a fresh dispatch after
+      // those retained boundaries have been recalled.
       consumeAttempt(source,attempt);
-      if(final && !attempt.final) {saveCapture(source,status);return capturePass(source,{final,deadline},()=>{});}
+      if(final && (!attempt.final || !observed.dispatched)) {saveCapture(source,status);return capturePass(source,{final,deadline},()=>{});}
       if(final) {status.retired=true;status.retiredAt=new Date().toISOString();}
       saveCapture(source,status);return {...status.lastCapture,inputs:status.captured.inputs.length};
     } catch(e) {
