@@ -13,7 +13,7 @@ import {
   renderKnowledgeRuntime,
   sameJson,
 } from './portable-binding.mjs';
-import { declaration as soulDeclaration, loadBindings, validateBindings } from './config.mjs';
+import { declaration as soulDeclaration, loadBindings, validateBindings, resolveNodes } from './config.mjs';
 import { gitEnv, validateBase } from './stores.mjs';
 import { acceptedCommit, cacheDir, usableCache, verdict } from './consult.mjs';
 
@@ -311,7 +311,7 @@ function readinessRuntime(settings,env=process.env) {
       const bindings=loadBindings(settings['bindings-file']);
       if(!env.OATS_SOUL) return {problem:problem('needs-configuration','soul:missing')};
       const decl=soulDeclaration(env.OATS_SOUL);
-      return {runtime:{descriptorFile:bindings.file,bindings:{version:1,stateDir:bindings.stateDir,bases:bindings.bases},declaration:decl}};
+      return {legacy:true,runtime:{descriptorFile:bindings.file,bindings:{version:1,stateDir:bindings.stateDir,bases:bindings.bases},declaration:decl}};
     } catch(error) {
       const message=String(error?.message || '');
       if(error?.code==='E_CONFIG' && /okf\.json|soul has no/.test(message)) return {problem:problem('needs-configuration','soul:missing')};
@@ -320,7 +320,11 @@ function readinessRuntime(settings,env=process.env) {
   }
   if(settings.schemaVersion!==undefined) {
     try { return {runtime:bindingPayload(settings,{diagnoseSettings:true}).runtime}; }
-    catch(error) {if(['invalid-binding','needs-configuration'].includes(error?.wireCode)) return {problem:problem('needs-configuration','binding:not-configured')};throw error;}
+    catch(error) {
+      if(['E_ID','E_CONFIG'].includes(error?.code)) return {problem:problem('needs-configuration','bindings:invalid')};
+      if(['invalid-binding','needs-configuration'].includes(error?.wireCode)) return {problem:problem('needs-configuration','binding:not-configured')};
+      throw error;
+    }
   }
   return {problem:problem('needs-configuration','settings:missing')};
 }
@@ -359,6 +363,8 @@ function lsRemote(base) {
   });
 }
 function checkError(error,stage) {
+  if(stage==='runtime' && error.code==='E_ID') return {status:'needs-configuration',problem:problem('needs-configuration','bindings:invalid')};
+  if(stage==='runtime' && error.code==='E_CONFIG') return {status:'needs-configuration',problem:problem('needs-configuration','binding:not-configured')};
   if(error.code==='E_COMMAND' && stage==='runtime') return {status:'needs-configuration',problem:problem('needs-configuration','runtime:command-missing')};
   if(error.code==='E_COMMAND') return {status:'unavailable',problem:problem('provider-unavailable')};
   if(error.code==='E_OWNER') return {status:'needs-configuration',problem:problem('provider-not-qualified','base:owner-unmet')};
@@ -416,7 +422,14 @@ async function checkPhase(req) {
   if(req.settings.harvest!=='off') {
     for(const alias of unresolved) warnings.push(warning('base-unresolved','base-unresolved',{alias}));
     const rendered=unresolved.length?{...runtime,declaration:{...runtime.declaration,owns:runtime.declaration.owns.filter(ref=>!unresolved.includes(ref.split('/')[0])),reads:runtime.declaration.reads.filter(ref=>!unresolved.includes(ref.split('/')[0]))}}:runtime;
-    try { checkKnowledgeRuntime({rendered,accepted}); }
+    // Without accepted metadata a node cannot resolve. The base problems above
+    // already identify that cause; do not add a declaration/binding remedy.
+    if(!problems.length) try {
+      // Legacy declarations name deployment aliases. Only captured portable
+      // documents require those aliases to equal stable store identities.
+      if(prepared.legacy) resolveNodes(rendered.declaration,bindings,accepted);
+      else checkKnowledgeRuntime({rendered,accepted});
+    }
     catch(error) { const out=checkError(error,'runtime');problems.push(out.problem); }
   }
   const result={status:statusOf(problems),problems};

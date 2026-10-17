@@ -781,6 +781,31 @@ names; the `id` is the base's own. Take it from the base, e.g. the aweb base's
 is `aweb-oss-knowledge`. A mismatch fails every read of that base with `E_BASE`
 ("base identity/nodes mismatch").
 
+Legacy `settings.oats.okf.bindings-file` bindings keep that alias rule with
+harvest on or off. Portable/captured bindings instead key stores and runtime
+aliases by the stable store ID; they require alias == ID.
+
+Readiness checks accepted nodes and ownership when harvest is on. Identity or
+structural configuration errors in bindings report the approved diagnostic
+`OKF bindings file missing or invalid: repair configured bindings file, or
+deactivate oats.okf`. Unresolved declared nodes instead report
+`OKF binding missing or invalid: provision soul OKF declaration and bindings
+file, or deactivate oats.okf`, which includes the soul declaration in the remedy.
+Failed base validation reports its own problem without a second node-resolution
+problem caused by missing accepted metadata. The binding wire
+uses a closed reason vocabulary: it does not disclose supplied alias/ID names,
+paths or caught exception text in these diagnostics. Missing/invalid harvest
+runtime settings and ownership failures keep their own diagnostics.
+
+With OATS 0.62.0, `oats readiness` is a report, not a capture or worker-launch
+gate. Legacy spawn, checkpoint capture and worker startup do not call this
+readiness check. Required spawn hooks independently validate bases, references
+and ownership; checkpoint/worker paths enforce their own consent, custody and
+runtime checks. Thus a readiness reporting defect alone does not prevent legacy
+harvest. `--no-launch` can still capture input and scaffold a worker without
+starting a model. Captured operation admission and its helper-launch gates are
+separate; readiness does not grant that authority.
+
 Stable owner IDs must not ambiguously identify different souls in one state
 namespace. If a stable owner ID already identifies a different soul in this state
 namespace (for example after renaming a knowledge-owning soul after it spawned),
@@ -1486,6 +1511,9 @@ OATS_OKF_NATIVE_CLI=/absolute/oats/bin/oats.mjs node --test --test-name-pattern=
 OATS_OKF_NATIVE_CLI=/absolute/oats/bin/oats.mjs node --test test/real-home-dispatch.test.mjs
 # okf 4.2.0 (#55): an external --repo source on released OATS 0.41.0 (CI's external-repo-041 job):
 OATS_OKF_EXTERNAL_CLI=/absolute/oats-0.41.0/bin/oats.mjs node --test test/external-repo-consumer.test.mjs
+# Legacy alias readiness on published OATS 0.62.0, including the v4.2.0 negative
+# control and real checkpoint/worker scaffolding (requires the v4.2.0 Git tag):
+OATS_OKF_READINESS_CLI=/absolute/oats-0.62.0/bin/oats.mjs node --test test/readiness-consumer.test.mjs
 # Full standalone suite with both public-boundary probes (source OATS >=0.24.4):
 OATS_OKF_CONSUMER_CLI=/absolute/oats/bin/oats.mjs OATS_OKF_NATIVE_CLI=/absolute/oats/bin/oats.mjs npm test
 ```
@@ -1502,6 +1530,10 @@ changes during reads, and durable external-view placement. The opt-in public
 consumer probe uses isolated HOME, config, schedules and inert runtime
 executables, checks source-targeted access after retirement and fresh reader
 scaffolding, and installs **no host timer**.
+The readiness probe pins disposable package/workspace remotes, verifies the
+spawned module bytes and recorded settings, and checks source capture and worker
+scaffolding under both the released and patched readiness result. It does not
+launch a model or prove a model session's harvest/delivery behavior.
 Default CI skips the optional probes explicitly. A manual CI run can supply
 an exact published `consumer_version` to install that public kernel in a disposable
 prefix and run them; it does not acquire/lock/trust the OKF distribution. See
