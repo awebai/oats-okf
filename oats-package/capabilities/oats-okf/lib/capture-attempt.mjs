@@ -75,9 +75,11 @@ function releaseGateLocked(dir, request) {
   privateDirectory(gate);
   const owner = privateJSON(join(gate, 'owner.json'));
   if (owner.attempt !== request.id || owner.directory !== dir || owner.requestHash !== hash(request)) return;
-  // No other contender removes an occupied gate. Rename is unnecessary because
-  // mkdir contenders cannot enter until this exact owned directory is removed.
-  fs.rmSync(gate, { recursive: true }); syncDir(dirname(gate));
+  // Publish absence atomically before recursive cleanup. A crash partway
+  // through rm must never leave an ownerless gate at the published address.
+  const parent = dirname(gate), released = join(parent, `.released-${randomUUID()}`);
+  fs.renameSync(gate, released); syncDir(parent);
+  try { fs.rmSync(released, { recursive: true }); } catch { /* inert cleanup debris cannot hold the root */ }
 }
 export function releaseGate(dir, request) {
   try { return withLock(join(dirname(gatePath(request.root)), 'coordination.lock'), () => releaseGateLocked(dir, request), { reclaimDead: true, waitMs: 100 }); }

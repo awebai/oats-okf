@@ -67,6 +67,10 @@ place. A crash before publication leaves an inert staging directory and cannot
 publish an ownerless gate. Gate mutations use a short provider coordination lock. Its dead-owner recovery
 only serializes gate metadata; it does not authorize native dispatch. Gate
 release requires the exact owned request and its durable closed-output receipt.
+The owned gate is atomically renamed away and its parent synced before recursive
+cleanup, so interrupted cleanup cannot publish an ownerless gate. Inert
+`.released-*` directories may remain after a cleanup crash without holding the
+root.
 A missing or unconsumed current attempt never permits replacement dispatch.
 Known terminal skipped/held/failed/incomplete receipts are consumed and deferred;
 the next invocation may retry. A runner whose exclusive claim proves it has not
@@ -147,3 +151,9 @@ recalling a retained receipt. If every native pass exceeds that foreground
 share, retirement can remain deferred despite completed detached passes. The
 source and durable obligation remain visible until the limitation is resolved;
 there is no final-tail inference from a hook phase, metadata or PID.
+
+A failure to update the retirement marker preserves the original capture error
+and attaches `retirementMarkerError`; the hook diagnostic also reports the
+bounded marker error code. If final custody succeeds but marker cleanup fails,
+retirement remains refused with an explicit marker-cleanup diagnostic until a
+retry clears it. These secondary failures never authorize source removal.

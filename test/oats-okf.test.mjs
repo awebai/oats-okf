@@ -3254,3 +3254,21 @@ test('harvest-status exposes deferred retirement with preserved age under harves
   const {retireHarvestOff}=await mod('sources');retireHarvestOff(s,{reason:'off'});assert.equal(fs.existsSync(obligation),false);assert.equal(loadStatus(s).retired,true);
   assert.equal(f.cli('harvest-status').out.result.retirementDeferred.count,0);
 });
+
+test('retirement marker contention preserves primary capture diagnostics and keeps removal refused',async t=>{
+  const f=fixture(t),s=f.source();note(f);const markerLock=join(dirname(s.file),'retirement.lock');
+  put(join(markerLock,'owner.json'),JSON.stringify({token:'marker-writer',pid:process.pid,host:hostname()}));
+  assert.throws(()=>capture(s,{final:true,deadline:Date.now()-1}),e=>e.code==='E_CAPTURE'&&/capture deadline/.test(e.message)&&e.retirementMarkerError?.code==='E_LOCKED'&&/marker update failed/.test(e.message));
+  assert.equal(loadStatus(s).retired,false);assert.ok(fs.existsSync(s.home));
+  fs.rmSync(markerLock,{recursive:true});put(join(f.dir,'capture-hold'),'');const pending=capture(s,{deadlineMs:100});
+  const end=Date.now()+15000;while(!fs.existsSync(f.calls)){assert.ok(Date.now()<end);await new Promise(r=>setTimeout(r,20));}
+  put(join(markerLock,'owner.json'),JSON.stringify({token:'marker-writer',pid:process.pid,host:hostname()}));
+  const {retireHarvestOff}=await mod('sources');
+  assert.throws(()=>retireHarvestOff(s,{reason:'off'}),e=>e.code==='E_CAPTURE_PENDING'&&e.retirementMarkerError?.code==='E_LOCKED');assert.equal(loadStatus(s).retired,false);
+  fs.rmSync(markerLock,{recursive:true});fs.rmSync(join(f.dir,'capture-hold'));
+  const receipt=join(dirname(s.file),'capture-attempts',pending.attempt,'receipt.json');while(!fs.existsSync(receipt)){assert.ok(Date.now()<end);await new Promise(r=>setTimeout(r,20));}
+  assert.equal(capture(s,{final:true}).complete,true);
+  put(join(markerLock,'owner.json'),JSON.stringify({token:'marker-writer',pid:process.pid,host:hostname()}));
+  assert.throws(()=>capture(s,{final:true}),e=>e.code==='E_RETIREMENT_MARKER'&&e.retirementMarkerError?.code==='E_LOCKED');assert.ok(fs.existsSync(s.home));
+  fs.rmSync(markerLock,{recursive:true});assert.equal(capture(s,{final:true}).complete,true);
+});

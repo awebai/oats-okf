@@ -418,14 +418,32 @@ export function sourceSwitch(source, { firstBatch = false, deadline } = {}) {
   return live.harvest === 'on' ? answer('on', 'the deployment switches harvest on now and the soul does not opt out', 'deployment')
     : answer('off', `the deployment's current switch is off for soul ${source.agent}: ${live.reason}`, 'deployment');
 }
+// A secondary marker failure must not replace the capture failure that keeps
+// the source in custody. Report only its bounded code, never private paths.
+const markerErrorCode=e=>['E_LOCKED','E_DEADLINE','E_RETIREMENT_MARKER','EACCES','EPERM','ENOSPC','EIO'].includes(e?.code)?e.code:'E_RETIREMENT_MARKER';
+function recordDeferredRetirement(source,error) {
+  let attempt=error.attempt;try{attempt??=loadStatus(source).lastCapture?.attempt;}catch{}
+  try {deferRetirement(source,{attempt,code:error.code});}
+  catch(markerError) {
+    const code=markerErrorCode(markerError);
+    error.retirementMarkerError={code};
+    error.message+=`; retirement marker update failed (${code}); retain source and inspect provider custody`;
+  }
+}
+function clearResolvedRetirement(source) {
+  try {clearDeferredRetirement(source);}
+  catch(markerError) {
+    throw Object.assign(new Error('retirement custody is resolved but its marker could not be cleared; retain source and retry retirement'),{code:'E_RETIREMENT_MARKER',retirementMarkerError:{code:markerErrorCode(markerError)}});
+  }
+}
 /** Retire a registered source whose harvest is now off: no final capture and
  *  no new drain; the inputs already in custody stay. */
 export function retireHarvestOff(source, sw) {
-  try { assertCaptureSettled(source); } catch(e) { deferRetirement(source,{attempt:loadStatus(source).lastCapture?.attempt,code:e.code}); throw e; }
+  try { assertCaptureSettled(source); } catch(e) { recordDeferredRetirement(source,e); throw e; }
   updateStatus(source, current => {
     current.retired = true; current.retiredAt = new Date().toISOString(); current.harvestOff = { reason: sw.reason, at: current.retiredAt };
   });
-  clearDeferredRetirement(source);
+  clearResolvedRetirement(source);
   return { retired: true, reason: 'harvest-off', switch: sw.reason, source: source.file };
 }
 /** Capture notes and observe one durable exact-home native attempt. Deadlines
@@ -437,11 +455,11 @@ export function capture(source,{final=false,deadlineMs=85000,deadline=Date.now()
   let entered=false;
   try {
     const result=captureLocked(source,{final,deadline},()=>{entered=true;});
-    if(final && result.complete) clearDeferredRetirement(source);
+    if(final && result.complete) clearResolvedRetirement(source);
     return result;
   } catch(e) {
     if(!entered && e.code==='E_LOCKED') e.captureBusy=true;
-    if(final) {let attempt=e.attempt;try{attempt??=loadStatus(source).lastCapture?.attempt;}catch{}deferRetirement(source,{attempt,code:e.code});}
+    if(final) recordDeferredRetirement(source,e);
     throw e;
   }
 }

@@ -7,8 +7,8 @@ import { randomUUID } from 'node:crypto';
 import childProcess, { spawn, spawnSync } from 'node:child_process';
 import { syncBuiltinESMExports } from 'node:module';
 import { fileURLToPath } from 'node:url';
-import { nativeCapture, consumeAttempt, gatePath, captureRoot, RECEIPT_LIMIT } from '../oats-package/capabilities/oats-okf/lib/capture-attempt.mjs';
-import { save } from '../oats-package/capabilities/oats-okf/lib/io.mjs';
+import { nativeCapture, consumeAttempt, gatePath, captureRoot, releaseGate, RECEIPT_LIMIT } from '../oats-package/capabilities/oats-okf/lib/capture-attempt.mjs';
+import { save, hash } from '../oats-package/capabilities/oats-okf/lib/io.mjs';
 const moduleURL = new URL('../oats-package/capabilities/oats-okf/lib/capture-attempt.mjs', import.meta.url).href;
 const waitFor = async fn => {
   const end = Date.now() + 15000;
@@ -195,4 +195,18 @@ test('runner validation before native spawn records no-dispatch but a duplicate 
   const duplicate = spawnSync(process.execPath, [runner, f.attemptDir(live)], { env: process.env, encoding: 'utf8' });
   assert.equal(duplicate.status, 1); assert.equal(f.receipt(live), false); assert.ok(fs.existsSync(gatePath(live.attempt.root))); assert.equal(f.calls().length, 1);
   fs.rmSync(join(f.root, 'hold')); await waitFor(() => f.receipt(live)); assert.equal(f.observe(other).report.complete, true);
+});
+
+test('partial cleanup after atomic gate release cannot strand the published root gate', async t => {
+  const f=fixture(t),s=f.source('released'),first=f.observe(s);await waitFor(()=>f.receipt(first)&&!fs.existsSync(gatePath(first.attempt.root)));
+  // Simulate a runner that published its terminal receipt but had not yet
+  // removed its gate. The controller interrupts recursive cleanup after unlink.
+  const gate=gatePath(first.attempt.root);fs.mkdirSync(gate,{mode:0o700});save(join(gate,'owner.json'),{version:1,attempt:first.attempt.id,directory:f.attemptDir(first),requestHash:hash(first.attempt)});
+  const rm=fs.rmSync;let interrupted=false;
+  try {
+    fs.rmSync=(path,options)=>{if(String(path).includes('/.released-')){interrupted=true;rm(join(path,'owner.json'));throw Object.assign(new Error('partial cleanup'),{code:'EIO'});}return rm(path,options);};syncBuiltinESMExports();
+    releaseGate(f.attemptDir(first),first.attempt);
+  } finally {fs.rmSync=rm;syncBuiltinESMExports();}
+  assert.equal(interrupted,true);assert.equal(fs.existsSync(gate),false);
+  assert.equal(f.observe(f.source('next'),5000).report.complete,true);assert.equal(f.calls().length,2);
 });
