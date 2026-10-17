@@ -3213,6 +3213,7 @@ test('detached capture pending defers checkpoint/manual and refuses retire; skip
   const f=fixture(t),s=f.source();note(f);put(join(f.dir,'capture-hold'),'');
   const {withDeadline}=await mod('io');
   const first=checkpointHarvest(s,{deadline:Date.now()+200});assert.equal(first.status,'deferred');assert.equal(first.capture.complete,false);
+  const started=Date.now()+15000;while(!fs.existsSync(f.calls)){assert.ok(Date.now()<started);await new Promise(r=>setTimeout(r,20));}
   const manual=withDeadline(Date.now()+100,()=>runSource(s,{manual:true,noLaunch:true}));assert.equal(manual.status,'deferred');
   assert.throws(()=>capture(s,{final:true,deadlineMs:100}),{code:'E_CAPTURE_PENDING'});
   const {retireHarvestOff}=await mod('sources');
