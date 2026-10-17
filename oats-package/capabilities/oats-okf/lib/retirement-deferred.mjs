@@ -45,13 +45,13 @@ export function deferRetirement(source, { attempt = null, code, now = Date.now()
       since = prior.since;
     }
     save(file, { version: 1, source: source.id, since, lastObserved: new Date(now).toISOString(), attempt: uuid(attempt) ? attempt : null, reason });
-  }, { waitMs: 100, reclaimDead: true });
+  }, { waitMs: 100, reclaimDead: true, reclaimOwnerless: false });
 }
 export function clearDeferredRetirement(source) {
   return withLock(join(dirname(source.file), 'retirement.lock'), () => {
     const file = safePath(markerPath(source));
     if (fs.existsSync(file)) { fs.unlinkSync(file); syncDir(dirname(file)); }
-  }, { waitMs: 100, reclaimDead: true });
+  }, { waitMs: 100, reclaimDead: true, reclaimOwnerless: false });
 }
 /** Aggregate ONLY the bound registry, never homes, native roots or the kernel.
  * Count/age are observations, not certification. Limits include nonmatching and

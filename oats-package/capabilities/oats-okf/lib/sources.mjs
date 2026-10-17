@@ -464,7 +464,7 @@ export function capture(source,{final=false,deadlineMs=85000,deadline=Date.now()
   }
 }
 function captureLocked(source,options,enter) {
-  return withLock(join(dirname(source.file),'capture.lock'),()=>capturePass(source,options,enter),{reclaimDead:true});
+  return withLock(join(dirname(source.file),'capture.lock'),()=>capturePass(source,options,enter),{reclaimDead:true,reclaimOwnerless:false});
 }
 function capturePass(source,{final,deadline},enter) {
     enter();

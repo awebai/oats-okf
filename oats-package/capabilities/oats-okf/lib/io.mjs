@@ -70,16 +70,18 @@ const pause = ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0,
  *  holder for a bounded time; a live holder is never stolen from, whatever its
  *  age. With `reclaimDead`, a lock whose owner is provably gone (reclaimable)
  *  is taken over; otherwise an abandoned lock waits for an explicit unlock.
+ *  `reclaimOwnerless:false` requires a recorded dead owner even after a long
+ *  pause before owner publication; capture coordination uses this stricter mode.
  *  Within an invocation deadline (withDeadline) the wait ends with it: a
  *  busy lock past it is E_DEADLINE, and nothing was done under it. */
-export function withLock(path, fn, { waitMs = 0, reclaimDead = false } = {}) {
+export function withLock(path, fn, { waitMs = 0, reclaimDead = false, reclaimOwnerless = true } = {}) {
   safePath(path); fs.mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   const own = Date.now() + waitMs, deadline = Math.min(own, invocationDeadline ?? Infinity);
   for (let delay = 20;; delay = Math.min(delay * 2, 250)) {
     try { fs.mkdirSync(path, { mode: 0o700 }); break; }
     catch(e) {
       if(e.code !== 'EEXIST') throw e;
-      if(reclaimDead && reclaim(path)) continue;
+      if(reclaimDead && reclaim(path, reclaimOwnerless)) continue;
       if(Date.now() >= deadline) {
         if(deadline < own) fail('E_DEADLINE', `busy lock: ${path}; this invocation's time budget is spent, so nothing was done under it, and what is persisted resumes`);
         const owner = lockOwner(join(path, 'owner.json'));
@@ -104,11 +106,11 @@ function lockOwner(file) {
 /** What proves `path` (a lock directory, or a reclaim guard file) abandoned:
  *  its owner is a pid of this host that is gone, or it has no readable owner
  *  and is older than OWNERLESS_LOCK_STALE_MS. → that record, or null. */
-function abandoned(path, ownerFile) {
+function abandoned(path, ownerFile, reclaimOwnerless = true) {
   let stat; try { stat = fs.lstatSync(path); } catch { return null; }
   const owner = lockOwner(ownerFile);
   if (owner) return owner.host === hostname() && !pidAlive(owner.pid) ? { token: owner.token } : null;
-  return Date.now() - stat.mtimeMs > OWNERLESS_LOCK_STALE_MS ? { ino: stat.ino, mtimeMs: stat.mtimeMs } : null;
+  return reclaimOwnerless && Date.now() - stat.mtimeMs > OWNERLESS_LOCK_STALE_MS ? { ino: stat.ino, mtimeMs: stat.mtimeMs } : null;
 }
 const same = (now, then) => now && (then.token ? now.token === then.token : now.ino === then.ino && now.mtimeMs === then.mtimeMs);
 /** Remove the lock at `path` if its owner is provably gone. Reclaimers are
@@ -116,8 +118,8 @@ const same = (now, then) => now && (then.token ? now.token === then.token : now.
  *  it, so a paused reclaimer never removes a lock a live process took since. A
  *  guard whose own holder died is never removed (that would race exactly as
  *  removing the lock does): it is refused, naming it. → whether it was removed. */
-function reclaim(path) {
-  const stale = abandoned(path, join(path, 'owner.json'));
+function reclaim(path, reclaimOwnerless) {
+  const stale = abandoned(path, join(path, 'owner.json'), reclaimOwnerless);
   if (!stale) return false;
   const guard = `${path}.reclaim`, me = { token: randomUUID(), pid: process.pid, host: hostname() };
   try { fs.writeFileSync(guard, JSON.stringify(me) + '\n', { flag: 'wx', mode: 0o600 }); }
@@ -127,7 +129,7 @@ function reclaim(path) {
     return false;
   }
   try {
-    if (!same(abandoned(path, join(path, 'owner.json')), stale)) return false;
+    if (!same(abandoned(path, join(path, 'owner.json'), reclaimOwnerless), stale)) return false;
     fs.rmSync(path, { recursive: true }); syncDir(dirname(path)); return true;
   } finally { if (lockOwner(guard)?.token === me.token) fs.rmSync(guard, { force: true }); }
 }

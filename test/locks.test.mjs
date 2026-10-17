@@ -63,3 +63,14 @@ test('a reclaimer that died holding the reclaim guard is reported, never raced',
   assert.throws(() => withLock(lock, () => 1, { reclaimDead: true }), /reclaim/);
   assert.equal(readJSON(join(lock, 'owner.json')).token, 'dead-owner', 'the lock is left as it was');
 });
+
+test('capture coordination refuses aged ownerless locks but recovers recorded dead owners', t => {
+  const lock = join(scratch(t), 'coordination.lock');
+  fs.mkdirSync(lock);
+  const past = new Date(Date.now() - 120000); fs.utimesSync(lock, past, past);
+  const options = { reclaimDead: true, reclaimOwnerless: false };
+  assert.throws(() => withLock(lock, () => assert.fail('uncertain owner entered'), options), e => e.code === 'E_LOCKED');
+  assert.equal(fs.existsSync(lock), true);
+  save(join(lock, 'owner.json'), { token: 'known-dead', pid: deadPid(), host: hostname() });
+  assert.equal(withLock(lock, () => 'recovered', options), 'recovered');
+});

@@ -82,7 +82,7 @@ function releaseGateLocked(dir, request) {
   try { fs.rmSync(released, { recursive: true }); } catch { /* inert cleanup debris cannot hold the root */ }
 }
 export function releaseGate(dir, request) {
-  try { return withLock(join(dirname(gatePath(request.root)), 'coordination.lock'), () => releaseGateLocked(dir, request), { reclaimDead: true, waitMs: 100 }); }
+  try { return withLock(join(dirname(gatePath(request.root)), 'coordination.lock'), () => releaseGateLocked(dir, request), { reclaimDead: true, reclaimOwnerless: false, waitMs: 100 }); }
   catch (e) { if (e.code !== 'E_LOCKED' && e.code !== 'E_DEADLINE') throw e; }
 }
 function acquireGateLocked(dir, request) {
@@ -115,7 +115,7 @@ function acquireGateLocked(dir, request) {
 function acquireGate(dir, request) {
   const parent = dirname(gatePath(request.root));
   safePath(parent); fs.mkdirSync(parent, { recursive: true, mode: 0o700 }); privateDirectory(parent);
-  try { return withLock(join(parent, 'coordination.lock'), () => acquireGateLocked(dir, request), { reclaimDead: true, waitMs: 100 }); }
+  try { return withLock(join(parent, 'coordination.lock'), () => acquireGateLocked(dir, request), { reclaimDead: true, reclaimOwnerless: false, waitMs: 100 }); }
   catch (e) { if (e.code === 'E_LOCKED' || e.code === 'E_DEADLINE') return false; throw e; }
 }
 export function assertCaptureSettled(source) {

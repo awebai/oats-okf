@@ -64,7 +64,10 @@ later session tail is not hidden by a delayed receipt.
 
 A gate is staged with its complete owner record and atomically renamed into
 place. A crash before publication leaves an inert staging directory and cannot
-publish an ownerless gate. Gate mutations use a short provider coordination lock. Its dead-owner recovery
+publish an ownerless gate. Gate mutations use a short provider coordination
+lock. Capture and retirement locks recover only a recorded, provably dead local
+owner; ownerless metadata locks require explicit reconciliation, regardless of
+age, because a holder may be paused before publishing its owner. This recovery
 only serializes gate metadata; it does not authorize native dispatch. Gate
 release requires the exact owned request and its durable closed-output receipt.
 The owned gate is atomically renamed away and its parent synced before recursive
