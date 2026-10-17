@@ -5,7 +5,7 @@ import * as fs from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { execFileSync, spawnSync, spawn } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { syncBuiltinESMExports } from 'node:module';
 import { inventory, noEffectsPreload } from './helpers/no-effects.mjs';
 import { invocationFor, persistentSubject, helperSubject } from './helpers/invocation-fixture.mjs';
@@ -42,7 +42,14 @@ const a=process.argv.slice(2),root=process.env.FIXTURE_ROOT;
 const consentRead=a[0]==='okf' && a[1]==='harvest-status';
 fs.appendFileSync(consentRead?join(root,'consent-reads.jsonl'):process.env.FIXTURE_CALLS,JSON.stringify({a,cwd:process.cwd(),identity:process.env.OATS_HOME || null})+'\\n');
 const val=k=>a[a.indexOf(k)+1];const out=result=>console.log(JSON.stringify({schemaVersion:1,ok:true,result}));
-if(a[0]==='capture') {const p=join(root,'capture.json');console.log(fs.existsSync(p)?fs.readFileSync(p,'utf8'):JSON.stringify({status:'complete',complete:true,sessions:[],ignored:0}));}
+if(a[0]==='capture') {
+ while(fs.existsSync(join(root,'capture-hold'))) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,20);
+ const p=join(root,'capture.json'),home=val('--home'),owner=process.env.TURN_RECORD_OWNER;
+ const r=fs.existsSync(p)?JSON.parse(fs.readFileSync(p,'utf8')):{status:'complete',complete:true,sessions:[],ignored:0};
+ r.home=home;r.owner=owner;r.sourceRoots='launch-history';
+ r.sessions=r.sessions.map(s=>{const turns=JSON.parse(fs.readFileSync(join(root,'turns.json'),'utf8')),own=turns.filter(t=>t.thread===s.thread),source=own[0].source,sessionId=s.thread.split(':session:')[1];return {source,sessionId,path:join(home,'sessions',sessionId+'.jsonl'),cwd:home,stream:owner+'~'+source+'.'+sessionId,turns:own.length,firstTurnId:own[0].id,...s};});
+ console.log(JSON.stringify(r));if(r.status==='failed')process.exitCode=1;
+}
 else if(a[0]==='recall') {const all=JSON.parse(fs.readFileSync(join(root,'turns.json')));const start=a.includes('--after')?all.findIndex(t=>t.id===val('--after'))+1:0;const end=all.findIndex(t=>t.id===val('--until'))+1;const turns=all.slice(start,Math.min(end,start+Number(val('--limit'))));const result=a.includes('--ids-only')?turns.map(({text,...t})=>({...t,bytes:Buffer.byteLength(JSON.stringify({...t,text},null,2))+8})):turns;const fault=join(root,'recall-fail');if(!a.includes('--ids-only') && fs.existsSync(fault) && turns.some(t=>t.id===fs.readFileSync(fault,'utf8'))) process.exit(47);console.log(JSON.stringify({turns:result,remaining:end-start-turns.length}));}
 else if(a[0]==='--deployment') {
   const target=JSON.parse(fs.readFileSync(join(root,'captured-dispatch.json'),'utf8'));
@@ -202,10 +209,10 @@ test('directory init, cross-node views, role evidence allowlist and no scheduler
 });
 test('notes AND complete bounded record backlog are durable before final home deletion',t=>{
   const f=fixture(t);const s=f.source();note(f);
-  const turns=Array.from({length:145},(_,i)=>({id:`turn-${i}`,thread:'thread-1',kind:'session',ts:'2026-09-13',source:'pi',text:[{role:'assistant',text:'Observed limitation '+i}]}));
-  save(join(f.dir,'turns.json'),turns);save(join(f.dir,'capture.json'),{status:'complete',complete:true,sessions:[{thread:'thread-1',lastTurnId:'turn-144'}],ignored:2});
+  const turns=Array.from({length:145},(_,i)=>({id:`turn-${i}`,thread:'pi:session:one',kind:'session',ts:'2026-09-13',source:'pi',text:[{role:'assistant',text:'Observed limitation '+i}]}));
+  save(join(f.dir,'turns.json'),turns);save(join(f.dir,'capture.json'),{status:'complete',complete:true,sessions:[{thread:'pi:session:one',lastTurnId:'turn-144'}],ignored:2});
   const result=capture(s,{final:true});assert.equal(result.complete,true);
-  const st=loadStatus(s);assert.equal(st.captured.inputs.length,4);assert.equal(st.captured.threads['thread-1'],'turn-144');assert.equal(st.lastCapture.ignored,2);
+  const st=loadStatus(s);assert.equal(st.captured.inputs.length,4);assert.equal(st.captured.threads['pi:session:one'],'turn-144');assert.equal(st.lastCapture.ignored,2);
   fs.rmSync(f.home,{recursive:true});
   const r=runSource(loadSource(s.file),{manual:true,noLaunch:true});const run=readRun(s,r.run);
   const evidence=readJSON(join(run.worker.home,'work/input.json'));assert.equal(evidence.inputs.filter(i=>i.kind==='record').flatMap(i=>i.turns).length,145);assert.equal(evidence.inputs.filter(i=>i.kind==='note').length,1);
@@ -894,8 +901,8 @@ test('multi-base partial delivery keeps per-destination receipts and processes i
 const nativeCLI=process.env.OATS_OKF_NATIVE_CLI || process.env.OATS_OKF_CONSUMER_CLI;
 const callsOf=f=>fs.readFileSync(f.calls,'utf8').trim().split('\n').map(JSON.parse);
 function records(f,count=60,size=350000) {
-  const turns=Array.from({length:count},(_,i)=>({id:`turn-${i}`,thread:'thread-large',kind:'session',ts:'2026-09-13',source:'cc',text:[{role:'assistant',text:`${i}:`+'x'.repeat(size)}]}));
-  save(join(f.dir,'turns.json'),turns);save(join(f.dir,'capture.json'),{status:'complete',complete:true,sessions:[{thread:'thread-large',lastTurnId:turns.at(-1).id}],ignored:0});return turns;
+  const turns=Array.from({length:count},(_,i)=>({id:`turn-${i}`,thread:'cc:session:large',kind:'session',ts:'2026-09-13',source:'cc',text:[{role:'assistant',text:`${i}:`+'x'.repeat(size)}]}));
+  save(join(f.dir,'turns.json'),turns);save(join(f.dir,'capture.json'),{status:'complete',complete:true,sessions:[{thread:'cc:session:large',lastTurnId:turns.at(-1).id}],ignored:0});return turns;
 }
 function capturedTurns(s) {return loadStatus(s).captured.inputs.map(id=>input(s,id)).filter(v=>v.kind==='record').flatMap(v=>v.turns);}
 
@@ -913,13 +920,13 @@ test('R1 interrupted large backlog retries from durable cursor without losing re
   const f=fixture(t),s=f.source(),turns=records(f,6);
   const before=loadStatus(s);before.delivered.prior={status:'delivered'};before.accepted.prior={status:'accepted'};saveStatus(s,before);
   put(join(f.dir,'recall-fail'),'turn-3');assert.throws(()=>capture(s,{final:true}),/failed/);
-  assert.equal(loadStatus(s).captured.threads['thread-large'],'turn-2');assert.equal(loadStatus(s).retired,false);assert.equal(capturedTurns(s).length,3);
+  assert.equal(loadStatus(s).captured.threads['cc:session:large'],'turn-2');assert.equal(loadStatus(s).retired,false);assert.equal(capturedTurns(s).length,3);
   fs.rmSync(join(f.dir,'recall-fail'));assert.equal(capture(s,{final:true}).complete,true);assert.deepEqual(capturedTurns(s),turns);
   const after=loadStatus(s);assert.equal(after.captured.inputs.length,6);assert.deepEqual(after.delivered,before.delivered);assert.deepEqual(after.accepted,before.accepted);assert.deepEqual(after.processed,[]);
 });
 test('R1 individually oversize records fail closed after making durable progress on legal prefix',t=>{
   const f=fixture(t),s=f.source(),turns=records(f,2);turns[1].text[0].text='x'.repeat(1024*1024);save(join(f.dir,'turns.json'),turns);
-  assert.throws(()=>capture(s,{final:true}),/exceeds 1MiB/);assert.equal(capturedTurns(s).length,1);assert.equal(loadStatus(s).retired,false);assert.equal(loadStatus(s).captured.threads['thread-large'],'turn-0');
+  assert.throws(()=>capture(s,{final:true}),/exceeds 1MiB/);assert.equal(capturedTurns(s).length,1);assert.equal(loadStatus(s).retired,false);assert.equal(loadStatus(s).captured.threads['cc:session:large'],'turn-0');
   assert.equal(fs.existsSync(f.home),true);assert.deepEqual(loadStatus(s).processed,[]);
 });
 test('R1 near-limit legal compact input is not rejected merely for pretty-print overhead',t=>{
@@ -1069,13 +1076,14 @@ test('R1 cutover verifies accepted readiness, frozen owner/path, delivered conte
   assert.equal(cutoverMigration(mf.m.migration,f.soul).status,'complete');assert.equal(cutoverMigration(mf.m.migration,f.soul).status,'complete');
 });
 
-test('R1 actual native capture/recall transports 60 large Claude records into durable bounded inputs',{skip:!nativeCLI},t=>{
+test('R1 actual native capture/recall transports 60 large Claude records into durable bounded inputs',{skip:!nativeCLI},async t=>{
   const f=fixture(t),s=f.source(),fakeCLI=process.env.OATS_CLI_BIN;
-  // This is a standalone synthetic inventory, not a kernel-managed launch.
-  // Opt in explicitly to observer roots; production final capture does not.
-  const nativeFixtureCLI=join(f.dir,'native-fixture-cli');
-  put(nativeFixtureCLI,`#!/bin/sh\nif [ "$1" = capture ]; then exec ${quote(process.execPath)} ${quote(resolve(nativeCLI))} "$@" --current-roots; fi\nexec ${quote(process.execPath)} ${quote(resolve(nativeCLI))} "$@"\n`);fs.chmodSync(nativeFixtureCLI,0o755);
-  process.env.OATS_CLI_BIN=nativeFixtureCLI;process.env.TURN_RECORD_ROOT=join(f.dir,'native-record');process.env.TURN_RECORD_OWNER='fixture';
+  // Synthetic transcript, but genuine released managed launch-history custody.
+  process.env.OATS_CLI_BIN=resolve(nativeCLI);process.env.TURN_RECORD_ROOT=join(f.dir,'native-record');process.env.TURN_RECORD_OWNER='fixture';
+  // Test setup only: the production provider never imports kernel libraries.
+  const nativeHistory=await import(new URL('../packages/record/lib/native-history.mjs',pathToFileURL(resolve(nativeCLI))).href);
+  nativeHistory.initializeNativeHistory(f.home);
+  const launch=nativeHistory.prepareNativeStart(f.home,'claude');nativeHistory.recordNativeStart(f.home,launch,'claude',[],process.env);
   const transcript=join(process.env.HOME,'.claude/projects/-fixture/fixture-session.jsonl');
   put(transcript,Array.from({length:60},(_,i)=>JSON.stringify({type:'assistant',cwd:f.home,sessionId:'fixture-session',timestamp:'2026-09-13T12:00:00Z',message:{role:'assistant',content:[{type:'text',text:`${i}:`+'x'.repeat(350000)}]}})).join('\n')+'\n');
   assert.equal(capture(s,{final:true}).complete,true);
@@ -2441,7 +2449,7 @@ test('4.2.0 capture contention defers a checkpoint and never certifies a final c
   const r=f.cli('retire');assert.equal(r.status,1);assert.equal(r.out.meta.retired,false);assert.match(r.out.warning,/E_LOCKED/);assert.equal(loadStatus(s).retired,false);
   fs.rmSync(lock,{recursive:true});
   // A spent budget fails capture before any native call advances a cursor.
-  save(join(f.dir,'turns.json'),[{id:'t1',thread:'th',kind:'session',ts:'2026-10-06',source:'pi',text:[{role:'user',text:'hello'}]}]);save(join(f.dir,'capture.json'),{status:'complete',complete:true,sessions:[{thread:'th',lastTurnId:'t1'}]});
+  save(join(f.dir,'turns.json'),[{id:'t1',thread:'pi:session:th',kind:'session',ts:'2026-10-06',source:'pi',text:[{role:'user',text:'hello'}]}]);save(join(f.dir,'capture.json'),{status:'complete',complete:true,sessions:[{thread:'pi:session:th',lastTurnId:'t1'}]});
   assert.throws(()=>capture(s,{deadline:Date.now()-1}),/capture deadline/);assert.deepEqual(loadStatus(s).captured.threads,{});
   capture(s,{final:true});const d=retireDrain(s,{deadline:Date.now()+5000});assert.equal(d.status,'deferred');assert.match(d.next,/--manual/);assert.equal(spawnsOf(f).length,0);
   assert.equal(loadStatus(s).drain.boundary.length,2,'the request is persisted before any effect');
@@ -2637,7 +2645,7 @@ test('4.2.0 one deadline bounds every blocking call of a checkpoint (settlement,
   const deadline=Date.now()+110000;
   const {result:h,seen}=observeCalls(()=>checkpointHarvest(s,{deadline}),{deadline});
   assert.equal(h.status,'started',JSON.stringify(h));assert.equal(h.launched,true);assert.deepEqual(h.settled.map(r=>r.outcome),['open']);
-  for(const kind of ['gh','clone','fetch','capture','spawn','session']) assert.ok(seen.some(c=>c.bin===kind || c.args.includes(kind)),`${kind} ran`);
+  for(const kind of ['gh','clone','fetch','spawn','session']) assert.ok(seen.some(c=>c.bin===kind || c.args.includes(kind)),`${kind} ran`);
   for(const c of seen) assert.ok(c.timeout<=c.remaining,`${c.bin} ${c.args.slice(0,3).join(' ')}: timeout ${c.timeout} > ${c.remaining} ms left`);
   // An operator's complete has no invocation deadline: Git keeps its configured timeout.
   const next=readRun(s,h.run);const {seen:plain}=observeCalls(()=>complete(s,next.id,judgment(f,s,next,{drop:true})));
@@ -3197,4 +3205,28 @@ test('4.2.0 (#55) a checkpoint or retire whose deployment is not named, or named
   }
   assert.equal(fs.existsSync(f.calls),false,'no capture, spawn or other oats call');assert.deepEqual(consentReads(f),[],'no consent read');
   assert.equal(JSON.stringify(loadStatus(s)),before,'custody untouched');assert.ok(fs.existsSync(f.home),'the home is kept');
+});
+
+// #91: caller budgets observe durable capture; no caller may harvest native
+// boundaries before a complete receipt, and retirement must retain the source.
+test('detached capture pending defers checkpoint/manual and refuses retire; skipped boundaries are never recalled', async t=>{
+  const f=fixture(t),s=f.source();note(f);put(join(f.dir,'capture-hold'),'');
+  const {withDeadline}=await mod('io');
+  const first=checkpointHarvest(s,{deadline:Date.now()+200});assert.equal(first.status,'deferred');assert.equal(first.capture.complete,false);
+  const manual=withDeadline(Date.now()+100,()=>runSource(s,{manual:true,noLaunch:true}));assert.equal(manual.status,'deferred');
+  assert.throws(()=>capture(s,{final:true,deadlineMs:100}),{code:'E_CAPTURE_PENDING'});
+  const {retireHarvestOff}=await mod('sources');
+  assert.throws(()=>retireHarvestOff(s,{reason:'off'}),{code:'E_CAPTURE_PENDING'});
+  assert.equal(loadStatus(s).retired,false);assert.equal(loadStatus(s).activeRun,null);assert.ok(fs.existsSync(s.home));
+  assert.equal(callsOf(f).filter(c=>c.a[0]==='capture').length,1);assert.equal(spawnsOf(f).length,0);
+  const current=readJSON(join(dirname(s.file),'capture-attempts','current.json'));
+  const receipt=join(dirname(s.file),'capture-attempts',current.id,'receipt.json');
+  fs.rmSync(join(f.dir,'capture-hold'));
+  const end=Date.now()+15000;while(!fs.existsSync(receipt)){assert.ok(Date.now()<end);await new Promise(r=>setTimeout(r,20));}
+  assert.equal(capture(s,{final:true}).complete,true);assert.equal(loadStatus(s).retired,true);
+  const g=fixture(t),other=g.source();note(g);
+  save(join(g.dir,'capture.json'),{status:'skipped',complete:false,sessions:[{thread:'pi:session:old',lastTurnId:'old'}]});
+  save(join(g.dir,'turns.json'),[{id:'old',thread:'pi:session:old',kind:'session',ts:'2026-10-06',source:'pi',text:[]}]);
+  const deferred=checkpointHarvest(other,{deadline:Date.now()+5000});assert.equal(deferred.status,'deferred');assert.equal(deferred.capture.nativeStatus,'skipped');
+  assert.equal(callsOf(g).some(c=>c.a[0]==='recall'),false);assert.equal(loadStatus(other).activeRun,null);assert.equal(loadStatus(other).retired,false);
 });

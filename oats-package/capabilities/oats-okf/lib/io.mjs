@@ -142,10 +142,12 @@ export function cleanEnv(env = process.env) {
   return Object.fromEntries(Object.entries(env).filter(([k]) => !/^(OATS_(?!HOME_DIR$|PACKAGE_CATALOG$)|PI_AGENT|GIT_)/.test(k)));
 }
 // okf 4.2.0: ONE invocation deadline. A checkpoint or a retire hook runs its
-// work within it (withDeadline): every blocking subprocess (git, gh, oats) gets
+// work within it (withDeadline): every foreground subprocess (git, gh, oats) gets
 // at most what is left of it, whatever its own timeout, and none starts once it
 // is spent (E_DEADLINE, before any effect). Without one, each call keeps its
-// own timeout. Synchronous callers only: the deadline is this process's.
+// own timeout. Detached native capture is observed under this deadline and
+// runs independently without a timeout. Synchronous callers only: the deadline
+// is this process's.
 let invocationDeadline;
 export function withDeadline(deadline, fn) {
   const outer = invocationDeadline;

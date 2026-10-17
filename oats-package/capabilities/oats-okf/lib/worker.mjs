@@ -110,7 +110,9 @@ export function runSource(source,{noLaunch=false,manual=false,consent=false,capt
       if(!sourceAvailable) {
         status=updateStatus(source,current=>{current.sourceUnavailable=true;current.finalCaptureUncertified=true;});
       } else {
-        capture(source);status=loadStatus(source);
+        const captured=capture(source);
+        if(!captured.complete) return {status:'deferred',source:source.file,capture:captured,reason:captured.reason};
+        status=loadStatus(source);
       }
     }
     if(status.activeRun) {
@@ -983,6 +985,7 @@ export function checkpointHarvest(source,{noLaunch=false,deadline}={}) {
     let captured;
     try {captured=capture(source,{deadline:deadline===undefined?undefined:Math.min(deadline,Date.now()+CAPTURE_SHARE_MS)});}
     catch(e) {if(e.captureBusy) return answer({status:'already-running',run:null,preparing:true,reason:'another oats okf process is capturing this source; nothing was started'});throw e;}
+    if(!captured.complete) return answer({status:'deferred',capture:captured,reason:captured.reason});
     status=loadStatus(source);
     const pending=unprocessed(status);
     if(!pending.length) return answer({status:'empty',capture:captured});

@@ -1,3 +1,4 @@
+import { nativeCapture, consumeAttempt, assertCaptureSettled } from './capture-attempt.mjs';
 import { randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -419,16 +420,15 @@ export function sourceSwitch(source, { firstBatch = false, deadline } = {}) {
 /** Retire a registered source whose harvest is now off: no final capture and
  *  no new drain; the inputs already in custody stay. */
 export function retireHarvestOff(source, sw) {
+  assertCaptureSettled(source);
   updateStatus(source, current => {
     current.retired = true; current.retiredAt = new Date().toISOString(); current.harvestOff = { reason: sw.reason, at: current.retiredAt };
   });
   return { retired: true, reason: 'harvest-off', switch: sw.reason, source: source.file };
 }
-/** Capture the source's notes and session into custody. `deadline` (epoch ms)
- *  is the caller's ONE invocation budget: every native call below gets what
- *  is left of it, never a fresh timeout of its own. A busy capture lock is
- *  E_LOCKED at once (another capture is in progress): the caller defers, and
- *  a final capture is then simply not certified. */
+/** Capture notes and observe one durable exact-home native attempt. Deadlines
+ * bound the foreground's observation and recall only; the detached per-attempt
+ * runner never kills native capture. Pending final capture refuses retirement. */
 export function capture(source,{final=false,deadlineMs=85000,deadline=Date.now()+deadlineMs}={}) {
   // A busy capture lock is marked captureBusy; an E_LOCKED from inside the
   // capture (its status writes) is not another capture.
@@ -436,8 +436,10 @@ export function capture(source,{final=false,deadlineMs=85000,deadline=Date.now()
   try {return captureLocked(source,{final,deadline},()=>{entered=true;});}
   catch(e) {if(!entered && e.code==='E_LOCKED') e.captureBusy=true;throw e;}
 }
-function captureLocked(source,{final,deadline},enter) {
-  return withLock(join(dirname(source.file),'capture.lock'),()=>{
+function captureLocked(source,options,enter) {
+  return withLock(join(dirname(source.file),'capture.lock'),()=>capturePass(source,options,enter),{reclaimDead:true});
+}
+function capturePass(source,{final,deadline},enter) {
     enter();
     const status=loadStatus(source);
     if(status.retired) return {status:'complete',complete:true,retired:true};
@@ -455,15 +457,28 @@ function captureLocked(source,{final,deadline},enter) {
       enqueue(source,status,{version:1,kind:'note',name,contentHash:hash(text),text});
       status.captured.notes.push(key);saveCapture(source,status);
     }
-    let report;
+    let report, attempt;
     try {
       const remainingTime=()=>{
         const remaining=deadline-Date.now();
         if(remaining<=0) fail('E_CAPTURE','capture deadline: backlog preserved; retire must retry');
         return remaining;
       };
-      report=oats(['capture','--home',source.home,'--quiet'],source.context,{native:true,timeout:Math.min(remainingTime(),60000)});
-      if(!Array.isArray(report.sessions)) fail('E_CAPTURE','capture response has no sessions');
+      const observed=nativeCapture(source,{deadline,final});
+      attempt=observed.attempt;
+      const defer=observation=>{
+        status.lastCapture={...observation,at:new Date().toISOString()};saveCapture(source,status);
+        if(final) fail('E_CAPTURE_PENDING',`capture ${observation.status}: attempt ${observation.attempt}, elapsed ${observation.elapsedSeconds || 0} s, observation budget ${observation.budgetSeconds || 0} s; retain source and retry`);
+        return status.lastCapture;
+      };
+      if(observed.observation) return defer(observed.observation);
+      report=observed.report;
+      if(report.complete!==true) {
+        consumeAttempt(source,attempt);
+        return defer({status:'deferred',complete:false,attempt:attempt.id,nativeStatus:report.status,
+          reason:'native capture is incomplete; source and custody retained; retry at a later checkpoint'});
+      }
+      const recall=(args)=>oats(args,source.context,{native:true,timeout:remainingTime(),env:observed.env});
       for(const session of report.sessions) {
         if(!session.thread || !session.lastTurnId) continue;
         let after=status.captured.threads[session.thread] || null;
@@ -472,9 +487,9 @@ function captureLocked(source,{final,deadline},enter) {
           const args=['recall','--thread',session.thread,'--until',session.lastTurnId,'--limit','60','--json','--ids-only'];
           if(after) args.push('--after',after);
           let plan;
-          try { plan=oats(args,source.context,{native:true,timeout:remainingTime()}); }
+          try { plan=recall(args); }
           catch(e) { if(after && /--after: no turn/.test(e.message)) {after=null;continue;} throw e; }
-          if(!Array.isArray(plan.turns) || !plan.turns.length || plan.turns.length>60) fail('E_CAPTURE','capture/recall boundaries disagree');
+          if(!Array.isArray(plan.turns) || !plan.turns.length || plan.turns.length>60 || (!after && plan.turns[0].id!==session.firstTurnId)) fail('E_CAPTURE','capture/recall boundaries disagree');
           // Plan BEFORE requesting text. Native bytes describe each turn in
           // pretty JSON. Nested response indentation adds bytes: reserve 3x
           // that estimate plus envelope space, always below the 16MiB pipe.
@@ -483,7 +498,7 @@ function captureLocked(source,{final,deadline},enter) {
           while(offset<plan.turns.length) {
             const window=[];let bytes=0;
             for(const t of plan.turns.slice(offset)) {
-              if(typeof t.id!=='string' || !t.id || t.thread!==session.thread || t.kind!=='session' || !Number.isSafeInteger(t.bytes) || t.bytes<=0) fail('E_CAPTURE','invalid ids-only record metadata');
+              if(typeof t.id!=='string' || !t.id || t.thread!==session.thread || t.kind!=='session' || t.source!==session.source || !Number.isSafeInteger(t.bytes) || t.bytes<=0) fail('E_CAPTURE','invalid ids-only record metadata');
               if(window.length && bytes+t.bytes>96000) break;
               if(3*(bytes+t.bytes)+4096>16*1024*1024) fail('E_CAPTURE','single captured turn exceeds bounded transport; input retained at source, manual intervention required');
               window.push(t);bytes+=t.bytes;
@@ -491,7 +506,7 @@ function captureLocked(source,{final,deadline},enter) {
             const until=window.at(-1).id;
             const read=['recall','--thread',session.thread,'--until',until,'--limit',String(window.length),'--json'];
             if(after) read.push('--after',after);
-            const full=oats(read,source.context,{native:true,timeout:remainingTime()});
+            const full=recall(read);
             if(!Array.isArray(full.turns) || full.turns.length!==window.length || full.remaining!==0) fail('E_CAPTURE','planned record window changed; retain source and retry');
             const turns=full.turns.map((t,i)=>{
               const turn={id:t.id,ts:t.ts,thread:t.thread,kind:t.kind,source:t.source,text:t.text};
@@ -507,15 +522,16 @@ function captureLocked(source,{final,deadline},enter) {
           if(plan.remaining===0 && after!==session.lastTurnId) fail('E_CAPTURE','final record boundary missing');
         }
       }
-      status.lastCapture={status:report.status,complete:report.complete===true,ignored:report.ignored||0,at:new Date().toISOString()};
-      if(report.complete!==true) fail('E_CAPTURE',`capture ${report.status || 'uncertified'}: retain source and retry`);
+      status.lastCapture={status:report.status,complete:true,attempt:attempt.id,ignored:report.ignored||0,at:new Date().toISOString()};
       // The retire hook hands the final input to a drain (worker.mjs
       // retireDrain, which records it with recordDrain); capture itself only
       // certifies custody.
+      consumeAttempt(source,attempt);
+      if(final && !attempt.final) {saveCapture(source,status);return capturePass(source,{final,deadline},()=>{});}
       if(final) {status.retired=true;status.retiredAt=new Date().toISOString();}
       saveCapture(source,status);return {...status.lastCapture,inputs:status.captured.inputs.length};
     } catch(e) {
-      status.lastCapture={status:'incomplete',complete:false,error:e.message,at:new Date().toISOString()}; saveCapture(source,status);throw e;
+      if(e.code!=='E_CAPTURE_PENDING') {status.lastCapture={status:e.code==='E_CAPTURE_UNCERTAIN'?'uncertain':'incomplete',complete:false,...(attempt?{attempt:attempt.id}:e.attempt?{attempt:e.attempt}:{}),error:e.message,at:new Date().toISOString()}; saveCapture(source,status);}
+      throw e;
     }
-  });
 }

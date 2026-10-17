@@ -122,12 +122,15 @@ to run it. `oats okf harvest [--no-launch] --json`, from the instance home:
    starts (`needs-recovery`, `phase: pending-rejudgment`): never a second PR
    for the same evidence.
 
-**One deadline.** An invocation has one time budget (110 s). Every blocking
+**One deadline.** An invocation has one time budget (110 s). Every foreground blocking
 call within it (`git`, `gh`, `oats`) gets at most what is left, whatever
 its own timeout, and none starts once it is spent. Every lock wait within it
 (a base, the worker, the capture) ends with it too: a lock still busy then
 is `E_DEADLINE` and nothing was done under it. Settlement takes at most
-30 s of it and capture 85 s. A harvester's spawn keeps its full 90 s
+30 s of it and capture observation/recall 85 s. Native exact-home capture
+runs in a detached per-attempt process without a timeout; exhausting this
+foreground share retains the attempt and defers the checkpoint, never kills
+the kernel. See [capture attempts](CAPTURE-ATTEMPTS.md). A harvester's spawn keeps its full 90 s
 timeout: with under 91 s left (the spawn plus a second for the records
 written before it) no harvester is started (`deferred`, nothing spawned, no
 run active, the drain and the input in custody, `next` the exact
@@ -1062,9 +1065,15 @@ changed live versions remain untouched. Record capture uses the authored absolut
 to plan bounded text windows before fetching them (within the 16 MiB transport
 limit) while the source exists. Full returned record text is copied into durable windows, not
 commands needing a live home. Final capture drains the entire visible backlog
-across windows before certifying custody. Capture has an 85-second budget;
-timeouts, holds, skips, malformed/incomplete records and uncertified capture
-retain the source home for retry. A single turn over 1 MiB fails closed rather
+across windows before certifying custody. The foreground observes capture and
+recall within its 85-second share; native capture itself has no provider
+deadline or kill. Queued/running attempts defer checkpoint/manual harvest
+without starting a worker; holds/skips/incomplete receipts retain custody and
+retry at a future invocation. Malformed or uncertain receipts stay held for
+explicit recovery. Retirement refuses while capture/recall is pending, even
+if harvest has since been switched off. A complete receipt from an earlier
+checkpoint is recalled before a fresh final attempt can certify retirement.
+See [capture attempts and recovery](CAPTURE-ATTEMPTS.md). A single turn over 1 MiB fails closed rather
 than truncating. A genuinely empty source record is reported honestly. Record
 privacy exclusions remain excluded; no raw excluded session files are copied.
 
@@ -1075,6 +1084,7 @@ State layout (private, local, **no automatic evidence deletion**):
 <stateDir>/sources/<uuid>/source.json       # stable frozen descriptor
 <stateDir>/sources/<uuid>/status.json       # captured / processed / delivered / accepted
 <stateDir>/sources/<uuid>/inputs/<hash>.json # immutable notes and full record windows
+<stateDir>/sources/<uuid>/capture-attempts/  # private requests, native receipts, consumed markers
 <stateDir>/sources/<uuid>/runs/<uuid>/       # plans, proposals, judgment and receipts
 <stateDir>/sources/<uuid>/runs/<uuid>/receipt-history/<alias>/<hash>.json
                                             # immutable receipt observations
