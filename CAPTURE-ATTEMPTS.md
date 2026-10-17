@@ -31,12 +31,16 @@ retry attempts dispatch again. There is no resident queue dispatcher.
 
 - `request.json`: attempt ID, selected CLI/context, canonical root, native owner,
   final/checkpoint purpose, source descriptor digest, physical home identity and
-  instance-metadata digest. No environment, credentials or launch recipe is saved.
+  stable instance identity (`instance`, `agent`, creation/incarnation and kind).
+  Routine kernel restart, wake, backend and prompt bookkeeping can change. No
+  environment, credentials or launch recipe is saved.
 - `dispatch.json`: durable dispatch intent, written before starting the runner.
 - `runner.json`: exclusive runner claim; its PID is diagnostic, never completion
   evidence or authority to retry an uncertain native invocation.
 - `receipt.json`: atomic private close observation, binding the request digest
   and attempt ID to bounded native stdout, exit code, signal and overflow flag.
+  It distinguishes an actual closed native process from a proven failure before
+  native dispatch; only the former can carry a native capture certificate.
 - `consumed.json`: the matching receipt has either been recalled into custody or
   was explicitly observed as noncomplete. A later invocation may create a new
   attempt. Previous requests and receipts remain available.
@@ -58,21 +62,36 @@ An attempt dispatched by an earlier invocation cannot alone certify retirement:
 its windows are recalled and then a fresh final-purpose attempt is taken, so a
 later session tail is not hidden by a delayed receipt.
 
-Gate mutations use a short provider coordination lock. Its dead-owner recovery
+A gate is staged with its complete owner record and atomically renamed into
+place. A crash before publication leaves an inert staging directory and cannot
+publish an ownerless gate. Gate mutations use a short provider coordination lock. Its dead-owner recovery
 only serializes gate metadata; it does not authorize native dispatch. Gate
 release requires the exact owned request and its durable closed-output receipt.
 A missing or unconsumed current attempt never permits replacement dispatch.
 Known terminal skipped/held/failed/incomplete receipts are consumed and deferred;
-the next invocation may retry. Invalid receipts remain uncertain and held.
+the next invocation may retry. A runner whose exclusive claim proves it has not
+started native capture also records a closed, non-dispatched terminal observation
+when validation or executable startup fails. The foreground does the same when
+the OS refuses runner creation. These observations release their own gate and
+defer for retry; they never certify native capture. A changed CLI before dispatch
+is retryable; an in-flight attempt is observed using its saved CLI/root/owner,
+even after an installed-kernel upgrade. Invalid receipts remain uncertain and
+held.
 
 ## Uncertain-state recovery
 
 A crashed foreground can be retried: the short source lock can recover and the
 persisted attempt prevents duplicate dispatch. If the runner finishes while the
 foreground is gone, a later invocation reads its receipt. A gate left after
-receipt publication can be released by that exact receipt. A runner crash before
-receipt publication is intentionally different: its native child may still be
-running, so the source and shared gate remain held regardless of PID or age.
+receipt publication can be released by that exact receipt. A runner crash after possible native
+dispatch but before receipt publication is intentionally different: its native
+child may still be running, so the source and shared gate remain held regardless
+of PID or age. An existing exclusive runner claim can belong to that live
+runner; a duplicate runner never overwrites its receipt or releases its gate.
+Missing/unreadable request, dispatch or gate ownership, an unobserved foreground
+crash around runner launch, and corrupt/overflowed native output likewise remain
+uncertain. A genuinely replaced source identity remains refused, while ordinary
+kernel bookkeeping updates do not invalidate its receipt.
 
 Retain the source home, its independent native history, attempt directory and
 record root. Inspect the request, dispatch and runner claims and the kernel's
@@ -96,3 +115,35 @@ its native lock for over 60 seconds, then resumes it and verifies the genuine
 receipt and recall. This proves deadline survival and custody, not capture
 throughput. Run heavy tests under the host's shared suite/load policy with an
 isolated environment and bounded test concurrency.
+
+## Deferred retirement visibility
+
+A failed final capture writes `retirement-deferred.json` beside the source
+status. Its first-deferred timestamp survives repeated retire attempts and
+successful checkpoints; the latest attempt/reason is separate. An ordinary
+pending checkpoint creates no retirement obligation. Only verified final
+custody, or a retirement resolved under the existing harvest-off consent and
+settled-capture rules, clears it. No warning grants permission to remove a home.
+
+`harvest-status` reports a deferred-source count, oldest observed age and
+per-source since/age, using its bound source registry and soul/home filters.
+Readiness observes the bound registry in aggregate and emits the stable
+`retirement-capture-deferred` warning, including count and age, even with harvest
+off. This warning leaves an otherwise ready provider ready. The released kernel
+check result stays within its closed `status`/`problems`/`warnings` shape; no new
+kernel API is needed.
+
+The observation scans at most 500 registry entries, 4 MiB of source/marker data
+and a 100 ms admission window. It reads no live homes, transcripts, capture
+roots or worker state, starts no capture/recall/model/worker, and creates no
+locks or files. Unreadable, changed or redirected evidence reports unknown
+coverage; a bound reports truncated coverage. With incomplete coverage, the
+exact count is null and the observed count/oldest age are lower bounds, never a
+claimed zero. Readiness exposes only sanitized aggregate numbers and fixed
+warning text; source names, paths, attempt IDs and raw errors stay off its wire.
+
+Final certification requires a fresh pass within the retire invocation after
+recalling a retained receipt. If every native pass exceeds that foreground
+share, retirement can remain deferred despite completed detached passes. The
+source and durable obligation remain visible until the limitation is resolved;
+there is no final-tail inference from a hook phase, metadata or PID.

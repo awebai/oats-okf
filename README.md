@@ -1069,11 +1069,11 @@ across windows before certifying custody. The foreground observes capture and
 recall within its 85-second share; native capture itself has no provider
 deadline or kill. Queued/running attempts defer checkpoint/manual harvest
 without starting a worker; holds/skips/incomplete receipts retain custody and
-retry at a future invocation. Malformed or uncertain receipts stay held for
-explicit recovery. Retirement refuses while capture/recall is pending, even
+retry at a future invocation. Known failures before native dispatch are also deferred and release their
+provider gate. Malformed or uncertain receipts stay held for explicit recovery. Retirement refuses while capture/recall is pending, even
 if harvest has since been switched off. A complete receipt dispatched by an earlier
 invocation is recalled before a fresh final attempt can certify retirement.
-See [capture attempts and recovery](CAPTURE-ATTEMPTS.md). A single turn over 1 MiB fails closed rather
+See [capture attempts and recovery](CAPTURE-ATTEMPTS.md). Deferred retirements have a separate durable first-deferred timestamp; `harvest-status` lists count and age, and readiness emits `retirement-capture-deferred` as a warning while remaining ready. This warning remains visible with harvest off and never permits removal of uncertified sources. If native capture persistently exceeds the foreground share, retirement remains deferred until capture performance permits a fresh final pass. A single turn over 1 MiB fails closed rather
 than truncating. A genuinely empty source record is reported honestly. Record
 privacy exclusions remain excluded; no raw excluded session files are copied.
 

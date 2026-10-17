@@ -18,7 +18,7 @@ export function inventory(root) {
 
 // Preload into the ACTUAL provider process. Even a swallowed effect attempt
 // fails the child exit status; no native command or filesystem write can run.
-export function noEffectsPreload(root) {
+export function noEffectsPreload(root,{allowValidator=null}={}) {
   const file=join(root,'no-effects.mjs');
   fs.writeFileSync(file,`import fs from 'node:fs';
 import cp from 'node:child_process';
@@ -31,7 +31,10 @@ fs.openSync=(path,flags,...rest)=>{
   if(typeof flags==='number' ? (flags & (fs.constants.O_WRONLY|fs.constants.O_RDWR|fs.constants.O_CREAT|fs.constants.O_TRUNC|fs.constants.O_APPEND))!==0 : flags!=='r' && flags!=='rs') refuse('openSync');
   return open(path,flags,...rest);
 };
-for(const name of ['spawnSync','spawn','execSync','exec','execFileSync','execFile','fork']) cp[name]=()=>refuse(name);
+for(const name of ['spawnSync','spawn','execSync','exec','execFileSync','execFile','fork']) {
+  const original=cp[name];
+  cp[name]=(...args)=>name==='spawnSync' && ${JSON.stringify(allowValidator)}!==null && args[0]===process.execPath && args[1]?.[0]===${JSON.stringify(allowValidator)} ? original(...args) : refuse(name);
+}
 syncBuiltinESMExports();
 process.on('exit',()=>{if(attempted) process.exitCode=97;});
 `);

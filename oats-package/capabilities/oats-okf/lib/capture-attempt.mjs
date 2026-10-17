@@ -39,12 +39,14 @@ export function captureRoot(cwd, env = process.env) {
 export const gatePath = root => join(root, '.oats-okf-capture', 'gate');
 export function sourceProof(source) {
   safePath(source.home);
-  const s = fs.lstatSync(source.home);
+  const s = fs.lstatSync(source.home), metaFile = safePath(join(source.home, 'instance.json'));
   if (!s.isDirectory()) unknown();
+  const meta = JSON.parse(fs.readFileSync(metaFile, 'utf8'));
+  // Kernel lifecycle/session bookkeeping is mutable on a live home. Bind to
+  // identity only; start IDs, wake, backend and prompt updates are not identity.
+  const identity = Object.fromEntries(['instance', 'agent', 'createdAt', 'incarnationId', 'kind'].map(k => [k, meta[k] ?? null]));
   return { id: source.id, file: source.file, descriptor: hash(fs.readFileSync(source.file)),
-    home: source.home, homeDirectory: { dev: s.dev, ino: s.ino },
-    // Keep only a digest, never launch recipes, auth or environment in custody.
-    launch: hash(fs.readFileSync(join(source.home, 'instance.json'))) };
+    home: source.home, homeDirectory: { dev: s.dev, ino: s.ino }, identity };
 }
 function same(a, b) { return hash(a) === hash(b); }
 export function readAttempt(dir) {
@@ -56,9 +58,14 @@ export function readAttempt(dir) {
 export function receiptFor(dir, request) {
   const receipt = privateJSON(join(dir, 'receipt.json'));
   if (receipt.version !== 1 || receipt.attempt !== request.id || receipt.requestHash !== hash(request)
-    || receipt.closed !== true || typeof receipt.overflow !== 'boolean' || typeof receipt.stdout !== 'string'
+    || receipt.closed !== true || typeof receipt.nativeDispatched !== 'boolean' || typeof receipt.overflow !== 'boolean' || typeof receipt.stdout !== 'string'
     || Buffer.byteLength(receipt.stdout) > RECEIPT_LIMIT) unknown();
+  if (!receipt.nativeDispatched && (!['runner-exec-failed', 'native-exec-failed', 'source-changed', 'gate-mismatch', 'cli-changed'].includes(receipt.reason) || receipt.stdout !== '' || receipt.overflow)) unknown();
   return receipt;
+}
+export function noDispatchReceipt(dir, request, reason) {
+  save(join(dir, 'receipt.json'), { version: 1, attempt: request.id, requestHash: hash(request), closed: true, nativeDispatched: false, reason, exitCode: null, signal: null, overflow: false, stdout: '', finished: Date.now() });
+  releaseGate(dir, request);
 }
 function releaseGateLocked(dir, request) {
   // The durable close receipt proves that this attempt's native child ended.
@@ -77,14 +84,12 @@ export function releaseGate(dir, request) {
   catch (e) { if (e.code !== 'E_LOCKED' && e.code !== 'E_DEADLINE') throw e; }
 }
 function acquireGateLocked(dir, request) {
-  const gate = gatePath(request.root);
-  safePath(dirname(gate)); fs.mkdirSync(dirname(gate), { recursive: true, mode: 0o700 }); privateDirectory(dirname(gate));
-  try { fs.mkdirSync(gate, { mode: 0o700 }); }
-  catch (e) {
-    if (e.code !== 'EEXIST') throw e;
+  const gate = gatePath(request.root), parent = dirname(gate);
+  safePath(parent); fs.mkdirSync(parent, { recursive: true, mode: 0o700 }); privateDirectory(parent);
+  if (fs.existsSync(gate)) {
     privateDirectory(gate);
-    // An abandoned runner can leave a gate AFTER publishing its receipt. Only
-    // that exact request/receipt pair permits release, never a dead owner PID.
+    // Only a matching terminal receipt permits removal of an occupied gate.
+    // Unknown dispatch/ownership remains held, regardless of process age.
     try {
       const owner = privateJSON(join(gate, 'owner.json'));
       const other = readAttempt(owner.directory);
@@ -92,9 +97,17 @@ function acquireGateLocked(dir, request) {
       releaseGateLocked(owner.directory, other);
     } catch { return false; }
     if (fs.existsSync(gate)) return false;
-    return acquireGateLocked(dir, request);
   }
-  save(join(gate, 'owner.json'), { version: 1, attempt: request.id, directory: dir, requestHash: hash(request) });
+  const staged = join(parent, `.gate-${randomUUID()}`);
+  fs.mkdirSync(staged, { mode: 0o700 });
+  try {
+    save(join(staged, 'owner.json'), { version: 1, attempt: request.id, directory: dir, requestHash: hash(request) });
+    fs.renameSync(staged, gate); syncDir(parent);
+  } finally {
+    // A crash before publication leaves only an inert staging directory. No
+    // runner may dispatch without the published, fully owned gate.
+    if (fs.existsSync(staged)) fs.rmSync(staged, { recursive: true });
+  }
   return true;
 }
 function acquireGate(dir, request) {
@@ -120,6 +133,7 @@ export function consumeAttempt(source, attempt) {
   save(join(dir, 'consumed.json'), { version: 1, attempt: attempt.id, requestHash: hash(attempt) });
 }
 function reportFrom(receipt, request) {
+  if (!receipt.nativeDispatched) return { status: 'not-dispatched', complete: false, reason: receipt.reason, sessions: [] };
   if (receipt.overflow) unknown();
   let r; try { r = JSON.parse(receipt.stdout); } catch { unknown(); }
   if (!r || r.home !== request.source.home || r.owner !== request.owner || r.sourceRoots !== 'launch-history'
@@ -156,7 +170,7 @@ function observeCapture(source, { deadline, final = false }) {
   const base = join(dirname(source.file), 'capture-attempts'), current = join(base, 'current.json');
   let request, dir, dispatched = false;
   const proof = sourceProof(source);
-  const root = captureRoot(source.context), owner = process.env.TURN_RECORD_OWNER ?? hostname().split('.')[0];
+  let root, owner;
   const pending = (status, reason) => ({ observation: { status, complete: false, attempt: request.id,
     elapsedSeconds: Math.max(0, (Date.now() - request.created) / 1000), budgetSeconds: budget / 1000,
     reason: `${reason}; source and receipts retained; resume at a later checkpoint` }, attempt: request });
@@ -175,23 +189,38 @@ function observeCapture(source, { deadline, final = false }) {
     if (deadline <= Date.now()) fail('E_CAPTURE', 'capture deadline: backlog preserved; retire must retry');
     bounded(deadline - Date.now());
     const cli = cliPath();
+    root = captureRoot(source.context); owner = process.env.TURN_RECORD_OWNER ?? hostname().split('.')[0];
     request = { version: 1, id: randomUUID(), source: proof, root, owner, cli, cwd: source.context, final, created: Date.now() };
     dir = join(base, request.id); safePath(dir); fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     privateDirectory(base); privateDirectory(dir);
     save(join(dir, 'request.json'), request);
     save(current, { id: request.id, requestHash: hash(request) });
   }
-  if (!same(request.source, proof) || request.root !== root || request.owner !== owner || request.cli !== cliPath() || request.cwd !== source.context) unknown();
+  if (!same(request.source, proof) || request.cwd !== source.context) unknown();
+  root = request.root; owner = request.owner;
   if (!fs.existsSync(join(dir, 'receipt.json')) && !fs.existsSync(join(dir, 'dispatch.json'))) {
-    // A gate bearing OUR request without dispatch.json is an uncertain crash
-    // window; acquireGate refuses it because there is no closed receipt.
-    if (!acquireGate(dir, request)) return pending('queued', `capture attempt ${request.id} is waiting for the shared record root`);
-    save(join(dir, 'dispatch.json'), { attempt: request.id, requestHash: hash(request), at: Date.now() });
-    const env = { ...cleanEnv(), TURN_RECORD_ROOT: root, TURN_RECORD_OWNER: owner };
-    try {
-      const child = spawn(process.execPath, [runner, dir], { cwd: source.context, env, detached: true, stdio: 'ignore' });
-      child.on('error', () => {}); child.unref(); dispatched = true;
-    } catch { return pending('uncertain', `capture attempt ${request.id} dispatch is uncertain`); }
+    if (request.cli !== cliPath()) {
+      noDispatchReceipt(dir, request, 'cli-changed');
+    } else {
+      // A gate bearing OUR request without dispatch.json is an uncertain crash
+      // window; acquireGate refuses it because there is no closed receipt.
+      if (!acquireGate(dir, request)) return pending('queued', `capture attempt ${request.id} is waiting for the shared record root`);
+      save(join(dir, 'dispatch.json'), { attempt: request.id, requestHash: hash(request), at: Date.now() });
+      const env = { ...cleanEnv(), TURN_RECORD_ROOT: root, TURN_RECORD_OWNER: owner };
+      let runnerMayExist = false;
+      try {
+        const child = spawn(process.execPath, [runner, dir], { cwd: source.context, env, detached: true, stdio: 'ignore' });
+        runnerMayExist = child.pid !== undefined;
+        child.on('error', () => {}); child.unref();
+        // An undefined PID here is the OS spawn result (no process created),
+        // not a liveness inference about a previously dispatched process.
+        if (child.pid === undefined) noDispatchReceipt(dir, request, 'runner-exec-failed');
+        else dispatched = true;
+      } catch {
+        if (runnerMayExist) return pending('uncertain', `capture attempt ${request.id} runner dispatch is uncertain`);
+        noDispatchReceipt(dir, request, 'runner-exec-failed');
+      }
+    }
   }
   while (!fs.existsSync(join(dir, 'receipt.json'))) {
     const left = deadline - Date.now();
@@ -203,5 +232,5 @@ function observeCapture(source, { deadline, final = false }) {
   const receipt = receiptFor(dir, request);
   releaseGate(dir, request);
   const report = reportFrom(receipt, request);
-  return { report, attempt: request, dispatched, env: { ...cleanEnv(), TURN_RECORD_ROOT: root, TURN_RECORD_OWNER: owner } };
+  return { report, attempt: request, dispatched, timing: { elapsedSeconds: Math.max(0, (Date.now() - request.created) / 1000), budgetSeconds: budget / 1000 }, env: { ...cleanEnv(), TURN_RECORD_ROOT: root, TURN_RECORD_OWNER: owner } };
 }

@@ -459,11 +459,35 @@ test('manifest owns all three binding phase commands',()=>{
   assert.equal(distribution.compatibility.oats,manifest.compatibility.oats);
   const {reasons,...phases}=manifest.binding;
   assert.deepEqual(phases,{version:1,normalize:'binding-normalize',bind:'binding-bind',check:'binding-check'});
-  assert.equal(reasons.length,26);assert.equal(new Set(reasons).size,26);assert.ok(reasons.every(reason=>typeof reason==='string'&&reason.length>0));
+  assert.equal(reasons.length,28);assert.equal(new Set(reasons).size,28);assert.ok(reasons.every(reason=>typeof reason==='string'&&reason.length>0));
   // Every check-phase reason the wire can emit is in the manifest byte-exact —
   // the kernel may only pass literals it was told about.
   for(const reason of CHECK_REASONS) assert.ok(reasons.includes(reason),`manifest lacks check reason: ${reason}`);
   assert.ok(reasons.every(r=>!/:\/\/|^\/|\s\/|\$\{|\{\{/.test(r) && r.length<=200),'reasons carry no URLs, paths or values');
   for(const name of Object.values(manifest.binding).filter(value=>typeof value==='string')) assert.ok(Object.hasOwn(manifest.commands,name));
   assert.equal(manifest.settings['state-dir'].default,undefined);
+});
+
+test('retirement-deferred readiness is a redacted ready warning with bounded unknown coverage, even with harvest off', t=>{
+  const {f,binding}=prepareBinding(t),bindings=validateBindings(binding.payload.runtime.bindings,f.descriptorFile);
+  for(const [alias,nodes] of [['reference-base',{reference:{path:'reference',owner:'reference-owner'}}],['private-base',{expert:{path:'expert',owner:'expert-owner'}}]]) {
+    const file=join(f.root,`${alias}-nodes.json`);fs.writeFileSync(file,JSON.stringify(nodes));initBase(bindings,alias,file,undefined,{confirm:true});
+  }
+  const id='11111111-1111-4111-8111-111111111111',sourceDir=join(f.stateDir,'sources',id),privateText='SYNTHETIC_PRIVATE_RETIREMENT';
+  fs.mkdirSync(sourceDir,{recursive:true,mode:0o700});
+  const put=(file,value)=>fs.writeFileSync(file,JSON.stringify(value),{mode:0o600});
+  put(join(sourceDir,'source.json'),{version:1,id,agent:privateText,instance:privateText,home:join(f.root,privateText),bindings:{stateDir:f.stateDir}});
+  put(join(sourceDir,'retirement-deferred.json'),{version:1,source:id,since:new Date(Date.now()-60000).toISOString(),attempt:null,reason:'capture-pending'});
+  const preload=noEffectsPreload(f.root,{allowValidator:join(ROOT,'oats-package/capabilities/oats-okf/lib/okf-validate.mjs')}),before=inventory(f.root);
+  for(const harvest of ['on','off']) {
+  const checked=call('check',kernelReadinessRequest({...f.settings,harvest}),{OATS_SOUL:f.soulDir,NODE_OPTIONS:`--import=${JSON.stringify(preload)}`});
+  assert.equal(checked.status,0,checked.stderr);assert.equal(checked.response.result.status,'ready');assert.deepEqual(checked.response.result.problems,[]);
+  assert.deepEqual(Object.keys(checked.response.result).sort(),['problems','status','warnings'],'released kernel accepts only these check-result keys');
+  const warning=checked.response.result.warnings.find(w=>w.code==='retirement-capture-deferred');assert.ok(warning);assert.match(warning.message,/1 source\(s\).*age 6[0-9] s.*coverage complete/);
+  assert.doesNotMatch(checked.stdout,new RegExp(`${privateText}|${f.root}|${id}`));assert.deepEqual(inventory(f.root),before);
+  }
+  fs.symlinkSync(sourceDir,join(f.stateDir,'sources','22222222-2222-4222-8222-222222222222'));
+  const unknown=call('check',kernelReadinessRequest({...f.settings,harvest:'off'}),{OATS_SOUL:f.soulDir,NODE_OPTIONS:`--import=${JSON.stringify(preload)}`});
+  assert.equal(unknown.status,0,unknown.stderr);assert.equal(unknown.response.result.status,'ready');assert.ok(unknown.response.result.warnings.some(w=>w.code==='retirement-observation-incomplete'&&/unknown/.test(w.message)));
+  assert.ok(unknown.response.result.warnings.some(w=>/at least 1/.test(w.message)));assert.doesNotMatch(unknown.stdout,new RegExp(privateText));
 });

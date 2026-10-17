@@ -99,7 +99,9 @@
       "okf base <alias>: cached <cached> not yet validated on this host: run `oats okf bases`",
       "okf base <alias>: <repository> <acceptedBranch> unreachable (<reason>)",
       "okf base <alias>: harvest runtime check skipped node resolution because the base is not cached",
-      "okf base <alias> not primed: <reason>; run `oats okf bases`"
+      "okf base <alias> not primed: <reason>; run `oats okf bases`",
+      "retirement capture deferred for <count> source(s); oldest observed age <age> s; registry coverage <coverage>; source retained until retirement custody is resolved",
+      "retirement capture observation has <coverage> registry coverage; observed <count> deferred source(s), oldest observed age <age> s; inspect harvest-status"
     ]
   },
   "inject": "injects/okf.md",

@@ -3213,26 +3213,44 @@ test('detached capture pending defers checkpoint/manual and refuses retire; skip
   const f=fixture(t),s=f.source();note(f);put(join(f.dir,'capture-hold'),'');
   const {withDeadline}=await mod('io');
   const first=checkpointHarvest(s,{deadline:Date.now()+200});assert.equal(first.status,'deferred');assert.equal(first.capture.complete,false);
+  const obligation=join(dirname(s.file),'retirement-deferred.json');assert.equal(fs.existsSync(obligation),false,'ordinary checkpoint pending is not deferred retirement');
   const started=Date.now()+15000;while(!fs.existsSync(f.calls)){assert.ok(Date.now()<started);await new Promise(r=>setTimeout(r,20));}
   const manual=withDeadline(Date.now()+100,()=>runSource(s,{manual:true,noLaunch:true}));assert.equal(manual.status,'deferred');
   assert.throws(()=>capture(s,{final:true,deadlineMs:100}),{code:'E_CAPTURE_PENDING'});
+  const since=readJSON(obligation).since;
+  assert.throws(()=>capture(s,{final:true,deadlineMs:100}),{code:'E_CAPTURE_PENDING'});assert.equal(readJSON(obligation).since,since);
   const {retireHarvestOff}=await mod('sources');
   assert.throws(()=>retireHarvestOff(s,{reason:'off'}),{code:'E_CAPTURE_PENDING'});
   assert.equal(loadStatus(s).retired,false);assert.equal(loadStatus(s).activeRun,null);assert.ok(fs.existsSync(s.home));
   assert.equal(callsOf(f).filter(c=>c.a[0]==='capture').length,1);assert.equal(spawnsOf(f).length,0);
+  save(join(s.home,'instance.json'),{...readJSON(join(s.home,'instance.json')),startId:randomUUID(),restartCount:1,wake:{state:'registered'},spawnCompleted:true});
   const current=readJSON(join(dirname(s.file),'capture-attempts','current.json'));
   const receipt=join(dirname(s.file),'capture-attempts',current.id,'receipt.json');
   fs.rmSync(join(f.dir,'capture-hold'));
   const end=Date.now()+15000;while(!fs.existsSync(receipt)){assert.ok(Date.now()<end);await new Promise(r=>setTimeout(r,20));}
+  assert.equal(capture(s).complete,true);assert.equal(readJSON(obligation).since,since,'checkpoint success preserves the original retirement obligation');
   // A new native tail after the retained receipt must be captured by a
   // fresh final attempt, not hidden by the earlier final-purpose request.
   save(join(f.dir,'turns.json'),[{id:'tail',thread:'pi:session:tail',kind:'session',ts:'2026-10-17',source:'pi',text:[]}]);
   save(join(f.dir,'capture.json'),{status:'complete',complete:true,sessions:[{thread:'pi:session:tail',lastTurnId:'tail'}]});
   assert.equal(capture(s,{final:true}).complete,true);assert.equal(loadStatus(s).retired,true);
-  assert.equal(loadStatus(s).captured.threads['pi:session:tail'],'tail');
+  assert.equal(loadStatus(s).captured.threads['pi:session:tail'],'tail');assert.equal(fs.existsSync(obligation),false,'verified final resolution clears the obligation');
   const g=fixture(t),other=g.source();note(g);
   save(join(g.dir,'capture.json'),{status:'skipped',complete:false,sessions:[{thread:'pi:session:old',lastTurnId:'old'}]});
   save(join(g.dir,'turns.json'),[{id:'old',thread:'pi:session:old',kind:'session',ts:'2026-10-06',source:'pi',text:[]}]);
   const deferred=checkpointHarvest(other,{deadline:Date.now()+5000});assert.equal(deferred.status,'deferred');assert.equal(deferred.capture.nativeStatus,'skipped');
   assert.equal(callsOf(g).some(c=>c.a[0]==='recall'),false);assert.equal(loadStatus(other).activeRun,null);assert.equal(loadStatus(other).retired,false);
+});
+
+test('harvest-status exposes deferred retirement with preserved age under harvest on/off; consent-off resolution clears it',async t=>{
+  const f=fixture(t),s=f.source();note(f);
+  assert.throws(()=>capture(s,{final:true,deadline:Date.now()-1}));
+  const obligation=join(dirname(s.file),'retirement-deferred.json'),marker=readJSON(obligation);marker.since=new Date(Date.now()-120000).toISOString();save(obligation,marker);
+  for(const harvest of ['on','off']) {
+    const r=f.cli('harvest-status',[],{OATS_SETTINGS:JSON.stringify({'bindings-file':f.bindingFile,harvest})});assert.equal(r.status,0,r.stdout);
+    assert.equal(r.out.result.retirementDeferred.count,1);assert.equal(r.out.result.retirementDeferred.sources[0].since,marker.since);assert.ok(r.out.result.retirementDeferred.sources[0].ageSeconds>=120);
+    assert.equal(r.out.result.retirementWarnings[0].code,'retirement-capture-deferred');
+  }
+  const {retireHarvestOff}=await mod('sources');retireHarvestOff(s,{reason:'off'});assert.equal(fs.existsSync(obligation),false);assert.equal(loadStatus(s).retired,true);
+  assert.equal(f.cli('harvest-status').out.result.retirementDeferred.count,0);
 });

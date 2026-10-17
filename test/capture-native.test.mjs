@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { pathToFileURL, fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { loadBindings } from '../oats-package/capabilities/oats-okf/lib/config.mjs';
 import { initBase } from '../oats-package/capabilities/oats-okf/lib/migration.mjs';
@@ -83,6 +83,14 @@ test('real lock skipped exit0 and failed nonzero receipts retain source without 
     assert.throws(() => capture(s, { final: true, deadlineMs: 5000 }), { code: 'E_CAPTURE_PENDING' });
     const receipt = readJSON(f.current(s).receipt); assert.equal(receipt.exitCode, 0); assert.equal(JSON.parse(receipt.stdout).status, 'skipped');
     assert.equal(loadStatus(s).retired, false); assert.deepEqual(loadStatus(s).captured.threads, {});
+    // Exercise the RELEASED kernel's actual provider-check runner/closed codec,
+    // not just our consumer test's JSON shape assumptions.
+    const {runProviderCheck}=await import(pathToFileURL(join(dirname(dirname(resolve(cli))),'lib/instance-inspect.mjs')));
+    const cap=fileURLToPath(new URL('../oats-package/capabilities/oats-okf/',import.meta.url)),manifest=readJSON(join(cap,'oats.json'));
+    const checked=runProviderCheck({workspace:{key:'local:disposable-capture',name:'fixture'},deployment:f.root,home:null,meta:null,soul:{name:s.agent,soulDir:s.soulDir},teams:[],defaultTeam:null,teamsSource:null,payloads:{'oats.okf':{'bindings-file':s.bindings.file,harvest:'off'}}},{name:'oats.okf',manifest},cap);
+    assert.equal(checked.outcome,'result',JSON.stringify(checked));assert.equal(checked.result.status,'ready');assert.deepEqual(checked.result.problems,[]);
+    assert.ok(checked.result.warnings.some(w=>w.code==='retirement-capture-deferred'&&/1 source/.test(w.message)));
+
   } finally { nativeLock.release(); }
   // A missing historical root is an actual kernel failed/nonzero JSON outcome.
   fs.rmSync(join(process.env.CLAUDE_CONFIG_DIR, 'projects'), { recursive: true });

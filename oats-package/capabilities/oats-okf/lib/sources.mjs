@@ -1,3 +1,4 @@
+import { deferRetirement, clearDeferredRetirement } from './retirement-deferred.mjs';
 import { nativeCapture, consumeAttempt, assertCaptureSettled } from './capture-attempt.mjs';
 import { randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
@@ -420,10 +421,11 @@ export function sourceSwitch(source, { firstBatch = false, deadline } = {}) {
 /** Retire a registered source whose harvest is now off: no final capture and
  *  no new drain; the inputs already in custody stay. */
 export function retireHarvestOff(source, sw) {
-  assertCaptureSettled(source);
+  try { assertCaptureSettled(source); } catch(e) { deferRetirement(source,{attempt:loadStatus(source).lastCapture?.attempt,code:e.code}); throw e; }
   updateStatus(source, current => {
     current.retired = true; current.retiredAt = new Date().toISOString(); current.harvestOff = { reason: sw.reason, at: current.retiredAt };
   });
+  clearDeferredRetirement(source);
   return { retired: true, reason: 'harvest-off', switch: sw.reason, source: source.file };
 }
 /** Capture notes and observe one durable exact-home native attempt. Deadlines
@@ -433,8 +435,15 @@ export function capture(source,{final=false,deadlineMs=85000,deadline=Date.now()
   // A busy capture lock is marked captureBusy; an E_LOCKED from inside the
   // capture (its status writes) is not another capture.
   let entered=false;
-  try {return captureLocked(source,{final,deadline},()=>{entered=true;});}
-  catch(e) {if(!entered && e.code==='E_LOCKED') e.captureBusy=true;throw e;}
+  try {
+    const result=captureLocked(source,{final,deadline},()=>{entered=true;});
+    if(final && result.complete) clearDeferredRetirement(source);
+    return result;
+  } catch(e) {
+    if(!entered && e.code==='E_LOCKED') e.captureBusy=true;
+    if(final) {let attempt=e.attempt;try{attempt??=loadStatus(source).lastCapture?.attempt;}catch{}deferRetirement(source,{attempt,code:e.code});}
+    throw e;
+  }
 }
 function captureLocked(source,options,enter) {
   return withLock(join(dirname(source.file),'capture.lock'),()=>capturePass(source,options,enter),{reclaimDead:true});
@@ -475,8 +484,8 @@ function capturePass(source,{final,deadline},enter) {
       report=observed.report;
       if(report.complete!==true) {
         consumeAttempt(source,attempt);
-        return defer({status:'deferred',complete:false,attempt:attempt.id,nativeStatus:report.status,
-          reason:'native capture is incomplete; source and custody retained; retry at a later checkpoint'});
+        return defer({status:'deferred',complete:false,attempt:attempt.id,nativeStatus:report.status,...(report.status==='not-dispatched'?{nativeReason:report.reason}:{}),...observed.timing,
+          reason:report.status==='not-dispatched'?`native capture was not dispatched (${report.reason}); check selected kernel CLI/source identity and retry; source and custody retained`:'native capture is incomplete; source and custody retained; retry at a later checkpoint'});
       }
       const recall=(args)=>oats(args,source.context,{native:true,timeout:remainingTime(),env:observed.env});
       for(const session of report.sessions) {

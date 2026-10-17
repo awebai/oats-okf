@@ -1,3 +1,4 @@
+import { observeDeferredRetirements, retirementWarnings } from './retirement-deferred.mjs';
 // `oats okf harvest-status` and `oats okf setup --harvest on|off` (okf 4.0.0).
 import { fs, join, dirname, resolve, readJSON, atomic, fail } from './io.mjs';
 import { settings, loadBindings } from './config.mjs';
@@ -17,7 +18,7 @@ function registeredSources(soul, seat) {
     if (rows.length + once.length >= SOURCE_LIMIT) return { stateDir: bindings.stateDir, sources: rows, once, truncated: true };
     let source, status;
     try { source = readJSON(join(dir, id, 'source.json')); status = readJSON(join(dir, id, 'status.json')); } catch { continue; }
-    if (soul && source.agent !== soul) continue;
+    if ((soul && source.agent !== soul) || (seat && source.home !== seat)) continue;
     // okf 4.1.0: a one-shot harvest is not a registered source; it is listed apart.
     if (source.once) { if (!seat || source.home === seat) once.push(onceRow(id, dir, source, status)); continue; }
     // okf 4.2.0: everything still owed for the source, each with its exact
@@ -48,8 +49,11 @@ export function harvestStatus({ home, flags = {} }) {
   const unknown = sw.effective === 'off' && deployment.value === 'on' && soulRow.readable === false;
   const harvest = unknown ? 'unknown' : sw.effective;
   const reason = unknown ? `the soul's opt-out could not be read (${soulRow.why}); capture treats it as off` : sw.reason;
-  return { harvest, reason, rows: sw.rows, warnings: sw.warnings, soul, instance, ...registeredSources(soul, flags.home ? resolve(flags.home) : null), // a retired seat's home may be gone; its one-shots still list
-    note: 'harvest applies from the next spawn: switching it on never captures earlier sessions, and switching it off (or a soul opting out) stops every later checkpoint, retirement capture and drain of registered sources. Harvest runs at checkpoints (`oats okf harvest`), never on a schedule; oats.okf manages no scheduler job (README#upgrading-from-41 removes the ones 4.1 created).' };
+  const seat=flags.home?resolve(flags.home):null;
+  let retirementDeferred;try{retirementDeferred=observeDeferredRetirements(loadBindings(),{soul,home:seat});}catch{retirementDeferred={count:null,observedCount:0,oldestAgeSeconds:null,coverage:'unknown',scannedSources:0,sources:[]};}
+  const retirementWarning=retirementWarnings(retirementDeferred);
+  return { harvest, reason, rows: sw.rows, warnings: [...sw.warnings,...retirementWarning.map(w=>`${w.code}: ${w.message}`)], retirementDeferred, retirementWarnings:retirementWarning, soul, instance, ...registeredSources(soul, seat), // a retired seat's home may be gone; its one-shots still list
+    note: 'harvest applies from the next spawn: switching it on never captures earlier sessions, and switching it off (or a soul opting out) stops every later checkpoint, retirement capture and drain of registered sources. An outstanding deferred retirement remains visible until its custody/consent obligation is resolved. Harvest runs at checkpoints (`oats okf harvest`), never on a schedule; oats.okf manages no scheduler job (README#upgrading-from-41 removes the ones 4.1 created).' };
 }
 
 /** Find the deployment's oats-local.yaml: OATS_WORKSPACE, else up from cwd. */

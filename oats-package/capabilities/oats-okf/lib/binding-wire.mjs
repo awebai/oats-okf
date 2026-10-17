@@ -1,3 +1,4 @@
+import { observeDeferredRetirements, retirementWarnings, RETIREMENT_REASON_TEMPLATES } from './retirement-deferred.mjs';
 import { TextDecoder } from 'node:util';
 import { spawn } from 'node:child_process';
 import { isAbsolute, resolve } from 'node:path';
@@ -270,6 +271,7 @@ const checkReasons=Object.freeze({
   'runtime:not-qualified':'harvest runtime is not qualified: install/configure the selected harvest runtime or set harvest off',
 });
 const checkReasonTemplates=Object.freeze({
+  ...RETIREMENT_REASON_TEMPLATES,
   'cache-stale':'okf base <alias>: cached <cached>, accepted is now <accepted>; the next okf read refreshes it (or run `oats okf bases --fresh`)',
   'base-unreachable:warm':'okf base <alias>: <repository> unreachable; readers serve the cached <cached> fetched <fetchedAt>',
   'cache-not-primed':'okf base <alias> is not cached on this host yet: run `oats okf bases` (a spawn primes it)',
@@ -419,6 +421,8 @@ async function checkPhase(req) {
     try { checkKnowledgeRuntime({rendered,accepted}); }
     catch(error) { const out=checkError(error,'runtime');problems.push(out.problem); }
   }
+  const deferred=observeDeferredRetirements(bindings),deferredWarnings=retirementWarnings(deferred);
+  warnings.push(...deferredWarnings);
   const result={status:statusOf(problems),problems};
   if(warnings.length) result.warnings=warnings;
   return result;
