@@ -120,7 +120,56 @@ test('readiness skips harvest runtime qualification when harvest is off and name
   const off=call('check',kernelReadinessRequest({...f.settings,harvest:'off'}),{OATS_SOUL:f.soulDir});
   assert.deepEqual(off.response.result,{status:'ready',problems:[]},'harvest off matches spawn: no harvest runtime qualification');
   const on=call('check',kernelReadinessRequest({...f.settings,harvest:'on'}),{OATS_SOUL:f.soulDir});
-  assert.deepEqual(on.response.result,{status:'needs-configuration',problems:[{code:'needs-configuration',message:'harvest runtime is not qualified: install/configure the selected harvest runtime or set harvest off'}]});
+  assert.deepEqual(on.response.result,{status:'needs-configuration',problems:[{code:'needs-configuration',message:'OKF bindings file missing or invalid: repair configured bindings file, or deactivate oats.okf'}]});
+});
+
+test('legacy harvest-on readiness resolves deployment aliases independently of stable store IDs',t=>{
+  const {f,binding}=prepareBinding(t);
+  const doc={...binding.payload.runtime.bindings,bases:{
+    reference:binding.payload.stores['reference-base'],
+    destination:binding.payload.stores['private-base'],
+  }};
+  fs.writeFileSync(f.descriptorFile,JSON.stringify(doc));
+  fs.writeFileSync(join(f.soulDir,'okf.json'),JSON.stringify({version:1,owner:'expert-owner',reads:['reference/reference'],owns:['destination/expert']}));
+  const bindings=validateBindings(doc,f.descriptorFile);
+  for(const [alias,nodes] of [['reference',{reference:{path:'reference',owner:'reference-owner'}}],['destination',{expert:{path:'expert',owner:'expert-owner'}}]]) {
+    const file=join(f.root,`${alias}-nodes.json`);fs.writeFileSync(file,JSON.stringify(nodes));initBase(bindings,alias,file,undefined,{confirm:true});
+  }
+  const before=stateSnapshot(f.root);
+  for(const harvest of ['on','off']) {
+    const result=call('check',kernelReadinessRequest({...f.settings,harvest}),{OATS_SOUL:f.soulDir});
+    assert.equal(result.status,0,result.stderr);assert.equal(result.response.ok,true);
+    assert.deepEqual(result.response.result,{status:'ready',problems:[]});
+  }
+  assert.deepEqual(stateSnapshot(f.root),before,'readiness leaves bindings, bases and state untouched');
+  for(const [key,value,message] of [
+    ['harvest-runtime','unsupported','setting harvest-runtime must be pi, claude or codex'],
+    ['harvest-model',' ','setting harvest-model must be null or a non-empty string'],
+  ]) {
+    const result=call('check',kernelReadinessRequest({...f.settings,harvest:'on',[key]:value}),{OATS_SOUL:f.soulDir});
+    assert.deepEqual(result.response.result,{status:'needs-configuration',problems:[{code:'needs-configuration',message}]});
+  }
+  fs.writeFileSync(join(f.soulDir,'okf.json'),JSON.stringify({version:1,owner:'wrong-owner',reads:[],owns:['destination/expert']}));
+  const owner=call('check',kernelReadinessRequest({...f.settings,harvest:'on'}),{OATS_SOUL:f.soulDir});
+  assert.deepEqual(owner.response.result,{status:'needs-configuration',problems:[{code:'provider-not-qualified',message:'knowledge base owner or remote custody requirement not met'}]});
+});
+
+test('portable identity/configuration errors produce redacted binding diagnostics and captured invocation still refuses',t=>{
+  const {f,binding}=prepareBinding(t);
+  const mismatch=structuredClone(binding);
+  mismatch.payload.stores['private-base'].id='confidential-store-id';
+  mismatch.payload.runtime.bindings.bases['private-base'].id='confidential-store-id';
+  const invalid=structuredClone(binding);invalid.payload.reads='confidential-config-value';
+  for(const value of [mismatch,invalid]) {
+    const result=call('check',kernelReadinessRequest(value));
+    assert.equal(result.status,0,result.stderr);assert.equal(result.response.ok,true);
+    assert.deepEqual(result.response.result,{status:'needs-configuration',problems:[{code:'needs-configuration',message:'OKF bindings file missing or invalid: repair configured bindings file, or deactivate oats.okf'}]});
+    assert.doesNotMatch(result.stdout,/confidential|private-base|runtime is not qualified/);
+    assert.equal(result.stderr,'');
+    const file=join(f.root,'captured.json');fs.writeFileSync(file,JSON.stringify(value),{mode:0o600});
+    assert.throws(()=>loadInvocationKnowledgeBinding({OATS_BINDING_FILE:file}),{code:'E_BINDING'});
+  }
+  assert.equal(fs.existsSync(f.stateDir),false,'invalid portable bindings create no state');
 });
 
 test('Git readiness uses only the stateDir consult cache for cold, warm, stale and unreachable bases',async t=>{
