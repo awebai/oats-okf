@@ -71,16 +71,22 @@ const pause = ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0,
  *  age. With `reclaimDead`, a lock whose owner is provably gone (reclaimable)
  *  is taken over; otherwise an abandoned lock waits for an explicit unlock.
  *  `reclaimOwnerless:false` requires a recorded dead owner even after a long
- *  pause before owner publication; capture coordination uses this stricter mode.
+ *  pause before owner publication; this mode atomically publishes/releases the
+ *  lock with its owner, so a crash leaves either a complete lock or inert debris.
  *  Within an invocation deadline (withDeadline) the wait ends with it: a
  *  busy lock past it is E_DEADLINE, and nothing was done under it. */
 export function withLock(path, fn, { waitMs = 0, reclaimDead = false, reclaimOwnerless = true } = {}) {
   safePath(path); fs.mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  const owner = { token: randomUUID(), pid: process.pid, host: hostname() };
   const own = Date.now() + waitMs, deadline = Math.min(own, invocationDeadline ?? Infinity);
   for (let delay = 20;; delay = Math.min(delay * 2, 250)) {
-    try { fs.mkdirSync(path, { mode: 0o700 }); break; }
+    try {
+      if (reclaimOwnerless) fs.mkdirSync(path, { mode: 0o700 });
+      else publishOwnedLock(path, owner);
+      break;
+    }
     catch(e) {
-      if(e.code !== 'EEXIST') throw e;
+      if(!['EEXIST', 'ENOTEMPTY'].includes(e.code)) throw e;
       if(reclaimDead && reclaim(path, reclaimOwnerless)) continue;
       if(Date.now() >= deadline) {
         if(deadline < own) fail('E_DEADLINE', `busy lock: ${path}; this invocation's time budget is spent, so nothing was done under it, and what is persisted resumes`);
@@ -92,9 +98,30 @@ export function withLock(path, fn, { waitMs = 0, reclaimDead = false, reclaimOwn
       pause(Math.max(1, Math.min(delay, deadline - Date.now())));
     }
   }
-  const owner = { token: randomUUID(), pid: process.pid, host: hostname() };
-  save(join(path, 'owner.json'), owner);
-  try { return fn(); } finally { if (readJSON(join(path, 'owner.json')).token === owner.token) { fs.rmSync(path, { recursive: true }); syncDir(dirname(path)); } }
+  if (reclaimOwnerless) save(join(path, 'owner.json'), owner);
+  try { return fn(); } finally {
+    if (readJSON(join(path, 'owner.json')).token === owner.token) {
+      if (reclaimOwnerless) { fs.rmSync(path, { recursive: true }); syncDir(dirname(path)); }
+      else {
+        const released = `${path}.${randomUUID()}.released`;
+        fs.renameSync(path, released); syncDir(dirname(path));
+        try { fs.rmSync(released, { recursive: true }); } catch { /* Inert cleanup debris never owns the lock. */ }
+      }
+    }
+  }
+}
+/** Strict locks never expose an ownerless publication or cleanup window. */
+function publishOwnedLock(path, owner) {
+  // Preserve a legacy ownerless lock for explicit reconciliation. All strict
+  // contenders publish nonempty directories, which rename cannot overwrite.
+  try { fs.lstatSync(path); throw Object.assign(new Error('lock exists'), { code: 'EEXIST' }); }
+  catch (e) { if (e.code !== 'ENOENT') throw e; }
+  const staged = `${path}.${randomUUID()}.staged`;
+  fs.mkdirSync(staged, { mode: 0o700 });
+  try {
+    save(join(staged, 'owner.json'), owner);
+    fs.renameSync(staged, path); syncDir(dirname(path));
+  } finally { fs.rmSync(staged, { recursive: true, force: true }); }
 }
 /** A holder may die between creating a lock and writing its owner. */
 const OWNERLESS_LOCK_STALE_MS = 30000;
@@ -130,7 +157,13 @@ function reclaim(path, reclaimOwnerless) {
   }
   try {
     if (!same(abandoned(path, join(path, 'owner.json'), reclaimOwnerless), stale)) return false;
-    fs.rmSync(path, { recursive: true }); syncDir(dirname(path)); return true;
+    if (reclaimOwnerless) { fs.rmSync(path, { recursive: true }); syncDir(dirname(path)); }
+    else {
+      const released = `${path}.${randomUUID()}.released`;
+      fs.renameSync(path, released); syncDir(dirname(path));
+      try { fs.rmSync(released, { recursive: true }); } catch { /* Reclaimed owner was proven dead; debris is inert. */ }
+    }
+    return true;
   } finally { if (lockOwner(guard)?.token === me.token) fs.rmSync(guard, { force: true }); }
 }
 export function unlock(path, token) {

@@ -74,3 +74,36 @@ test('capture coordination refuses aged ownerless locks but recovers recorded de
   save(join(lock, 'owner.json'), { token: 'known-dead', pid: deadPid(), host: hostname() });
   assert.equal(withLock(lock, () => 'recovered', options), 'recovered');
 });
+
+test('strict lock publication interrupted before rename leaves no published lock', t => {
+  const root = scratch(t), lock = join(root, 'coordination.lock');
+  const ioURL = new URL('../oats-package/capabilities/oats-okf/lib/io.mjs', import.meta.url).href;
+  const code = `import fs from 'node:fs';import {syncBuiltinESMExports} from 'node:module';
+    const rename=fs.renameSync;fs.renameSync=(from,to)=>{if(to===${JSON.stringify(lock)})process.exit(0);return rename(from,to);};syncBuiltinESMExports();
+    const {withLock}=await import(${JSON.stringify(ioURL)});withLock(${JSON.stringify(lock)},()=>process.exit(9),{reclaimDead:true,reclaimOwnerless:false});`;
+  const child = spawnSync(process.execPath, ['--input-type=module', '-e', code], { encoding: 'utf8' });
+  assert.equal(child.status, 0, child.stderr);
+  assert.equal(fs.existsSync(lock), false);
+  const staged = fs.readdirSync(root).filter(n => n.endsWith('.staged'));
+  assert.equal(staged.length, 1);
+  assert.equal(typeof readJSON(join(root, staged[0], 'owner.json')).token, 'string');
+  assert.equal(withLock(lock, () => {
+    assert.equal(readJSON(join(lock, 'owner.json')).pid, process.pid);
+    assert.throws(() => withLock(lock, () => assert.fail('duplicate entry'), { reclaimDead:true,reclaimOwnerless:false }), e => e.code==='E_LOCKED');
+    return 'next caller';
+  }, { reclaimDead:true,reclaimOwnerless:false }), 'next caller');
+  assert.equal(fs.existsSync(lock), false);
+});
+
+test('interrupted strict lock cleanup leaves only inert released directories', t => {
+  const root=scratch(t),lock=join(root,'capture.lock');
+  const ioURL=new URL('../oats-package/capabilities/oats-okf/lib/io.mjs',import.meta.url).href;
+  const code=`import fs from 'node:fs';import assert from 'node:assert/strict';import {syncBuiltinESMExports} from 'node:module';import {join} from 'node:path';
+    const rm=fs.rmSync;let interrupted=0;fs.rmSync=(path,options)=>{if(String(path).endsWith('.released')){rm(join(path,'owner.json'));interrupted++;throw new Error('partial cleanup');}return rm(path,options);};syncBuiltinESMExports();
+    const {withLock}=await import(${JSON.stringify(ioURL)});const options={reclaimDead:true,reclaimOwnerless:false};
+    withLock(${JSON.stringify(lock)},()=>assert.equal(fs.existsSync(join(${JSON.stringify(lock)},'owner.json')),true),options);
+    assert.equal(fs.existsSync(${JSON.stringify(lock)}),false);
+    withLock(${JSON.stringify(lock)},()=>{},options);assert.equal(interrupted,2);assert.equal(fs.existsSync(${JSON.stringify(lock)}),false);`;
+  const child=spawnSync(process.execPath,['--input-type=module','-e',code],{encoding:'utf8'});
+  assert.equal(child.status,0,child.stderr);
+});
