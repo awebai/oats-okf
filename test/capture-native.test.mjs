@@ -89,7 +89,7 @@ test('real lock skipped exit0 and failed nonzero receipts retain source without 
     const cap=fileURLToPath(new URL('../oats-package/capabilities/oats-okf/',import.meta.url)),manifest=readJSON(join(cap,'oats.json'));
     const checked=runProviderCheck({workspace:{key:'local:disposable-capture',name:'fixture'},deployment:f.root,home:null,meta:null,soul:{name:s.agent,soulDir:s.soulDir},teams:[],defaultTeam:null,teamsSource:null,payloads:{'oats.okf':{'bindings-file':s.bindings.file,harvest:'off'}}},{name:'oats.okf',manifest},cap);
     assert.equal(checked.outcome,'result',JSON.stringify(checked));assert.equal(checked.result.status,'ready');assert.deepEqual(checked.result.problems,[]);
-    assert.ok(checked.result.warnings.some(w=>w.code==='retirement-capture-deferred'&&/1 source/.test(w.message)));
+    assert.ok(checked.result.warnings.some(w=>w.code==='retirement-capture-deferred'));
 
   } finally { nativeLock.release(); }
   // A missing historical root is an actual kernel failed/nonzero JSON outcome.

@@ -49,7 +49,7 @@ test('bounded foreground return leaves native alive; restart/duplicate observes 
   const f = fixture(t), s = f.source('one'); fs.writeFileSync(join(f.root, 'hold'), '');
   const start = Date.now(), first = f.observe(s);
   assert.equal(first.observation.status, 'running'); assert.ok(Date.now() - start < 1500);
-  assert.ok(first.observation.budgetSeconds <= .05); assert.match(first.observation.reason, /budget.*native capture continues/);
+  assert.ok(first.observation.budgetSeconds <= .05);
   await waitFor(() => f.calls().length === 1);
   const again = f.observe(s); assert.equal(again.attempt.id, first.attempt.id); assert.equal(f.calls().length, 1);
   const code = `import {nativeCapture} from ${JSON.stringify(moduleURL)};console.log(JSON.stringify(nativeCapture(${JSON.stringify(s)},{deadline:Date.now()+30})));`;

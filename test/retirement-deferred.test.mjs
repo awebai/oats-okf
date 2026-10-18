@@ -32,6 +32,6 @@ test('bounded/truncated and corrupt or redirected coverage cannot claim exact ze
   const budget=observeDeferredRetirements(f.bindings,{maxBytes:1});assert.equal(budget.count,null);assert.notEqual(budget.coverage,'complete');
   const symlink=join(f.bindings.stateDir,'sources',randomUUID());fs.symlinkSync(join(f.bindings.stateDir,'sources',a.id),symlink);
   const unknown=observeDeferredRetirements(f.bindings);assert.equal(unknown.count,null);assert.equal(unknown.coverage,'unknown');
-  const text=JSON.stringify(retirementWarnings(unknown));assert.doesNotMatch(text,/PRIVATE_NAME|PRIVATE_OTHER|\/private|\.json/);assert.match(text,/at least 2/);
+  const text=JSON.stringify(retirementWarnings(unknown));assert.doesNotMatch(text,/PRIVATE_NAME|PRIVATE_OTHER|\/private|\.json/);assert.equal(unknown.observedCount,2);assert.ok(retirementWarnings(unknown).some(w=>w.code==='retirement-observation-incomplete'));
   fs.writeFileSync(join(f.bindings.stateDir,'sources',a.id,'retirement-deferred.json'),'{');assert.equal(observeDeferredRetirements(f.bindings).coverage,'unknown');
 });

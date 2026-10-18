@@ -14,6 +14,7 @@ import { bindingFingerprint, validateBindings } from '../oats-package/capabiliti
 import { initBase } from '../oats-package/capabilities/oats-okf/lib/migration.mjs';
 import { loadSource, register } from '../oats-package/capabilities/oats-okf/lib/sources.mjs';
 import { tree } from '../oats-package/capabilities/oats-okf/lib/io.mjs';
+import { observeDeferredRetirements } from '../oats-package/capabilities/oats-okf/lib/retirement-deferred.mjs';
 import { verdict, withBase } from '../oats-package/capabilities/oats-okf/lib/consult.mjs';
 
 const ROOT=fileURLToPath(new URL('../',import.meta.url));
@@ -483,11 +484,13 @@ test('retirement-deferred readiness is a redacted ready warning with bounded unk
   const checked=call('check',kernelReadinessRequest({...f.settings,harvest}),{OATS_SOUL:f.soulDir,NODE_OPTIONS:`--import=${JSON.stringify(preload)}`});
   assert.equal(checked.status,0,checked.stderr);assert.equal(checked.response.result.status,'ready');assert.deepEqual(checked.response.result.problems,[]);
   assert.deepEqual(Object.keys(checked.response.result).sort(),['problems','status','warnings'],'released kernel accepts only these check-result keys');
-  const warning=checked.response.result.warnings.find(w=>w.code==='retirement-capture-deferred');assert.ok(warning);assert.match(warning.message,/1 source\(s\).*age 6[0-9] s.*coverage complete/);
+  const warning=checked.response.result.warnings.find(w=>w.code==='retirement-capture-deferred');assert.ok(warning);assert.ok(reasonAllowed(warning.message));
+  const observed=observeDeferredRetirements(bindings);assert.equal(observed.count,1);assert.ok(observed.oldestAgeSeconds>=60);assert.equal(observed.coverage,'complete');
   assert.doesNotMatch(checked.stdout,new RegExp(`${privateText}|${f.root}|${id}`));assert.deepEqual(inventory(f.root),before);
   }
   fs.symlinkSync(sourceDir,join(f.stateDir,'sources','22222222-2222-4222-8222-222222222222'));
   const unknown=call('check',kernelReadinessRequest({...f.settings,harvest:'off'}),{OATS_SOUL:f.soulDir,NODE_OPTIONS:`--import=${JSON.stringify(preload)}`});
-  assert.equal(unknown.status,0,unknown.stderr);assert.equal(unknown.response.result.status,'ready');assert.ok(unknown.response.result.warnings.some(w=>w.code==='retirement-observation-incomplete'&&/unknown/.test(w.message)));
-  assert.ok(unknown.response.result.warnings.some(w=>/at least 1/.test(w.message)));assert.doesNotMatch(unknown.stdout,new RegExp(privateText));
+  assert.equal(unknown.status,0,unknown.stderr);assert.equal(unknown.response.result.status,'ready');assert.ok(unknown.response.result.warnings.some(w=>w.code==='retirement-observation-incomplete'));
+  const observed=observeDeferredRetirements(bindings);assert.equal(observed.count,null);assert.equal(observed.coverage,'unknown');assert.equal(observed.observedCount,1);
+  assert.ok(unknown.response.result.warnings.some(w=>w.code==='retirement-capture-deferred'));for(const w of unknown.response.result.warnings)assert.ok(reasonAllowed(w.message));assert.doesNotMatch(unknown.stdout,new RegExp(privateText));
 });
