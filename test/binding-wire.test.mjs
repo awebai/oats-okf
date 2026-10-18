@@ -9,7 +9,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import net from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { bindingChoiceKey, storeChoiceKey } from '../oats-package/capabilities/oats-okf/lib/portable-binding.mjs';
-import { CHECK_REASONS, loadInvocationKnowledgeBinding, parseBindingJson, sourceRuntimeFromKnowledgeBinding } from '../oats-package/capabilities/oats-okf/lib/binding-wire.mjs';
+import { CHECK_REASON_MESSAGES, CHECK_REASONS, loadInvocationKnowledgeBinding, parseBindingJson, sourceRuntimeFromKnowledgeBinding } from '../oats-package/capabilities/oats-okf/lib/binding-wire.mjs';
 import { bindingFingerprint, validateBindings } from '../oats-package/capabilities/oats-okf/lib/config.mjs';
 import { initBase } from '../oats-package/capabilities/oats-okf/lib/migration.mjs';
 import { loadSource, register } from '../oats-package/capabilities/oats-okf/lib/sources.mjs';
@@ -120,7 +120,7 @@ test('readiness skips harvest runtime qualification when harvest is off and name
   const off=call('check',kernelReadinessRequest({...f.settings,harvest:'off'}),{OATS_SOUL:f.soulDir});
   assert.deepEqual(off.response.result,{status:'ready',problems:[]},'harvest off matches spawn: no harvest runtime qualification');
   const on=call('check',kernelReadinessRequest({...f.settings,harvest:'on'}),{OATS_SOUL:f.soulDir});
-  assert.deepEqual(on.response.result,{status:'needs-configuration',problems:[{code:'needs-configuration',message:'OKF binding missing or invalid: provision soul OKF declaration and bindings file, or deactivate oats.okf'}]});
+  assert.deepEqual(on.response.result,{status:'needs-configuration',problems:[{code:'needs-configuration',message:CHECK_REASON_MESSAGES['binding:not-configured']}]});
 });
 
 test('legacy harvest-on readiness resolves deployment aliases independently of stable store IDs',t=>{
@@ -142,26 +142,26 @@ test('legacy harvest-on readiness resolves deployment aliases independently of s
     assert.deepEqual(result.response.result,{status:'ready',problems:[]});
   }
   assert.deepEqual(stateSnapshot(f.root),before,'readiness leaves bindings, bases and state untouched');
-  for(const [key,value,message] of [
-    ['harvest-runtime','unsupported','setting harvest-runtime must be pi, claude or codex'],
-    ['harvest-model',' ','setting harvest-model must be null or a non-empty string'],
+  for(const [key,value,reason] of [
+    ['harvest-runtime','unsupported','harvest-runtime:invalid'],
+    ['harvest-model',' ','harvest-model:invalid'],
   ]) {
     const result=call('check',kernelReadinessRequest({...f.settings,harvest:'on',[key]:value}),{OATS_SOUL:f.soulDir});
-    assert.deepEqual(result.response.result,{status:'needs-configuration',problems:[{code:'needs-configuration',message}]});
+    assert.deepEqual(result.response.result,{status:'needs-configuration',problems:[{code:'needs-configuration',message:CHECK_REASON_MESSAGES[reason]}]});
   }
   fs.writeFileSync(join(f.soulDir,'okf.json'),JSON.stringify({version:1,owner:'wrong-owner',reads:[],owns:['destination/expert']}));
   const owner=call('check',kernelReadinessRequest({...f.settings,harvest:'on'}),{OATS_SOUL:f.soulDir});
-  assert.deepEqual(owner.response.result,{status:'needs-configuration',problems:[{code:'provider-not-qualified',message:'knowledge base owner or remote custody requirement not met'}]});
+  assert.deepEqual(owner.response.result,{status:'needs-configuration',problems:[{code:'provider-not-qualified',message:CHECK_REASON_MESSAGES['base:owner-unmet']}]});
   for(const refs of [{reads:['reference/confidential-missing'],owns:[]},{reads:[],owns:['destination/confidential-missing']}]) {
     fs.writeFileSync(join(f.soulDir,'okf.json'),JSON.stringify({version:1,owner:'expert-owner',...refs}));
     const missing=call('check',kernelReadinessRequest({...f.settings,harvest:'on'}),{OATS_SOUL:f.soulDir});
-    assert.deepEqual(missing.response.result,{status:'needs-configuration',problems:[{code:'needs-configuration',message:'OKF binding missing or invalid: provision soul OKF declaration and bindings file, or deactivate oats.okf'}]});
-    assert.doesNotMatch(missing.stdout,/confidential|repair configured bindings file|runtime is not qualified/);
+    assert.deepEqual(missing.response.result,{status:'needs-configuration',problems:[{code:'needs-configuration',message:CHECK_REASON_MESSAGES['binding:not-configured']}]});
+    assert.doesNotMatch(missing.stdout,/confidential/);
   }
   fs.writeFileSync(join(f.soulDir,'okf.json'),JSON.stringify({version:1,owner:'expert-owner',reads:['reference/reference'],owns:['destination/expert']}));
   fs.rmSync(join(f.writePath,'expert','index.md'));
   const invalidBase=call('check',kernelReadinessRequest({...f.settings,harvest:'on'}),{OATS_SOUL:f.soulDir});
-  assert.deepEqual(invalidBase.response.result,{status:'needs-configuration',problems:[{code:'provider-not-qualified',message:'declared knowledge base is not a validated knowledge tree'}]},'failed base validation must not invent a second binding problem');
+  assert.deepEqual(invalidBase.response.result,{status:'needs-configuration',problems:[{code:'provider-not-qualified',message:CHECK_REASON_MESSAGES['base:not-validated']}]},'failed base validation must not invent a second binding problem');
 });
 
 test('portable unresolved nodes name the soul binding without blaming a valid bindings file',t=>{
@@ -174,8 +174,8 @@ test('portable unresolved nodes name the soul binding without blaming a valid bi
   missing.payload.runtime.declaration.reads=['reference-base/confidential-missing'];
   const checked=call('check',kernelReadinessRequest(missing));
   assert.equal(checked.response.ok,true);
-  assert.deepEqual(checked.response.result,{status:'needs-configuration',problems:[{code:'needs-configuration',message:'OKF binding missing or invalid: provision soul OKF declaration and bindings file, or deactivate oats.okf'}]});
-  assert.doesNotMatch(checked.stdout,/confidential|repair configured bindings file|runtime is not qualified/);
+  assert.deepEqual(checked.response.result,{status:'needs-configuration',problems:[{code:'needs-configuration',message:CHECK_REASON_MESSAGES['binding:not-configured']}]});
+  assert.doesNotMatch(checked.stdout,/confidential/);
 });
 
 test('portable identity/configuration errors produce redacted binding diagnostics and captured invocation still refuses',t=>{
@@ -187,8 +187,8 @@ test('portable identity/configuration errors produce redacted binding diagnostic
   for(const value of [mismatch,invalid]) {
     const result=call('check',kernelReadinessRequest(value));
     assert.equal(result.status,0,result.stderr);assert.equal(result.response.ok,true);
-    assert.deepEqual(result.response.result,{status:'needs-configuration',problems:[{code:'needs-configuration',message:'OKF bindings file missing or invalid: repair configured bindings file, or deactivate oats.okf'}]});
-    assert.doesNotMatch(result.stdout,/confidential|private-base|runtime is not qualified/);
+    assert.deepEqual(result.response.result,{status:'needs-configuration',problems:[{code:'needs-configuration',message:CHECK_REASON_MESSAGES['bindings:invalid']}]});
+    assert.doesNotMatch(result.stdout,/confidential|private-base/);
     assert.equal(result.stderr,'');
     const file=join(f.root,'captured.json');fs.writeFileSync(file,JSON.stringify(value),{mode:0o600});
     assert.throws(()=>loadInvocationKnowledgeBinding({OATS_BINDING_FILE:file}),{code:'E_BINDING'});

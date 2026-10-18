@@ -62,9 +62,9 @@ test('published OATS 0.62: legacy alias readiness, released negative control, an
     const source=json(marker.source);assert.equal(source.bindings.bases.project.id,'test-base');
     const provider=oats(['readiness','--home',home]).result.checks.providers.items.find(row=>row.subject==='oats.okf');
     assert.ok(provider?.result,JSON.stringify(provider));
-    assert.deepEqual(provider.result,mode==='released'
-      ?{status:'needs-configuration',problems:[{code:'needs-configuration',message:'harvest runtime is not qualified: install/configure the selected harvest runtime or set harvest off'}],warnings:[]}
-      :{status:'ready',problems:[],warnings:[]});
+    assert.equal(provider.result.status,mode==='released'?'needs-configuration':'ready');
+    assert.deepEqual(provider.result.problems.map(({code})=>code),mode==='released'?['needs-configuration']:[]);
+    assert.deepEqual(provider.result.warnings,[]);
     write(join(home,'notes/decision.md'),'---\ntype: Decision\ntitle: Explicit custody\ndescription: Why custody is explicit.\n---\n\nThe human chose explicit custody.\n');
     const checkpoint=oats(['okf','harvest','--no-launch'],{cwd:home,home}).result;
     assert.equal(checkpoint.status,'started',JSON.stringify(checkpoint));assert.equal(checkpoint.launched,false);

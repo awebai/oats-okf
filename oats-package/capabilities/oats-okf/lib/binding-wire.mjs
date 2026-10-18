@@ -290,6 +290,8 @@ function problem(code,reason) {
 function templatedProblem(code,reason,values) {return {code,message:renderTemplate(reason,values)};}
 function warning(code,reason,values) {return {code,message:renderTemplate(reason,values)};}
 export const CHECK_REASONS=[...Object.values(checkReasons),...Object.values(checkReasonTemplates)];
+// Keep protocol reason identity available without duplicating operator prose.
+export const CHECK_REASON_MESSAGES=checkReasons;
 export const CHECK_REASON_TEMPLATES=checkReasonTemplates;
 function providerActionName(action) {
   if(action.kind==='operation' && action.slot===SLOT) return action.name;
