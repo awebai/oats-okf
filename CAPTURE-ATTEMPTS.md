@@ -4,9 +4,23 @@ The foreground checkpoint, manual harvest and retire hook share capture through
 `sources.mjs`. It saves notes, observes a native attempt, then recalls only the
 session boundaries certified by that attempt. No record window is enqueued from
 an incomplete receipt. Existing inputs and recall cursors remain durable through
-errors. Checkpoint and manual harvest defer without preparing a worker while
-capture is pending; retirement refuses removal until final capture and recall
-finish. Turning harvest off does not resolve an outstanding attempt.
+errors. An idle checkpoint or manual harvest gives already verified, unprocessed
+custody priority over optional capture and historical settlement. It validates
+live consent and source identity, then uses the existing run selection,
+publication/rejudgment, no-launch and spawn-budget guards. A pending native
+attempt supplies no input until its receipt and recall are verified; it cannot
+block a worker over earlier immutable custody. With no backlog, a bounded
+capture observation can defer, with an explicit recovery command.
+
+Harvest-on retirement refuses removal until final capture and recall finish.
+Live-confirmed harvest-off or soul opt-out instead ends new harvesting. Under
+the source capture lock it can settle a provably never-dispatched queued request
+or a matching validated closed receipt, without native dispatch, notes capture,
+recall, new custody or a worker. The lock covers settlement and the retired-state
+transition. Dispatch intent, a runner claim, an own gate without terminal proof,
+invalid/foreign/overflowed output or uncertain ownership still refuses removal.
+Unknown consent never authorizes this path. Existing custody and receipts stay;
+this settlement does not certify uncaptured final bytes.
 
 `capture-attempt.mjs` persists one current attempt under the source's private
 custody before dispatch. `capture-runner.mjs` is a detached **per-attempt** process;
@@ -60,7 +74,9 @@ planned turn's identity/source before persisting windows. Exit zero, shared
 capture health, a dead PID or elapsed age cannot substitute for this proof.
 An attempt dispatched by an earlier invocation cannot alone certify retirement:
 its windows are recalled and then a fresh final-purpose attempt is taken, so a
-later session tail is not hidden by a delayed receipt.
+later session tail is not hidden by a delayed receipt. A queued checkpoint request
+first dispatched inside the retire invocation is fresh regardless of its original
+purpose flag; freshness is the dispatch observation in that invocation.
 
 A gate is staged with its complete owner record and atomically renamed into
 place. A crash before publication leaves an inert staging directory and cannot
@@ -99,7 +115,10 @@ of PID or age. An existing exclusive runner claim can belong to that live
 runner; a duplicate runner never overwrites its receipt or releases its gate.
 Missing/unreadable request, dispatch or gate ownership, an unobserved foreground
 crash around runner launch, and corrupt/overflowed native output likewise remain
-uncertain. A genuinely replaced source identity remains refused, while ordinary
+uncertain. Queued observations include a bounded blocker attempt ID and uncertain
+completion state when exact gate/request metadata supports it; unreadable ownership
+is reported as unknown. This never infers native closure from process liveness.
+A genuinely replaced source identity remains refused, while ordinary
 kernel bookkeeping updates do not invalidate its receipt.
 
 Retain the source home, its independent native history, attempt directory and
@@ -111,6 +130,34 @@ new provider callers and have the operator/maintainer reconcile native process
 ownership and record custody before any explicit provider-state recovery; when
 completion cannot be proven, keep the source and evidence. Kernel lock recovery
 remains the kernel's operation.
+
+For a root-wide stall, use this read-only inspection sequence:
+
+1. Stop new provider checkpoint/manual/retire callers while preserving any native
+   process already running. Preserve the source home, its native history, the
+   source registry directory and the effective record root.
+2. Read `capture-attempts/current.json` beside the source descriptor. Locate its
+   UUID directory and retain `request.json`, `dispatch.json`, `runner.json`,
+   `receipt.json` (if present) and `consumed.json` (if present). The pointer,
+   attempt IDs and request digests must agree; source physical/stable identity
+   and the saved root must still match. Missing evidence is unknown.
+3. Read `<saved root>/.oats-okf-capture/gate/owner.json`. Its directory, attempt ID
+   and request digest identify the blocking attempt, which may belong to another
+   source. Retain that attempt's files too. Do not rename/delete the published
+   gate or a coordination lock, and never touch the kernel `.capture.lock`.
+4. A matching, private, closed valid receipt permits ordinary observation to
+   release its exact gate; complete native output still needs recall for
+   harvest-on certification. Confirmed harvest-off retirement may settle a valid
+   closed or provably unissued attempt under its different consent contract.
+5. Without terminal evidence, bring the retained files, native history and the
+   kernel's lock/process diagnostics to the maintainer for reconciliation.
+   A reboot, absent PID or old timestamps cannot prove output closure or custody.
+   Keep the source and root held until explicit reconciliation establishes the
+   missing facts. Do not synthesize a receipt or edit a request/consumed marker.
+
+There is no reset/unlock operation for uncertain capture state in this provider.
+Any maintainer-directed recovery outside these ordinary validated paths is a
+separate operation, not permission granted by these diagnostics.
 
 ## Verification
 

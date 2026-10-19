@@ -1,7 +1,7 @@
 import test from 'node:test';
 import { randomUUID, createHash } from 'node:crypto';
 import assert from 'node:assert/strict';
-import * as fs from 'node:fs';
+import nodeFs, * as fs from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { execFileSync, spawnSync, spawn } from 'node:child_process';
@@ -3215,14 +3215,14 @@ test('detached capture pending defers checkpoint/manual and refuses retire; skip
   const first=checkpointHarvest(s,{deadline:Date.now()+200});assert.equal(first.status,'deferred');assert.equal(first.capture.complete,false);
   const obligation=join(dirname(s.file),'retirement-deferred.json');assert.equal(fs.existsSync(obligation),false,'ordinary checkpoint pending is not deferred retirement');
   const started=Date.now()+15000;while(!fs.existsSync(f.calls)){assert.ok(Date.now()<started);await new Promise(r=>setTimeout(r,20));}
-  const manual=withDeadline(Date.now()+100,()=>runSource(s,{manual:true,noLaunch:true}));assert.equal(manual.status,'deferred');
+  const manual=runSource(s,{manual:true,noLaunch:true});assert.equal(manual.status,'ready');
   assert.throws(()=>capture(s,{final:true,deadlineMs:100}),{code:'E_CAPTURE_PENDING'});
   const since=readJSON(obligation).since;
   assert.throws(()=>capture(s,{final:true,deadlineMs:100}),{code:'E_CAPTURE_PENDING'});assert.equal(readJSON(obligation).since,since);
   const {retireHarvestOff}=await mod('sources');
-  assert.throws(()=>retireHarvestOff(s,{reason:'off'}),{code:'E_CAPTURE_PENDING'});
-  assert.equal(loadStatus(s).retired,false);assert.equal(loadStatus(s).activeRun,null);assert.ok(fs.existsSync(s.home));
-  assert.equal(callsOf(f).filter(c=>c.a[0]==='capture').length,1);assert.equal(spawnsOf(f).length,0);
+  assert.throws(()=>retireHarvestOff(s,{effective:'off',reason:'off'}),{code:'E_CAPTURE_PENDING'});
+  assert.equal(loadStatus(s).retired,false);assert.equal(loadStatus(s).activeRun,manual.run);assert.ok(fs.existsSync(s.home));
+  assert.equal(callsOf(f).filter(c=>c.a[0]==='capture').length,1);assert.equal(spawnsOf(f).length,1);
   save(join(s.home,'instance.json'),{...readJSON(join(s.home,'instance.json')),startId:randomUUID(),restartCount:1,wake:{state:'registered'},spawnCompleted:true});
   const current=readJSON(join(dirname(s.file),'capture-attempts','current.json'));
   const receipt=join(dirname(s.file),'capture-attempts',current.id,'receipt.json');
@@ -3251,7 +3251,7 @@ test('harvest-status exposes deferred retirement with preserved age under harves
     assert.equal(r.out.result.retirementDeferred.count,1);assert.equal(r.out.result.retirementDeferred.sources[0].since,marker.since);assert.ok(r.out.result.retirementDeferred.sources[0].ageSeconds>=120);
     assert.equal(r.out.result.retirementWarnings[0].code,'retirement-capture-deferred');
   }
-  const {retireHarvestOff}=await mod('sources');retireHarvestOff(s,{reason:'off'});assert.equal(fs.existsSync(obligation),false);assert.equal(loadStatus(s).retired,true);
+  const {retireHarvestOff}=await mod('sources');retireHarvestOff(s,{effective:'off',reason:'off'});assert.equal(fs.existsSync(obligation),false);assert.equal(loadStatus(s).retired,true);
   assert.equal(f.cli('harvest-status').out.result.retirementDeferred.count,0);
 });
 
@@ -3264,11 +3264,98 @@ test('retirement marker contention preserves primary capture diagnostics and kee
   const end=Date.now()+15000;while(!fs.existsSync(f.calls)){assert.ok(Date.now()<end);await new Promise(r=>setTimeout(r,20));}
   put(join(markerLock,'owner.json'),JSON.stringify({token:'marker-writer',pid:process.pid,host:hostname()}));
   const {retireHarvestOff}=await mod('sources');
-  assert.throws(()=>retireHarvestOff(s,{reason:'off'}),e=>e.code==='E_CAPTURE_PENDING'&&e.retirementMarkerError?.code==='E_LOCKED');assert.equal(loadStatus(s).retired,false);
+  assert.throws(()=>retireHarvestOff(s,{effective:'off',reason:'off'}),e=>e.code==='E_CAPTURE_PENDING'&&e.retirementMarkerError?.code==='E_LOCKED');assert.equal(loadStatus(s).retired,false);
   fs.rmSync(markerLock,{recursive:true});fs.rmSync(join(f.dir,'capture-hold'));
   const receipt=join(dirname(s.file),'capture-attempts',pending.attempt,'receipt.json');while(!fs.existsSync(receipt)){assert.ok(Date.now()<end);await new Promise(r=>setTimeout(r,20));}
   assert.equal(capture(s,{final:true}).complete,true);
   put(join(markerLock,'owner.json'),JSON.stringify({token:'marker-writer',pid:process.pid,host:hostname()}));
   assert.throws(()=>capture(s,{final:true}),e=>e.code==='E_RETIREMENT_MARKER'&&e.retirementMarkerError?.code==='E_LOCKED');assert.ok(fs.existsSync(s.home));
   fs.rmSync(markerLock,{recursive:true});assert.equal(capture(s,{final:true}).complete,true);
+});
+
+const captureAttemptOf=s=>{const base=join(dirname(s.file),'capture-attempts'),pointer=readJSON(join(base,'current.json')),dir=join(base,pointer.id);return {id:pointer.id,dir,receipt:join(dir,'receipt.json')};};
+const waitCaptureFixture=async fn=>{const end=Date.now()+15000;while(!fn()){assert.ok(Date.now()<end);await new Promise(r=>setTimeout(r,20));}};
+const closedCaptureFixture=a=>{const root=readJSON(join(a.dir,'request.json')).root,parent=join(root,'.oats-okf-capture');return fs.existsSync(a.receipt)&&!fs.existsSync(join(parent,'gate'))&&!fs.existsSync(join(parent,'coordination.lock'));};
+test('#91 consent-off observes closure without new custody and holds capture lock through retirement',async t=>{
+  const f=fixture(t),s=f.source();note(f);put(join(f.dir,'capture-hold'),'');
+  capture(s,{deadlineMs:1000});const attempt=captureAttemptOf(s),custody=structuredClone(loadStatus(s).captured);
+  await waitCaptureFixture(()=>fs.existsSync(f.calls));
+  const off=deploymentHarvest(f,'off');
+  const pending=f.cli('retire',[],off);assert.equal(pending.status,1);assert.equal(pending.out.meta.retired,false);
+  const {retireHarvestOff}=await mod('sources');assert.throws(()=>retireHarvestOff(s,{effective:'off',reason:'live-off'}),{code:'E_CAPTURE_PENDING'});
+  const marker=join(dirname(s.file),'retirement-deferred.json'),since=readJSON(marker).since;
+  assert.equal(loadStatus(s).retired,false);
+  fs.rmSync(join(f.dir,'capture-hold'));await waitCaptureFixture(()=>closedCaptureFixture(attempt));
+  const goodReceipt=readJSON(attempt.receipt);
+  save(attempt.receipt,{...goodReceipt,overflow:true});assert.throws(()=>retireHarvestOff(s,{effective:'off',reason:'live-off'}),{code:'E_CAPTURE_UNCERTAIN'});
+  assert.equal(readJSON(marker).since,since);assert.equal(loadStatus(s).retired,false);save(attempt.receipt,goodReceipt);
+  assert.throws(()=>retireHarvestOff(s,{reason:'unknown'}),{code:'E_HARVEST_CONSENT_UNKNOWN'});assert.equal(readJSON(marker).since,since);
+  note(f,'after-consent.md','Must remain outside custody.');
+  const before=effectsOf(f),fsDefault=nodeFs,rename=fsDefault.renameSync;let raced=false;
+  try {
+    fsDefault.renameSync=(from,to)=>{
+      if(to===join(dirname(s.file),'status.json')&&readJSON(from).retired===true){
+        raced=true;
+        const script=`import {loadSource,capture} from ${JSON.stringify(libURL('sources'))};try{capture(loadSource(${JSON.stringify(s.file)}));process.exitCode=9;}catch(e){console.log(JSON.stringify({code:e.code}));}`;
+        const contender=spawnSync(process.execPath,['--input-type=module','-e',script],{env:process.env,encoding:'utf8'});
+        assert.equal(contender.status,0,contender.stderr);assert.equal(JSON.parse(contender.stdout).code,'E_LOCKED');
+      }
+      return rename(from,to);
+    };syncBuiltinESMExports();
+    assert.equal(retireHarvestOff(s,{effective:'off',reason:'live-off'}).retired,true);
+  } finally {fsDefault.renameSync=rename;syncBuiltinESMExports();}
+  assert.equal(raced,true);assert.deepEqual(effectsOf(f),before);assert.deepEqual(loadStatus(s).captured,custody);
+  assert.equal(readJSON(join(attempt.dir,'consumed.json')).settlement,'settled-under-harvest-off');assert.equal(fs.existsSync(marker),false);
+  assert.ok(Date.parse(since)<=Date.now());assert.equal(f.cli('retire',[],off).status,0);assert.deepEqual(effectsOf(f),before);
+  assert.equal(capture(s).retired,true);assert.deepEqual(effectsOf(f),before);
+});
+test('#91 native 25s capture cannot spend the next checkpoints spawn budget again',t=>{
+  const f=fixture(t),s=f.source();note(f);put(join(f.dir,'sessions-inert'),'');
+  const fsDefault=nodeFs,exists=fsDefault.existsSync,now=Date.now;let skew=0;
+  try {
+    // Advance only the foreground clock at the native receipt boundary. The
+    // actual native-shaped child completes naturally; no host load or 25s wait.
+    Date.now=()=>now()+skew;
+    fsDefault.existsSync=path=>{const yes=exists(path);if(yes&&String(path).endsWith('/receipt.json')&&!skew)skew=25000;return yes;};syncBuiltinESMExports();
+    const first=checkpointHarvest(s,{noLaunch:true,deadline:Date.now()+110000});assert.equal(first.capture.complete,true);assert.equal(first.status,'deferred');assert.ok(first.next);
+  } finally {Date.now=now;fsDefault.existsSync=exists;syncBuiltinESMExports();}
+  const calls=callsOf(f).filter(c=>c.a[0]==='capture').length;
+  const next=checkpointHarvest(s,{noLaunch:true,deadline:Date.now()+110000});assert.equal(next.status,'started');assert.equal(spawnsOf(f).length,1);
+  assert.equal(callsOf(f).filter(c=>c.a[0]==='capture').length,calls);assert.deepEqual(readRun(s,next.run).inputs,loadStatus(s).captured.inputs);
+});
+test('#91 pending native capture cannot block verified custody or bypass live guards',async t=>{
+  const f=fixture(t),s=f.source();note(f);put(join(f.dir,'sessions-inert'),'');put(join(f.dir,'capture-hold'),'');
+  const first=checkpointHarvest(s,{deadline:Date.now()+1500});assert.equal(first.status,'deferred');assert.ok(first.next);
+  const attempt=captureAttemptOf(s),certified=[...loadStatus(s).captured.inputs];await waitCaptureFixture(()=>fs.existsSync(f.calls));
+  note(f,'uncaptured-tail.md','Must wait until a later capture.');const before=callsOf(f).length;
+  const off=deploymentHarvest(f,'off');assert.equal(checkpointHarvest(s,{deadline:Date.now()+110000}).status,'harvest-off');
+  assert.equal(runSource(s,{manual:true,consent:true}).status,'harvest-off');assert.equal(spawnsOf(f).length,0);deploymentHarvest(f,'on');
+  const meta=readJSON(join(s.home,'instance.json'));save(join(s.home,'instance.json'),{...meta,instance:'replacement'});
+  assert.throws(()=>checkpointHarvest(s,{deadline:Date.now()+110000}));assert.throws(()=>runSource(s,{manual:true,noLaunch:true}));assert.equal(spawnsOf(f).length,0);save(join(s.home,'instance.json'),meta);
+  const start=performance.now(),now=Date.now;let next;
+  try {Date.now=()=>now()+86000;next=checkpointHarvest(s,{deadline:Date.now()+110000});} finally {Date.now=now;}
+  assert.equal(next.status,'started');assert.ok(performance.now()-start<5000);
+  assert.deepEqual(readRun(s,next.run).inputs,certified);assert.equal(loadStatus(s).captured.inputs.length,1);assert.equal(callsOf(f).filter(c=>c.a[0]==='capture').length,1);
+  assert.equal(checkpointHarvest(s).run,next.run);assert.equal(runSource(s,{manual:true}).run,next.run);
+  fs.rmSync(join(f.dir,'capture-hold'));await waitCaptureFixture(()=>closedCaptureFixture(attempt));
+});
+
+test('#91 a queued checkpoint attempt first dispatched by this retirement needs only one fresh pass',async t=>{
+  const f=fixture(t),one=f.source(),root=join(f.dir,'shared-record');process.env.TURN_RECORD_ROOT=root;put(join(f.dir,'capture-hold'),'');capture(one,{deadlineMs:1000});const active=captureAttemptOf(one);
+  const g=fixture(t),two=g.source();process.env.TURN_RECORD_ROOT=root;
+  assert.equal(capture(two,{deadlineMs:1000}).status,'queued');const queued=captureAttemptOf(two);assert.equal(readJSON(join(queued.dir,'request.json')).final,false);
+  fs.rmSync(join(f.dir,'capture-hold'));await waitCaptureFixture(()=>closedCaptureFixture(active));
+  assert.equal(capture(two,{final:true}).complete,true);assert.equal(loadStatus(two).retired,true);
+  assert.equal(callsOf(g).filter(c=>c.a[0]==='capture').length,1);assert.equal(captureAttemptOf(two).id,queued.id);
+});
+
+test('#91 consent-off resolves a never-dispatched queued retirement while another source still captures',async t=>{
+  const f=fixture(t),one=f.source(),root=join(f.dir,'shared-off-record');process.env.TURN_RECORD_ROOT=root;put(join(f.dir,'capture-hold'),'');capture(one,{deadlineMs:1000});const active=captureAttemptOf(one);
+  const g=fixture(t),two=g.source();process.env.TURN_RECORD_ROOT=root;
+  assert.throws(()=>capture(two,{final:true,deadlineMs:1000}),{code:'E_CAPTURE_PENDING'});const queued=captureAttemptOf(two),custody=structuredClone(loadStatus(two).captured);
+  const gate=join(root,'.oats-okf-capture','gate','owner.json'),owner=fs.readFileSync(gate);assert.equal(fs.existsSync(join(queued.dir,'dispatch.json')),false);
+  note(g,'outside-custody.md','Consent is off.');const off=deploymentHarvest(g,'off'),result=g.cli('retire',[],off);assert.equal(result.status,0,result.stdout);assert.equal(result.out.meta.retired,true);
+  assert.deepEqual(loadStatus(two).captured,custody);assert.equal(fs.existsSync(g.calls),false);assert.deepEqual(fs.readFileSync(gate),owner);
+  assert.equal(fs.existsSync(join(dirname(two.file),'retirement-deferred.json')),false);assert.equal(fs.existsSync(join(queued.dir,'receipt.json')),false);
+  fs.rmSync(join(f.dir,'capture-hold'));await waitCaptureFixture(()=>closedCaptureFixture(active));
 });

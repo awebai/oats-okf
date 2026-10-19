@@ -4,7 +4,7 @@ import { hostname } from 'node:os';
 import { isAbsolute, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { fs, join, dirname, safePath, readJSON, save, atomic, tree, materialize, digest, hash, withLock, withDeadline, oats, command, fail, relPath, quote, pidAlive, redactUrls } from './io.mjs';
-import { loadSource, loadStatus, saveStatus, updateStatus, capture, input, markerPath, homeSource, sourceSwitch, sourceDeployment } from './sources.mjs';
+import { loadSource, loadStatus, saveStatus, updateStatus, capture, input, markerPath, homeSource, assertLiveSource, sourceSwitch, sourceDeployment } from './sources.mjs';
 import {capturedSource,qualifyCapturedWorker,assertCapturedRun,capturedScaffold,retainCapturedWorkerCustody,assertCapturedWorkerHome,capturedStart} from './captured-worker.mjs';
 import { metadata, splitRef, SCHEDULE_REMOVED } from './config.mjs';
 import { stageBase, validateBase, allowedChanges, verifyGitScope, gitPublish, confirmGitBaseline, directoryPublish, journalPath, baseLock, recoveryStage, reconcileDirectoryIntent, gitRecoveryState } from './stores.mjs';
@@ -95,6 +95,7 @@ export function runSource(source,{noLaunch=false,manual=false,consent=false,capt
     // okf 4.2.0: no scheduler job runs a source any more; only an explicit
     // (manual) start does.
     if(!manual) fail('E_HARVEST_SCHEDULE_REMOVED',`run-source without --manual is the removed scheduled harvest; nothing was captured. ${SCHEDULE_REMOVED}`);
+    if(status.activeRun) {const run=readRun(source,status.activeRun);return {status:run.status,run:run.id,...(run.worker?{instance:run.worker.instance,home:run.worker.home}:{})};}
     // okf 4.2.0: an operator's start (run-source --manual, retry) re-reads
     // consent HERE, under the worker lock and before any capture or worker:
     // a free slot seen earlier (a completion may have just freed it)
@@ -106,12 +107,13 @@ export function runSource(source,{noLaunch=false,manual=false,consent=false,capt
     let sourceAvailable=false;
     // A one-shot's inputs are its verified manifest only: it never captures.
     if(!status.retired && !source.once) {
-      try {sourceAvailable=fs.existsSync(markerPath(source.home)) && homeSource(source.home).id===source.id;} catch {sourceAvailable=false;}
+      sourceAvailable=fs.existsSync(markerPath(source.home));
+      if(sourceAvailable) assertLiveSource(source);
       if(!sourceAvailable) {
         status=updateStatus(source,current=>{current.sourceUnavailable=true;current.finalCaptureUncertified=true;});
-      } else {
+      } else if(!unprocessed(status).length && !status.pendingRejudgment) {
         const captured=capture(source);
-        if(!captured.complete) return {status:'deferred',source:source.file,capture:captured,reason:captured.reason};
+        if(!captured.complete) return {status:'deferred',source:source.file,capture:captured,reason:captured.reason,next:operatorCommand(source,['run-source','--source',source.file,'--manual'])};
         status=loadStatus(source);
       }
     }
@@ -979,16 +981,28 @@ export function checkpointHarvest(source,{noLaunch=false,deadline}={}) {
     // An active run is reported first: its harvester's completion needs this
     // lock, and must never wait behind the settlement of history.
     if(status.activeRun) return {...activeRunState(source,readRun(source,status.activeRun)),source:source.file,settled:[],settlement:'not attempted while a run is active; the next idle checkpoint settles earlier PRs'};
-    const settled=settleDelivered(source,{deadline:deadline===undefined?undefined:Math.min(deadline,Date.now()+SETTLE_SHARE_MS)}),answer=fields=>({...fields,source:source.file,settled});
+    const resume=()=>operatorCommand(source,['run-source','--source',source.file,'--manual']);
+    if(status.retired) return {status:'retired',source:source.file,settled:[],reason:'this source is retired; harvest-status lists remaining custody obligations'};
+    const custodyReady=unprocessed(status).length>0 || !!status.pendingRejudgment;
+    if(custodyReady) {
+      const sw=sourceSwitch(source,{firstBatch:true,deadline});
+      if(sw.effective!=='on') return {status:'harvest-off',source:source.file,settled:[],next:resume()};
+      assertLiveSource(source);
+    }
+    // Optional settlement/capture cannot spend the admission budget of already
+    // certified immutable input. nextRun still enforces publication/rejudge guards.
+    const settled=custodyReady?[]:settleDelivered(source,{deadline:deadline===undefined?undefined:Math.min(deadline,Date.now()+SETTLE_SHARE_MS)}),answer=fields=>({...fields,source:source.file,settled});
     status=loadStatus(source);
-    if(status.retired) return answer({status:'retired',reason:'this source is retired: its final input is in custody; harvest-status lists what is outstanding'});
-    let captured;
-    try {captured=capture(source,{deadline:deadline===undefined?undefined:Math.min(deadline,Date.now()+CAPTURE_SHARE_MS)});}
-    catch(e) {if(e.captureBusy) return answer({status:'already-running',run:null,preparing:true,reason:'another oats okf process is capturing this source; nothing was started'});throw e;}
-    if(!captured.complete) return answer({status:'deferred',capture:captured,reason:captured.reason});
+    let captured={status:'custody-ready',complete:false};
+    if(!custodyReady) {
+      try {captured=capture(source,{deadline:deadline===undefined?undefined:Math.min(deadline,Date.now()+CAPTURE_SHARE_MS)});}
+      catch(e) {if(e.captureBusy) return answer({status:'already-running',run:null,preparing:true,next:resume(),reason:'another oats okf process is capturing this source; nothing was started'});throw e;}
+      if(!captured.complete) return answer({status:'deferred',capture:captured,reason:captured.reason,next:resume()});
+    }
     status=loadStatus(source);
+    if(status.retired) return answer({status:'retired',capture:captured});
     const pending=unprocessed(status);
-    if(!pending.length) return answer({status:'empty',capture:captured});
+    if(!pending.length && !status.pendingRejudgment) return answer({status:'empty',capture:captured});
     // --no-launch is a diagnostic: it requests no drain, and the run it
     // prepares hands no drain on when it completes (continueDrain).
     if(!noLaunch) {

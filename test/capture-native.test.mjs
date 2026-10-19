@@ -9,7 +9,8 @@ import { pathToFileURL, fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { loadBindings } from '../oats-package/capabilities/oats-okf/lib/config.mjs';
 import { initBase } from '../oats-package/capabilities/oats-okf/lib/migration.mjs';
-import { register, capture, loadStatus, input } from '../oats-package/capabilities/oats-okf/lib/sources.mjs';
+import { register, capture, retireHarvestOff, loadStatus, input } from '../oats-package/capabilities/oats-okf/lib/sources.mjs';
+import { nativeCapture } from '../oats-package/capabilities/oats-okf/lib/capture-attempt.mjs';
 import { save, readJSON } from '../oats-package/capabilities/oats-okf/lib/io.mjs';
 const cli = process.env.OATS_OKF_NATIVE_CLI;
 const waitFor = async (fn, timeout = 20000) => {
@@ -46,7 +47,7 @@ async function fixture(t) {
   return { root, source, current };
 }
 test('released 0.62.0 exact-home capture survives >60s paused with native lock, bounded callers, restart and root contention', { skip: !cli }, async t => {
-  const f = await fixture(t), s = f.source('slow', 256), other = f.source('queued');
+  const f = await fixture(t), s = f.source('slow', 256), other = f.source('queued'), offQueued=f.source('off-queued');
   const version = spawnSync(process.execPath, [resolve(cli), 'version', '--json'], { env: process.env, encoding: 'utf8' });
   assert.match(version.stdout, /0\.62\.0/);
   const start = Date.now();
@@ -58,6 +59,11 @@ test('released 0.62.0 exact-home capture survives >60s paused with native lock, 
   let resumed = false;
   t.after(() => { if (!resumed) { try { process.kill(owner.pid, 'SIGCONT'); } catch {} } });
   const stoppedAt = Date.now();
+  assert.equal(capture(offQueued,{deadlineMs:1000}).status,'queued');
+  const unissued=f.current(offQueued);assert.equal(fs.existsSync(join(unissued.dir,'dispatch.json')),false);
+  assert.equal(retireHarvestOff(offQueued,{effective:'off',reason:'live-confirmed-off'}).retired,true);
+  assert.equal(readJSON(lock).pid,owner.pid);assert.deepEqual(loadStatus(offQueued).captured.inputs,[]);
+  assert.equal(fs.existsSync(join(unissued.dir,'receipt.json')),false);
   assert.throws(() => capture(other, { final: true, deadlineMs: 100 }), { code: 'E_CAPTURE_PENDING' });
   assert.equal(loadStatus(other).lastCapture.status, 'queued');
   assert.throws(() => capture(s, { final: true, deadlineMs: 100 }), { code: 'E_CAPTURE_PENDING' });
@@ -97,4 +103,16 @@ test('real lock skipped exit0 and failed nonzero receipts retain source without 
   assert.throws(() => capture(s, { final: true, deadlineMs: 5000 }), { code: 'E_CAPTURE_PENDING' });
   const failed = readJSON(f.current(s).receipt); assert.equal(failed.exitCode, 1); assert.equal(JSON.parse(failed.stdout).complete, false);
   assert.equal(loadStatus(s).retired, false); assert.ok(fs.existsSync(s.home));
+});
+
+test('released 0.62.0 closed attempt settles under consent-off without recall or final certification', {skip:!cli},async t=>{
+  const f=await fixture(t),s=f.source('consent-off',3);
+  nativeCapture(s,{deadline:Date.now()+1000});const attempt=f.current(s);
+  const custody=structuredClone(loadStatus(s).captured);
+  await waitFor(()=>fs.existsSync(attempt.receipt)&&!fs.existsSync(join(process.env.TURN_RECORD_ROOT,'.oats-okf-capture','gate'))&&!fs.existsSync(join(process.env.TURN_RECORD_ROOT,'.oats-okf-capture','coordination.lock')));
+  const bytes=fs.readFileSync(attempt.receipt),report=JSON.parse(readJSON(attempt.receipt).stdout);assert.equal(report.complete,true);
+  assert.equal(retireHarvestOff(s,{effective:'off',reason:'live-confirmed-off'}).retired,true);
+  assert.deepEqual(loadStatus(s).captured,custody);assert.deepEqual(loadStatus(s).captured.threads,{});assert.equal(loadStatus(s).lastCapture,undefined);
+  assert.equal(readJSON(join(attempt.dir,'consumed.json')).settlement,'settled-under-harvest-off');assert.deepEqual(fs.readFileSync(attempt.receipt),bytes);
+  assert.equal(retireHarvestOff(s,{effective:'off',reason:'live-confirmed-off'}).retired,true);assert.equal(f.current(s).id,attempt.id);
 });

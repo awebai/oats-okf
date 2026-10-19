@@ -7,7 +7,7 @@ import { randomUUID } from 'node:crypto';
 import childProcess, { spawn, spawnSync } from 'node:child_process';
 import { syncBuiltinESMExports } from 'node:module';
 import { fileURLToPath } from 'node:url';
-import { nativeCapture, consumeAttempt, gatePath, captureRoot, releaseGate, RECEIPT_LIMIT } from '../oats-package/capabilities/oats-okf/lib/capture-attempt.mjs';
+import { nativeCapture, consumeAttempt, gatePath, captureRoot, releaseGate, settleCaptureOff, RECEIPT_LIMIT } from '../oats-package/capabilities/oats-okf/lib/capture-attempt.mjs';
 import { save, hash } from '../oats-package/capabilities/oats-okf/lib/io.mjs';
 const moduleURL = new URL('../oats-package/capabilities/oats-okf/lib/capture-attempt.mjs', import.meta.url).href;
 const waitFor = async fn => {
@@ -16,7 +16,15 @@ const waitFor = async fn => {
 };
 function fixture(t) {
   const root = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), 'okf-attempt-'))), old = { ...process.env };
-  t.after(() => { for (const k of Object.keys(process.env)) delete process.env[k]; Object.assign(process.env, old); fs.rmSync(root, { recursive: true, force: true }); });
+  t.after(async () => {
+    // Receipt publication can precede the runner's final metadata cleanup.
+    // Wait only for fixture teardown; PID exit never certifies production custody.
+    for(const file of fs.readdirSync(root,{recursive:true}).filter(p=>p.endsWith('/runner.json'))) {
+      const {pid}=JSON.parse(fs.readFileSync(join(root,file)));
+      await waitFor(()=>{try{process.kill(pid,0);return false;}catch(e){return e.code==='ESRCH';}});
+    }
+    for (const k of Object.keys(process.env)) delete process.env[k]; Object.assign(process.env, old); fs.rmSync(root, { recursive: true, force: true });
+  });
   const cli = join(root, 'kernel.mjs');
   fs.writeFileSync(cli, `#!${process.execPath}
 import fs from 'node:fs';import {join} from 'node:path';
@@ -39,7 +47,7 @@ fs.appendFileSync(join(root,'ended'),home+'\\n');
     save(join(home, 'instance.json'), { instance: name, launched: true });
     const s = { id, home, context: root, file }; save(file, { id, home, context: root }); return s;
   };
-  const calls = () => fs.existsSync(join(root, 'calls')) ? fs.readFileSync(join(root, 'calls'), 'utf8').trim().split('\n').map(JSON.parse) : [];
+  const calls = () => fs.existsSync(join(root, 'calls')) ? fs.readFileSync(join(root, 'calls'), 'utf8').split('\n').slice(0,-1).map(JSON.parse) : [];
   const attemptDir = r => join(dirname(r.attempt.source.file), 'capture-attempts', r.attempt.id);
   const receipt = r => fs.existsSync(join(attemptDir(r), 'receipt.json'));
   const observe = (s, ms = 50, extra = {}) => nativeCapture(s, { deadline: Date.now() + ms, ...extra });
@@ -155,7 +163,7 @@ test('missing native executable is a closed not-dispatched result that frees the
   const first = f.observe(s); await waitFor(() => f.receipt(first));
   const result = f.observe(s); assert.equal(result.report.status, 'not-dispatched'); assert.equal(result.report.complete, false);
   assert.equal(JSON.parse(fs.readFileSync(join(f.attemptDir(first), 'receipt.json'))).nativeDispatched, false);
-  assert.ok(!fs.existsSync(gatePath(first.attempt.root))); consumeAttempt(s, first.attempt);
+  assert.ok(!fs.existsSync(gatePath(first.attempt.root))); settleCaptureOff(s); consumeAttempt(s, first.attempt);
   process.env.OATS_CLI_BIN = good; assert.equal(f.observe(s, 5000).report.complete, true); assert.equal(f.calls().length, 1);
 });
 test('proven runner spawn failures are retryable without blocking other sources', async t => {
@@ -209,4 +217,37 @@ test('partial cleanup after atomic gate release cannot strand the published root
   } finally {fs.rmSync=rm;syncBuiltinESMExports();}
   assert.equal(interrupted,true);assert.equal(fs.existsSync(gate),false);
   assert.equal(f.observe(f.source('next'),5000).report.complete,true);assert.equal(f.calls().length,2);
+});
+
+test('consent-off settles a provably queued request without touching another sources native attempt',async t=>{
+  const f=fixture(t),one=f.source('running'),two=f.source('queued');fs.writeFileSync(join(f.root,'hold'),'');
+  const active=f.observe(one);await waitFor(()=>f.calls().length===1);const queued=f.observe(two);assert.equal(queued.observation.status,'queued');
+  assert.deepEqual(queued.observation.blocker,{attempt:active.attempt.id,state:'uncertain'});
+  const gate=gatePath(active.attempt.root),owner=fs.readFileSync(join(gate,'owner.json'));
+  settleCaptureOff(two);assert.equal(fs.existsSync(join(f.attemptDir(queued),'dispatch.json')),false);
+  assert.equal(JSON.parse(fs.readFileSync(join(f.attemptDir(queued),'consumed.json'))).settlement,'settled-under-harvest-off');
+  assert.deepEqual(fs.readFileSync(join(gate,'owner.json')),owner);assert.equal(f.calls().length,1);settleCaptureOff(two);
+  fs.rmSync(join(f.root,'hold'));await waitFor(()=>f.receipt(active)&&!fs.existsSync(gate));
+});
+test('consent-off retains running, corrupt, foreign and overflowed native receipts',async t=>{
+  const f=fixture(t),s=f.source('unsettled');fs.writeFileSync(join(f.root,'hold'),'');const active=f.observe(s);await waitFor(()=>f.calls().length===1);
+  assert.throws(()=>settleCaptureOff(s),{code:'E_CAPTURE_PENDING'});
+  const meta=JSON.parse(fs.readFileSync(join(s.home,'instance.json')));save(join(s.home,'instance.json'),{...meta,instance:'replacement'});assert.throws(()=>settleCaptureOff(s),{code:'E_CAPTURE_UNCERTAIN'});save(join(s.home,'instance.json'),meta);
+  fs.rmSync(join(f.root,'hold'));
+  await waitFor(()=>f.receipt(active)&&!fs.existsSync(gatePath(active.attempt.root)));
+  const dir=f.attemptDir(active),file=join(dir,'receipt.json'),good=JSON.parse(fs.readFileSync(file));
+  for(const bad of [{...good,overflow:true},{...good,stdout:'{'},{...good,stdout:JSON.stringify({...JSON.parse(good.stdout),home:'/foreign'})},{...good,attempt:randomUUID()}]) {
+    save(file,bad);assert.throws(()=>settleCaptureOff(s),{code:'E_CAPTURE_UNCERTAIN'});assert.equal(fs.existsSync(join(dir,'consumed.json')),false);
+  }
+  save(file,good);settleCaptureOff(s);assert.equal(f.calls().length,1);assert.equal(fs.existsSync(file),true);
+});
+test('consent-off does not mistake own unpublished dispatch or redirected metadata for a queued request',async t=>{
+  const f=fixture(t),one=f.source('one'),two=f.source('two');fs.writeFileSync(join(f.root,'hold'),'');const active=f.observe(one);await waitFor(()=>f.calls().length===1);const queued=f.observe(two);
+  fs.rmSync(join(f.root,'hold'));await waitFor(()=>f.receipt(active)&&!fs.existsSync(gatePath(active.attempt.root)));
+  const gate=gatePath(queued.attempt.root),dir=f.attemptDir(queued);fs.mkdirSync(gate,{mode:0o700});save(join(gate,'owner.json'),{version:1,attempt:queued.attempt.id,directory:dir,requestHash:hash(queued.attempt)});
+  assert.throws(()=>settleCaptureOff(two),{code:'E_CAPTURE_PENDING'});assert.equal(fs.existsSync(join(dir,'consumed.json')),false);
+  fs.writeFileSync(join(gate,'owner.json'),'{');assert.throws(()=>settleCaptureOff(two),{code:'E_CAPTURE_UNCERTAIN'});fs.rmSync(gate,{recursive:true});
+  fs.symlinkSync(join(f.root,'absent'),join(dir,'runner.json'));assert.throws(()=>settleCaptureOff(two),{code:'E_CAPTURE_UNCERTAIN'});fs.rmSync(join(dir,'runner.json'));
+  const current=join(dirname(dir),'current.json'),pointer=JSON.parse(fs.readFileSync(current));fs.rmSync(current);assert.throws(()=>settleCaptureOff(two),{code:'E_CAPTURE_UNCERTAIN'});save(current,pointer);
+  settleCaptureOff(two);assert.equal(f.calls().length,1);
 });

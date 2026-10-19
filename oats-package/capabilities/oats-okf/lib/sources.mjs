@@ -1,5 +1,5 @@
 import { deferRetirement, clearDeferredRetirement } from './retirement-deferred.mjs';
-import { nativeCapture, consumeAttempt, assertCaptureSettled } from './capture-attempt.mjs';
+import { nativeCapture, consumeAttempt, settleCaptureOff, assertCaptureSource } from './capture-attempt.mjs';
 import { randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -439,12 +439,31 @@ function clearResolvedRetirement(source) {
 /** Retire a registered source whose harvest is now off: no final capture and
  *  no new drain; the inputs already in custody stay. */
 export function retireHarvestOff(source, sw) {
-  try { assertCaptureSettled(source); } catch(e) { recordDeferredRetirement(source,e); throw e; }
-  updateStatus(source, current => {
-    current.retired = true; current.retiredAt = new Date().toISOString(); current.harvestOff = { reason: sw.reason, at: current.retiredAt };
-  });
-  clearResolvedRetirement(source);
-  return { retired: true, reason: 'harvest-off', switch: sw.reason, source: source.file };
+  try {
+    if (sw?.effective !== 'off') fail('E_HARVEST_CONSENT_UNKNOWN', 'confirmed harvest-off consent is required before settlement');
+    return withLock(join(dirname(source.file),'capture.lock'), () => {
+      assertLiveSource(source);
+      settleCaptureOff(source);
+      updateStatus(source, current => {
+        if (!current.retired) {
+          current.retired = true; current.retiredAt = new Date().toISOString(); current.harvestOff = { reason: sw.reason, at: current.retiredAt };
+        }
+      });
+      clearResolvedRetirement(source);
+      return { retired: true, reason: 'harvest-off', switch: sw.reason, source: source.file };
+    }, {reclaimDead:true,reclaimOwnerless:false});
+  } catch(e) {recordDeferredRetirement(source,e);throw e;}
+}
+/** Validate the live parent even when verified backlog skips optional capture. */
+export function assertLiveSource(source) {
+  if (!fs.existsSync(markerPath(source.home))) fail('E_SOURCE','source home gone without final capture; existing evidence is retained');
+  const registered = homeSource(source.home);
+  if (registered.id !== source.id || registered.file !== source.file || registered.bindingFingerprint !== source.bindingFingerprint) fail('E_SOURCE','source name reused');
+  const {proof} = assertCaptureSource(source);
+  // Captured registrations take names from the validated frozen invocation,
+  // not mutable legacy metadata. Legacy parent admission must match the home.
+  if (!source.providerBinding && (proof.identity.instance !== source.instance || proof.identity.agent !== source.agent)) fail('E_SOURCE','source parent identity changed');
+  return readJSON(safePath(join(source.home,'instance.json')));
 }
 /** Capture notes and observe one durable exact-home native attempt. Deadlines
  * bound the foreground's observation and recall only; the detached per-attempt
@@ -470,9 +489,7 @@ function capturePass(source,{final,deadline},enter) {
     enter();
     const status=loadStatus(source);
     if(status.retired) return {status:'complete',complete:true,retired:true};
-    if(!fs.existsSync(markerPath(source.home))) fail('E_SOURCE','source home gone without final capture; existing evidence is retained');
-    if(homeSource(source.home).id!==source.id) fail('E_SOURCE','source name reused');
-    const meta=fs.existsSync(join(source.home,'instance.json'))?readJSON(join(source.home,'instance.json')):{};
+    const meta=assertLiveSource(source);
     const noLaunch=meta.launched!==true;status.launchObserved=!noLaunch;
     // Notes AND record, every pass. Note content versions remain captured even
     // when the live file is rewritten while a worker is judging a prior version.
@@ -556,7 +573,7 @@ function capturePass(source,{final,deadline},enter) {
       // than a new session tail; final custody needs a fresh dispatch after
       // those retained boundaries have been recalled.
       consumeAttempt(source,attempt);
-      if(final && (!attempt.final || !observed.dispatched)) {saveCapture(source,status);return capturePass(source,{final,deadline},()=>{});}
+      if(final && !observed.dispatched) {saveCapture(source,status);return capturePass(source,{final,deadline},()=>{});}
       if(final) {status.retired=true;status.retiredAt=new Date().toISOString();}
       saveCapture(source,status);return {...status.lastCapture,inputs:status.captured.inputs.length};
     } catch(e) {

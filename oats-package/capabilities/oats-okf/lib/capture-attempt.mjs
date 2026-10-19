@@ -10,6 +10,7 @@ export const RECEIPT_LIMIT = 16 * 1024 * 1024;
 const runner = fileURLToPath(new URL('./capture-runner.mjs', import.meta.url));
 const pause = ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 const uuid = v => typeof v === 'string' && /^[a-f0-9-]{36}$/.test(v);
+const hasEvidence = path => {try {fs.lstatSync(path);return true;} catch(e) {if(e.code==='ENOENT')return false;throw e;}};
 const unknown = () => fail('E_CAPTURE_UNCERTAIN', 'capture ownership or receipt is uncertain; retain source and attempt for explicit recovery');
 export function privateDirectory(path) {
   safePath(path);
@@ -97,8 +98,11 @@ function acquireGateLocked(dir, request) {
       const other = readAttempt(owner.directory);
       if (owner.attempt !== other.id || owner.requestHash !== hash(other) || other.root !== request.root) unknown();
       releaseGateLocked(owner.directory, other);
-    } catch { return false; }
-    if (fs.existsSync(gate)) return false;
+    } catch {
+      try {const held=gateOwner(request.root);return {acquired:false,blocker:{attempt:held.owner.attempt,state:'uncertain'}};}
+      catch {return {acquired:false,blocker:{attempt:null,state:'unknown'}};}
+    }
+    if (fs.existsSync(gate)) return {acquired:false,blocker:{attempt:null,state:'unknown'}};
   }
   const staged = join(parent, `.gate-${randomUUID()}`);
   fs.mkdirSync(staged, { mode: 0o700 });
@@ -116,18 +120,77 @@ function acquireGate(dir, request) {
   const parent = dirname(gatePath(request.root));
   safePath(parent); fs.mkdirSync(parent, { recursive: true, mode: 0o700 }); privateDirectory(parent);
   try { return withLock(join(parent, 'coordination.lock'), () => acquireGateLocked(dir, request), { reclaimDead: true, reclaimOwnerless: false, waitMs: 100 }); }
-  catch (e) { if (e.code === 'E_LOCKED' || e.code === 'E_DEADLINE') return false; throw e; }
+  catch (e) { if (e.code === 'E_LOCKED' || e.code === 'E_DEADLINE') return {acquired:false,blocker:{attempt:null,state:'unknown'}}; throw e; }
 }
-export function assertCaptureSettled(source) {
-  const base = join(dirname(source.file), 'capture-attempts'), current = join(base, 'current.json');
-  if (!fs.existsSync(current)) return;
-  const pointer = privateJSON(current);
-  if (!uuid(pointer.id)) unknown();
-  const dir = join(base, pointer.id), request = readAttempt(dir);
-  if (pointer.requestHash !== hash(request)) unknown();
-  let done; try { done = privateJSON(join(dir, 'consumed.json')); }
-  catch { fail('E_CAPTURE_PENDING', `capture attempt ${request.id} still needs capture/recall observation; retain source before retirement, including when harvest is off`); }
-  if (done.attempt !== request.id || done.requestHash !== hash(request)) unknown();
+// Shared by capture, backlog admission and consent-off retirement. A saved
+// attempt binds the same physical home and stable identity across these paths.
+export function assertCaptureSource(source) {
+  try {
+    const proof = sourceProof(source), base = join(dirname(source.file), 'capture-attempts');
+    if (!hasEvidence(join(base, 'current.json'))) {
+      if(hasEvidence(base)) {
+        privateDirectory(base);const entries=fs.opendirSync(base);
+        try {if(entries.readSync())unknown();} finally {entries.closeSync();}
+      }
+      return { proof };
+    }
+    const pointer = privateJSON(join(base, 'current.json'));
+    if (!uuid(pointer.id)) unknown();
+    const dir = join(base, pointer.id), request = readAttempt(dir);
+    if (pointer.requestHash !== hash(request) || !same(request.source, proof) || request.cwd !== source.context) unknown();
+    return { proof, dir, request };
+  } catch {unknown();}
+}
+function gateOwner(root) {
+  const gate = gatePath(root);
+  if (!hasEvidence(gate)) return null;
+  privateDirectory(gate);
+  const owner = privateJSON(join(gate, 'owner.json')), request = readAttempt(owner.directory);
+  if (owner.version !== 1 || owner.attempt !== request.id || owner.requestHash !== hash(request) || request.root !== root
+    || !uuid(request.source?.id) || typeof request.source.file!=='string' || resolve(request.source.file)!==request.source.file
+    || owner.directory!==join(dirname(request.source.file),'capture-attempts',request.id)) unknown();
+  return { owner, request };
+}
+/** Caller holds source capture.lock through settlement AND retired transition.
+ * No new native work, recall or custody is authorized by harvest-off consent. */
+export function settleCaptureOff(source) {
+  const { dir, request } = assertCaptureSource(source);
+  if (!request) return;
+  try {
+    // Never recreate a missing record root as a side effect of retirement.
+    safePath(request.root); if (fs.realpathSync(request.root) !== request.root) unknown();
+    const parent = dirname(gatePath(request.root));
+    withLock(join(parent, 'coordination.lock'), () => {
+      privateDirectory(parent);
+      const gate = gateOwner(request.root);
+      const ownGate = gate?.owner.attempt === request.id && gate.owner.directory === dir;
+      if(gate && !ownGate && (gate.request.source.id===source.id || gate.request.source.file===source.file)) unknown();
+      const receiptFile = join(dir, 'receipt.json'), dispatchFile = join(dir, 'dispatch.json'), runnerFile = join(dir, 'runner.json');
+      if (hasEvidence(dispatchFile)) {
+        const dispatch = privateJSON(dispatchFile);
+        if (dispatch.attempt !== request.id || dispatch.requestHash !== hash(request)) unknown();
+      }
+      if (hasEvidence(runnerFile)) {
+        const claim = privateJSON(runnerFile);
+        if (claim.attempt !== request.id || claim.requestHash !== hash(request)) unknown();
+      }
+      if (hasEvidence(receiptFile)) {
+        // Envelope closure alone cannot excuse corrupt or foreign native JSON.
+        const receipt = receiptFor(dir, request); reportFrom(receipt, request);
+        if (ownGate) releaseGateLocked(dir, request);
+      } else if (hasEvidence(dispatchFile) || hasEvidence(runnerFile) || ownGate) {
+        fail('E_CAPTURE_PENDING', `capture attempt ${request.id} has no proven terminal observation; retain source`);
+      }
+      if (hasEvidence(join(dir, 'consumed.json'))) {
+        const done = privateJSON(join(dir, 'consumed.json'));
+        if (done.attempt !== request.id || done.requestHash !== hash(request)) unknown();
+      }
+      save(join(dir, 'consumed.json'), { version: 1, attempt: request.id, requestHash: hash(request), settlement: 'settled-under-harvest-off' });
+    }, { reclaimDead: true, reclaimOwnerless: false, waitMs: 100 });
+  } catch (error) {
+    if (['E_CAPTURE_PENDING', 'E_LOCKED', 'E_DEADLINE', 'E_CAPTURE_UNCERTAIN'].includes(error.code)) throw error;
+    unknown();
+  }
 }
 export function consumeAttempt(source, attempt) {
   const dir = join(dirname(source.file), 'capture-attempts', attempt.id);
@@ -173,7 +236,7 @@ function observeCapture(source, { deadline, final = false }) {
   let request, dir, dispatched = false;
   const proof = sourceProof(source);
   let root, owner;
-  const pending = (status, reason) => ({ observation: { status, complete: false, attempt: request.id,
+  const pending = (status, reason, extra = {}) => ({ observation: { status, complete: false, attempt: request.id, ...extra,
     elapsedSeconds: Math.max(0, (Date.now() - request.created) / 1000), budgetSeconds: budget / 1000,
     reason: `${reason}; source and receipts retained; resume at a later checkpoint` }, attempt: request });
   if (fs.existsSync(current)) {
@@ -206,7 +269,8 @@ function observeCapture(source, { deadline, final = false }) {
     } else {
       // A gate bearing OUR request without dispatch.json is an uncertain crash
       // window; acquireGate refuses it because there is no closed receipt.
-      if (!acquireGate(dir, request)) return pending('queued', `capture attempt ${request.id} is waiting for the shared record root`);
+      const admission = acquireGate(dir, request);
+      if (admission !== true) return pending('queued', `capture attempt ${request.id} is waiting for the shared record root; blocking attempt ${admission.blocker.attempt ?? 'unknown'} has ${admission.blocker.state} completion`, {blocker:admission.blocker});
       save(join(dir, 'dispatch.json'), { attempt: request.id, requestHash: hash(request), at: Date.now() });
       const env = { ...cleanEnv(), TURN_RECORD_ROOT: root, TURN_RECORD_OWNER: owner };
       let runnerMayExist = false;
