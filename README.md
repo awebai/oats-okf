@@ -1,6 +1,20 @@
 # oats.okf 4 — external knowledge, consulted remotely, independent judgment
 
-The official OKF knowledge capability: **4.2.0**, requiring **OATS >=0.29.0**.
+The official OKF knowledge capability: **4.2.1**, requiring **OATS >=0.29.0**.
+
+## 4.2.1 — harvest readiness with a legacy alias (#90)
+
+- With harvest on, `oats readiness` no longer reports a legacy binding whose
+  alias differs from its store ID as `runtime:not-qualified`. That
+  alias == ID rule belongs to portable bindings only. A legacy binding keeps
+  the alias its deployment chose, with harvest on or off.
+- Binding identity or configuration errors now report the bindings
+  diagnostic, not a harvest runtime problem. An unresolved declared node
+  names the soul declaration in its remedy.
+
+Readiness only reports: spawn, checkpoint capture and the harvest worker
+never depended on it, so 4.2.0 harvested correctly. Only the report was wrong.
+See [CHANGELOG.md](CHANGELOG.md).
 
 ## 4.2.0 — checkpoint harvest, no schedules (#49, #47)
 
