@@ -13,7 +13,7 @@ import {
   renderKnowledgeRuntime,
   sameJson,
 } from './portable-binding.mjs';
-import { declaration as soulDeclaration, loadBindings, validateBindings } from './config.mjs';
+import { declaration as soulDeclaration, loadBindings, validateBindings, resolveNodes } from './config.mjs';
 import { gitEnv, validateBase } from './stores.mjs';
 import { acceptedCommit, cacheDir, usableCache, verdict } from './consult.mjs';
 
@@ -290,6 +290,8 @@ function problem(code,reason) {
 function templatedProblem(code,reason,values) {return {code,message:renderTemplate(reason,values)};}
 function warning(code,reason,values) {return {code,message:renderTemplate(reason,values)};}
 export const CHECK_REASONS=[...Object.values(checkReasons),...Object.values(checkReasonTemplates)];
+// Keep protocol reason identity available without duplicating operator prose.
+export const CHECK_REASON_MESSAGES=checkReasons;
 export const CHECK_REASON_TEMPLATES=checkReasonTemplates;
 function providerActionName(action) {
   if(action.kind==='operation' && action.slot===SLOT) return action.name;
@@ -311,7 +313,7 @@ function readinessRuntime(settings,env=process.env) {
       const bindings=loadBindings(settings['bindings-file']);
       if(!env.OATS_SOUL) return {problem:problem('needs-configuration','soul:missing')};
       const decl=soulDeclaration(env.OATS_SOUL);
-      return {runtime:{descriptorFile:bindings.file,bindings:{version:1,stateDir:bindings.stateDir,bases:bindings.bases},declaration:decl}};
+      return {legacy:true,runtime:{descriptorFile:bindings.file,bindings:{version:1,stateDir:bindings.stateDir,bases:bindings.bases},declaration:decl}};
     } catch(error) {
       const message=String(error?.message || '');
       if(error?.code==='E_CONFIG' && /okf\.json|soul has no/.test(message)) return {problem:problem('needs-configuration','soul:missing')};
@@ -320,7 +322,11 @@ function readinessRuntime(settings,env=process.env) {
   }
   if(settings.schemaVersion!==undefined) {
     try { return {runtime:bindingPayload(settings,{diagnoseSettings:true}).runtime}; }
-    catch(error) {if(['invalid-binding','needs-configuration'].includes(error?.wireCode)) return {problem:problem('needs-configuration','binding:not-configured')};throw error;}
+    catch(error) {
+      if(['E_ID','E_CONFIG'].includes(error?.code)) return {problem:problem('needs-configuration','bindings:invalid')};
+      if(['invalid-binding','needs-configuration'].includes(error?.wireCode)) return {problem:problem('needs-configuration','binding:not-configured')};
+      throw error;
+    }
   }
   return {problem:problem('needs-configuration','settings:missing')};
 }
@@ -359,6 +365,8 @@ function lsRemote(base) {
   });
 }
 function checkError(error,stage) {
+  if(stage==='runtime' && error.code==='E_ID') return {status:'needs-configuration',problem:problem('needs-configuration','bindings:invalid')};
+  if(stage==='runtime' && error.code==='E_CONFIG') return {status:'needs-configuration',problem:problem('needs-configuration','binding:not-configured')};
   if(error.code==='E_COMMAND' && stage==='runtime') return {status:'needs-configuration',problem:problem('needs-configuration','runtime:command-missing')};
   if(error.code==='E_COMMAND') return {status:'unavailable',problem:problem('provider-unavailable')};
   if(error.code==='E_OWNER') return {status:'needs-configuration',problem:problem('provider-not-qualified','base:owner-unmet')};
@@ -382,14 +390,14 @@ async function checkPhase(req) {
   if(name && (unsupportedCapturedCommands.has(name) || name==='run-source' || name==='harvest')) return {status:'needs-configuration',problems:[problem('provider-not-qualified','action:not-admitted')]};
   if(action.kind==='hook' && action.name==='soul-scaffold') return {status:'ready',problems:[]};
   let bindings;try{bindings=validateBindings(runtime.bindings,runtime.descriptorFile);}catch{return {status:'needs-configuration',problems:[problem('needs-configuration','bindings:invalid')]};}
-  const accepted={},problems=[],warnings=[],unresolved=[];
+  const accepted={},problems=[],warnings=[],unresolved=[],failed=[];
   const gitBases=Object.entries(bindings.bases).filter(([,base])=>base.kind==='git');
   if(gitBases.length>64) return {status:'unavailable',problems:[problem('provider-not-qualified','bases:too-many')]};
   const probes=new Map(await Promise.all(gitBases.map(async ([alias,base])=>[alias,await lsRemote(base)])));
   for(const [alias,base] of Object.entries(bindings.bases)) {
     if(base.kind==='directory') {
       try { accepted[alias]=validateBase(base.path,base).meta; }
-      catch(error) { const out=checkError(error,'validate');problems.push(out.problem); }
+      catch(error) { failed.push(alias);const out=checkError(error,'validate');problems.push(out.problem); }
       continue;
     }
     const cache=cacheDir(bindings,base),state=usableCache(cache,base),probe=probes.get(alias);
@@ -404,10 +412,10 @@ async function checkPhase(req) {
     try {
       const v=verdict(ctx,{fetchMissing:false,saveResult:false});
       if(v.ok) accepted[alias]={nodes:v.nodes};
-      else problems.push(problem('provider-not-qualified','base:not-validated'));
+      else {failed.push(alias);problems.push(problem('provider-not-qualified','base:not-validated'));}
     } catch(error) {
       if(error.code==='E_BASE_UNAVAILABLE' && error.step==='read') {unresolved.push(alias);warnings.push(warning('cache-not-validated','cache-not-validated',{alias,cached:shortOid(commit)}));}
-      else { const out=checkError(error,'validate');problems.push(out.problem); }
+      else { failed.push(alias);const out=checkError(error,'validate');problems.push(out.problem); }
     }
     if(probe?.ok) {
       if(probe.commit!==commit) warnings.push(warning('cache-stale','cache-stale',{alias,cached:shortOid(commit),accepted:shortOid(probe.commit)}));
@@ -415,8 +423,16 @@ async function checkPhase(req) {
   }
   if(req.settings.harvest!=='off') {
     for(const alias of unresolved) warnings.push(warning('base-unresolved','base-unresolved',{alias}));
-    const rendered=unresolved.length?{...runtime,declaration:{...runtime.declaration,owns:runtime.declaration.owns.filter(ref=>!unresolved.includes(ref.split('/')[0])),reads:runtime.declaration.reads.filter(ref=>!unresolved.includes(ref.split('/')[0]))}}:runtime;
-    try { checkKnowledgeRuntime({rendered,accepted}); }
+    // A failed base has no accepted metadata. Exclude only its references so
+    // healthy bases still report node and ownership problems independently.
+    const skipped=new Set([...unresolved,...failed]),resolvable=ref=>!skipped.has(ref.split('/')[0]);
+    const rendered=skipped.size?{...runtime,declaration:{...runtime.declaration,owns:runtime.declaration.owns.filter(resolvable),reads:runtime.declaration.reads.filter(resolvable)}}:runtime;
+    try {
+      // Legacy declarations name deployment aliases. Only captured portable
+      // documents require those aliases to equal stable store identities.
+      if(prepared.legacy) resolveNodes(rendered.declaration,bindings,accepted);
+      else checkKnowledgeRuntime({rendered,accepted});
+    }
     catch(error) { const out=checkError(error,'runtime');problems.push(out.problem); }
   }
   const result={status:statusOf(problems),problems};

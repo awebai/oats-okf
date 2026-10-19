@@ -2951,7 +2951,7 @@ test('4.2.0 an invocation deadline nests to the earlier one, is restored on exit
     assert.throws(()=>withDeadline(now-1,()=>bounded(1)),{code:'E_DEADLINE'});assert.ok(bounded(20000)>1000,'restored after the error');
   });
   assert.equal(bounded(600000),600000,'no deadline outside one');
-  const dir=fs.mkdtempSync(join(tmpdir(),'okf-lock-')),lock=join(dir,'held.lock');put(join(lock,'owner.json'),JSON.stringify({token:'live',pid:process.pid,host:hostname()}));
+  const dir=fs.realpathSync(fs.mkdtempSync(join(tmpdir(),'okf-lock-'))),lock=join(dir,'held.lock');put(join(lock,'owner.json'),JSON.stringify({token:'live',pid:process.pid,host:hostname()}));
   try {
     let t0=performance.now();assert.throws(()=>withDeadline(Date.now()+300,()=>withLock(lock,()=>{},{waitMs:10000})),{code:'E_DEADLINE'});assert.ok(performance.now()-t0<2000,'the wait ends with the deadline');
     t0=performance.now();assert.throws(()=>withLock(lock,()=>{},{waitMs:300}),{code:'E_LOCKED'});assert.ok(performance.now()-t0>=250,'without one, the wait is its own');
