@@ -792,7 +792,8 @@ deactivate oats.okf`. Unresolved declared nodes instead report
 `OKF binding missing or invalid: provision soul OKF declaration and bindings
 file, or deactivate oats.okf`, which includes the soul declaration in the remedy.
 Failed base validation reports its own problem without a second node-resolution
-problem caused by missing accepted metadata. The binding wire
+problem caused by missing accepted metadata. Other validated bases retain their
+node and ownership diagnostics. The binding wire
 uses a closed reason vocabulary: it does not disclose supplied alias/ID names,
 paths or caught exception text in these diagnostics. Missing/invalid harvest
 runtime settings and ownership failures keep their own diagnostics.

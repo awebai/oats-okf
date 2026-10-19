@@ -162,6 +162,28 @@ test('legacy harvest-on readiness resolves deployment aliases independently of s
   fs.rmSync(join(f.writePath,'expert','index.md'));
   const invalidBase=call('check',kernelReadinessRequest({...f.settings,harvest:'on'}),{OATS_SOUL:f.soulDir});
   assert.deepEqual(invalidBase.response.result,{status:'needs-configuration',problems:[{code:'provider-not-qualified',message:CHECK_REASON_MESSAGES['base:not-validated']}]},'failed base validation must not invent a second binding problem');
+  for(const [ref,reason,code] of [
+    ['reference/reference','base:owner-unmet','provider-not-qualified'],
+    ['reference/confidential-missing','binding:not-configured','needs-configuration'],
+  ]) {
+    fs.writeFileSync(join(f.soulDir,'okf.json'),JSON.stringify({version:1,owner:'expert-owner',reads:[],owns:[ref,'destination/expert']}));
+    const mixed=call('check',kernelReadinessRequest({...f.settings,harvest:'on'}),{OATS_SOUL:f.soulDir});
+    assert.deepEqual(mixed.response.result,{status:'needs-configuration',problems:[
+      {code:'provider-not-qualified',message:CHECK_REASON_MESSAGES['base:not-validated']},
+      {code,message:CHECK_REASON_MESSAGES[reason]},
+    ]});
+    assert.deepEqual(mixed.response.result.warnings??[],[],'failed validation does not emit cache warnings');
+    assert.doesNotMatch(mixed.stdout,/confidential/);
+  }
+  fs.writeFileSync(f.descriptorFile,JSON.stringify({...doc,bases:{...doc.bases,cold:{
+    id:'cold-store',kind:'git',repository:join(f.root,'absent-remote.git'),root:'.',acceptedBranch:'main',pr:{repository:'example/knowledge'},
+  }}}));
+  fs.writeFileSync(join(f.soulDir,'okf.json'),JSON.stringify({version:1,owner:'expert-owner',reads:[],owns:['reference/reference','destination/expert','cold/expert']}));
+  const cold=call('check',kernelReadinessRequest({...f.settings,harvest:'on'}),{OATS_SOUL:f.soulDir}).response.result;
+  assert.equal(cold.status,'unavailable');
+  assert.deepEqual(cold.problems.map(p=>p.code),['provider-not-qualified','provider-unavailable','provider-not-qualified']);
+  assert.equal(cold.problems.at(-1).message,CHECK_REASON_MESSAGES['base:owner-unmet']);
+  assert.deepEqual(cold.warnings.map(w=>w.code),['base-unresolved']);
 });
 
 test('portable unresolved nodes name the soul binding without blaming a valid bindings file',t=>{

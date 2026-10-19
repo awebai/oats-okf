@@ -390,14 +390,14 @@ async function checkPhase(req) {
   if(name && (unsupportedCapturedCommands.has(name) || name==='run-source' || name==='harvest')) return {status:'needs-configuration',problems:[problem('provider-not-qualified','action:not-admitted')]};
   if(action.kind==='hook' && action.name==='soul-scaffold') return {status:'ready',problems:[]};
   let bindings;try{bindings=validateBindings(runtime.bindings,runtime.descriptorFile);}catch{return {status:'needs-configuration',problems:[problem('needs-configuration','bindings:invalid')]};}
-  const accepted={},problems=[],warnings=[],unresolved=[];
+  const accepted={},problems=[],warnings=[],unresolved=[],failed=[];
   const gitBases=Object.entries(bindings.bases).filter(([,base])=>base.kind==='git');
   if(gitBases.length>64) return {status:'unavailable',problems:[problem('provider-not-qualified','bases:too-many')]};
   const probes=new Map(await Promise.all(gitBases.map(async ([alias,base])=>[alias,await lsRemote(base)])));
   for(const [alias,base] of Object.entries(bindings.bases)) {
     if(base.kind==='directory') {
       try { accepted[alias]=validateBase(base.path,base).meta; }
-      catch(error) { const out=checkError(error,'validate');problems.push(out.problem); }
+      catch(error) { failed.push(alias);const out=checkError(error,'validate');problems.push(out.problem); }
       continue;
     }
     const cache=cacheDir(bindings,base),state=usableCache(cache,base),probe=probes.get(alias);
@@ -412,10 +412,10 @@ async function checkPhase(req) {
     try {
       const v=verdict(ctx,{fetchMissing:false,saveResult:false});
       if(v.ok) accepted[alias]={nodes:v.nodes};
-      else problems.push(problem('provider-not-qualified','base:not-validated'));
+      else {failed.push(alias);problems.push(problem('provider-not-qualified','base:not-validated'));}
     } catch(error) {
       if(error.code==='E_BASE_UNAVAILABLE' && error.step==='read') {unresolved.push(alias);warnings.push(warning('cache-not-validated','cache-not-validated',{alias,cached:shortOid(commit)}));}
-      else { const out=checkError(error,'validate');problems.push(out.problem); }
+      else { failed.push(alias);const out=checkError(error,'validate');problems.push(out.problem); }
     }
     if(probe?.ok) {
       if(probe.commit!==commit) warnings.push(warning('cache-stale','cache-stale',{alias,cached:shortOid(commit),accepted:shortOid(probe.commit)}));
@@ -423,10 +423,11 @@ async function checkPhase(req) {
   }
   if(req.settings.harvest!=='off') {
     for(const alias of unresolved) warnings.push(warning('base-unresolved','base-unresolved',{alias}));
-    const rendered=unresolved.length?{...runtime,declaration:{...runtime.declaration,owns:runtime.declaration.owns.filter(ref=>!unresolved.includes(ref.split('/')[0])),reads:runtime.declaration.reads.filter(ref=>!unresolved.includes(ref.split('/')[0]))}}:runtime;
-    // Without accepted metadata a node cannot resolve. The base problems above
-    // already identify that cause; do not add a declaration/binding remedy.
-    if(!problems.length) try {
+    // A failed base has no accepted metadata. Exclude only its references so
+    // healthy bases still report node and ownership problems independently.
+    const skipped=new Set([...unresolved,...failed]),resolvable=ref=>!skipped.has(ref.split('/')[0]);
+    const rendered=skipped.size?{...runtime,declaration:{...runtime.declaration,owns:runtime.declaration.owns.filter(resolvable),reads:runtime.declaration.reads.filter(resolvable)}}:runtime;
+    try {
       // Legacy declarations name deployment aliases. Only captured portable
       // documents require those aliases to equal stable store identities.
       if(prepared.legacy) resolveNodes(rendered.declaration,bindings,accepted);
