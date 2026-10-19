@@ -9,7 +9,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import net from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { bindingChoiceKey, storeChoiceKey } from '../oats-package/capabilities/oats-okf/lib/portable-binding.mjs';
-import { CHECK_REASONS, loadInvocationKnowledgeBinding, parseBindingJson, sourceRuntimeFromKnowledgeBinding } from '../oats-package/capabilities/oats-okf/lib/binding-wire.mjs';
+import { CHECK_REASON_MESSAGES, CHECK_REASONS, loadInvocationKnowledgeBinding, parseBindingJson, sourceRuntimeFromKnowledgeBinding } from '../oats-package/capabilities/oats-okf/lib/binding-wire.mjs';
 import { bindingFingerprint, validateBindings } from '../oats-package/capabilities/oats-okf/lib/config.mjs';
 import { initBase } from '../oats-package/capabilities/oats-okf/lib/migration.mjs';
 import { loadSource, register } from '../oats-package/capabilities/oats-okf/lib/sources.mjs';
@@ -121,7 +121,102 @@ test('readiness skips harvest runtime qualification when harvest is off and name
   const off=call('check',kernelReadinessRequest({...f.settings,harvest:'off'}),{OATS_SOUL:f.soulDir});
   assert.deepEqual(off.response.result,{status:'ready',problems:[]},'harvest off matches spawn: no harvest runtime qualification');
   const on=call('check',kernelReadinessRequest({...f.settings,harvest:'on'}),{OATS_SOUL:f.soulDir});
-  assert.deepEqual(on.response.result,{status:'needs-configuration',problems:[{code:'needs-configuration',message:'harvest runtime is not qualified: install/configure the selected harvest runtime or set harvest off'}]});
+  assert.deepEqual(on.response.result,{status:'needs-configuration',problems:[{code:'needs-configuration',message:CHECK_REASON_MESSAGES['binding:not-configured']}]});
+});
+
+test('legacy harvest-on readiness resolves deployment aliases independently of stable store IDs',t=>{
+  const {f,binding}=prepareBinding(t);
+  const doc={...binding.payload.runtime.bindings,bases:{
+    reference:binding.payload.stores['reference-base'],
+    destination:binding.payload.stores['private-base'],
+  }};
+  fs.writeFileSync(f.descriptorFile,JSON.stringify(doc));
+  fs.writeFileSync(join(f.soulDir,'okf.json'),JSON.stringify({version:1,owner:'expert-owner',reads:['reference/reference'],owns:['destination/expert']}));
+  const bindings=validateBindings(doc,f.descriptorFile);
+  for(const [alias,nodes] of [['reference',{reference:{path:'reference',owner:'reference-owner'}}],['destination',{expert:{path:'expert',owner:'expert-owner'}}]]) {
+    const file=join(f.root,`${alias}-nodes.json`);fs.writeFileSync(file,JSON.stringify(nodes));initBase(bindings,alias,file,undefined,{confirm:true});
+  }
+  const before=stateSnapshot(f.root);
+  for(const harvest of ['on','off']) {
+    const result=call('check',kernelReadinessRequest({...f.settings,harvest}),{OATS_SOUL:f.soulDir});
+    assert.equal(result.status,0,result.stderr);assert.equal(result.response.ok,true);
+    assert.deepEqual(result.response.result,{status:'ready',problems:[]});
+  }
+  assert.deepEqual(stateSnapshot(f.root),before,'readiness leaves bindings, bases and state untouched');
+  for(const [key,value,reason] of [
+    ['harvest-runtime','unsupported','harvest-runtime:invalid'],
+    ['harvest-model',' ','harvest-model:invalid'],
+  ]) {
+    const result=call('check',kernelReadinessRequest({...f.settings,harvest:'on',[key]:value}),{OATS_SOUL:f.soulDir});
+    assert.deepEqual(result.response.result,{status:'needs-configuration',problems:[{code:'needs-configuration',message:CHECK_REASON_MESSAGES[reason]}]});
+  }
+  fs.writeFileSync(join(f.soulDir,'okf.json'),JSON.stringify({version:1,owner:'wrong-owner',reads:[],owns:['destination/expert']}));
+  const owner=call('check',kernelReadinessRequest({...f.settings,harvest:'on'}),{OATS_SOUL:f.soulDir});
+  assert.deepEqual(owner.response.result,{status:'needs-configuration',problems:[{code:'provider-not-qualified',message:CHECK_REASON_MESSAGES['base:owner-unmet']}]});
+  for(const refs of [{reads:['reference/confidential-missing'],owns:[]},{reads:[],owns:['destination/confidential-missing']}]) {
+    fs.writeFileSync(join(f.soulDir,'okf.json'),JSON.stringify({version:1,owner:'expert-owner',...refs}));
+    const missing=call('check',kernelReadinessRequest({...f.settings,harvest:'on'}),{OATS_SOUL:f.soulDir});
+    assert.deepEqual(missing.response.result,{status:'needs-configuration',problems:[{code:'needs-configuration',message:CHECK_REASON_MESSAGES['binding:not-configured']}]});
+    assert.doesNotMatch(missing.stdout,/confidential/);
+  }
+  fs.writeFileSync(join(f.soulDir,'okf.json'),JSON.stringify({version:1,owner:'expert-owner',reads:['reference/reference'],owns:['destination/expert']}));
+  fs.rmSync(join(f.writePath,'expert','index.md'));
+  const invalidBase=call('check',kernelReadinessRequest({...f.settings,harvest:'on'}),{OATS_SOUL:f.soulDir});
+  assert.deepEqual(invalidBase.response.result,{status:'needs-configuration',problems:[{code:'provider-not-qualified',message:CHECK_REASON_MESSAGES['base:not-validated']}]},'failed base validation must not invent a second binding problem');
+  for(const [ref,reason,code] of [
+    ['reference/reference','base:owner-unmet','provider-not-qualified'],
+    ['reference/confidential-missing','binding:not-configured','needs-configuration'],
+  ]) {
+    fs.writeFileSync(join(f.soulDir,'okf.json'),JSON.stringify({version:1,owner:'expert-owner',reads:[],owns:[ref,'destination/expert']}));
+    const mixed=call('check',kernelReadinessRequest({...f.settings,harvest:'on'}),{OATS_SOUL:f.soulDir});
+    assert.deepEqual(mixed.response.result,{status:'needs-configuration',problems:[
+      {code:'provider-not-qualified',message:CHECK_REASON_MESSAGES['base:not-validated']},
+      {code,message:CHECK_REASON_MESSAGES[reason]},
+    ]});
+    assert.deepEqual(mixed.response.result.warnings??[],[],'failed validation does not emit cache warnings');
+    assert.doesNotMatch(mixed.stdout,/confidential/);
+  }
+  fs.writeFileSync(f.descriptorFile,JSON.stringify({...doc,bases:{...doc.bases,cold:{
+    id:'cold-store',kind:'git',repository:join(f.root,'absent-remote.git'),root:'.',acceptedBranch:'main',pr:{repository:'example/knowledge'},
+  }}}));
+  fs.writeFileSync(join(f.soulDir,'okf.json'),JSON.stringify({version:1,owner:'expert-owner',reads:[],owns:['reference/reference','destination/expert','cold/expert']}));
+  const cold=call('check',kernelReadinessRequest({...f.settings,harvest:'on'}),{OATS_SOUL:f.soulDir}).response.result;
+  assert.equal(cold.status,'unavailable');
+  assert.deepEqual(cold.problems.map(p=>p.code),['provider-not-qualified','provider-unavailable','provider-not-qualified']);
+  assert.equal(cold.problems.at(-1).message,CHECK_REASON_MESSAGES['base:owner-unmet']);
+  assert.deepEqual(cold.warnings.map(w=>w.code),['base-unresolved']);
+});
+
+test('portable unresolved nodes name the soul binding without blaming a valid bindings file',t=>{
+  const {f,binding}=prepareBinding(t),bindings=validateBindings(binding.payload.runtime.bindings,f.descriptorFile);
+  for(const [alias,nodes] of [['reference-base',{reference:{path:'reference',owner:'reference-owner'}}],['private-base',{expert:{path:'expert',owner:'expert-owner'}}]]) {
+    const file=join(f.root,`${alias}-nodes.json`);fs.writeFileSync(file,JSON.stringify(nodes));initBase(bindings,alias,file,undefined,{confirm:true});
+  }
+  const missing=structuredClone(binding);
+  missing.payload.reads[0].node='confidential-missing';
+  missing.payload.runtime.declaration.reads=['reference-base/confidential-missing'];
+  const checked=call('check',kernelReadinessRequest(missing));
+  assert.equal(checked.response.ok,true);
+  assert.deepEqual(checked.response.result,{status:'needs-configuration',problems:[{code:'needs-configuration',message:CHECK_REASON_MESSAGES['binding:not-configured']}]});
+  assert.doesNotMatch(checked.stdout,/confidential/);
+});
+
+test('portable identity/configuration errors produce redacted binding diagnostics and captured invocation still refuses',t=>{
+  const {f,binding}=prepareBinding(t);
+  const mismatch=structuredClone(binding);
+  mismatch.payload.stores['private-base'].id='confidential-store-id';
+  mismatch.payload.runtime.bindings.bases['private-base'].id='confidential-store-id';
+  const invalid=structuredClone(binding);invalid.payload.reads='confidential-config-value';
+  for(const value of [mismatch,invalid]) {
+    const result=call('check',kernelReadinessRequest(value));
+    assert.equal(result.status,0,result.stderr);assert.equal(result.response.ok,true);
+    assert.deepEqual(result.response.result,{status:'needs-configuration',problems:[{code:'needs-configuration',message:CHECK_REASON_MESSAGES['bindings:invalid']}]});
+    assert.doesNotMatch(result.stdout,/confidential|private-base/);
+    assert.equal(result.stderr,'');
+    const file=join(f.root,'captured.json');fs.writeFileSync(file,JSON.stringify(value),{mode:0o600});
+    assert.throws(()=>loadInvocationKnowledgeBinding({OATS_BINDING_FILE:file}),{code:'E_BINDING'});
+  }
+  assert.equal(fs.existsSync(f.stateDir),false,'invalid portable bindings create no state');
 });
 
 test('Git readiness uses only the stateDir consult cache for cold, warm, stale and unreachable bases',async t=>{
