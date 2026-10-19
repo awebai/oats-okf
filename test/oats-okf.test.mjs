@@ -2491,11 +2491,13 @@ test('4.2.0 a retired source\'s delivered PRs are listed one by one with their e
 });
 const legacyJob=source=>({id:`okf-${source.id}`,kind:'command',enabled:true,cron:'*/15 * * * *',tz:'UTC',cwd:source.context,argv:['oats','okf','run-source','--source',source.file,'--soul',source.agent,'--json']});
 test('4.2.0 live cron/tz bindings are refused with the one-sentence remedy; a frozen pre-4.2 descriptor stays readable, inert and unmodified through checkpoint, complete and retire',t=>{
-  const f=fixture(t);const s=f.source();note(f);capture(s);
+  const f=fixture(t);const s=f.source();note(f);
   // A source descriptor as okf 4.1 froze it: bindings with cron/tz, a ready schedule receipt and job definition.
   const legacy=readJSON(s.file);legacy.bindings={...legacy.bindings,cron:'*/15 * * * *',tz:'UTC'};save(s.file,legacy);
   const status=loadStatus(s);status.schedule={id:`okf-${s.id}`,status:'ready',result:{schedule:legacyJob(s)}};saveStatus(s,status);save(join(dirname(s.file),'schedule.json'),legacyJob(s));
   const bytes=fs.readFileSync(s.file);const frozen=loadSource(s.file);assert.equal(frozen.bindingFingerprint,s.bindingFingerprint);
+  // Freeze legacy metadata before any attempt binds this immutable descriptor.
+  capture(frozen);
   const raw=readJSON(f.bindingFile);save(f.bindingFile,{...raw,cron:'0 * * * *'});
   const fresh=join(f.context,'fresh-seat');fs.mkdirSync(join(fresh,'work'),{recursive:true});save(join(fresh,'instance.json'),{instance:'fresh-seat',agent:'source',repo:f.context,work:'directory',launched:true});
   const refused=f.cli('spawn',[],{OATS_HOME:fresh,OATS_INSTANCE_HOME:fresh,OATS_INSTANCE:'fresh-seat'});assert.equal(refused.status,1);assert.match(refused.out.warning,/E_HARVEST_SCHEDULE_REMOVED: .*oats\.okf 4\.2 harvests at checkpoints, not on schedules: remove cron\/tz from the bindings file, and remove each okf-<source id> job okf <= 4\.1 created with oats schedule remove <id> --dir <deployment> \(README#upgrading-from-41\)\.$/);
