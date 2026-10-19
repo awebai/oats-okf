@@ -1,5 +1,32 @@
 # Changelog
 
+## 4.2.1 — 2026-10-19
+
+### Fixed
+
+- **Harvest readiness with a legacy binding whose alias is not its store ID**
+  (#90, PR #92). With harvest on, readiness applied the portable rule
+  alias == store ID to legacy (`bindings-file`) bindings too, and then
+  reported the failure as `runtime:not-qualified`, a harvest runtime problem.
+  Now:
+  - Legacy bindings keep their own alias rule, with harvest on or off.
+    Portable and captured bindings still require alias == ID.
+  - A binding identity or structural error reports `OKF bindings file
+    missing or invalid: repair configured bindings file, or deactivate
+    oats.okf`. An unresolved declared node reports `OKF binding missing or
+    invalid: provision soul OKF declaration and bindings file, or deactivate
+    oats.okf`.
+  - A base that fails validation reports its own problem, without a second
+    node-resolution problem. Other bases keep their node and ownership
+    diagnostics.
+  - These diagnostics use a closed reason vocabulary. They name no alias,
+    ID, path or caught exception text.
+
+  Readiness is a report (OATS 0.62.0). Spawn, checkpoint capture and the
+  worker run their own checks, so 4.2.0 harvested correctly; only its
+  readiness answer was wrong. `test/readiness-consumer.test.mjs` checks this on
+  published OATS 0.62.0, with v4.2.0 as the failing negative control.
+
 ## 4.2.0 — 2026-10-06
 
 Checkpoint harvest (#49); the harvester retires after delivery (#47). #46 and
