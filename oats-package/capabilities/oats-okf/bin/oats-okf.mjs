@@ -209,7 +209,7 @@ else {
           // from the deployment as it is now, within the checkpoint's budget.
           const deadline=Date.now()+RETIRE_BUDGET_MS,sw=sourceSwitch(s,{firstBatch:true,deadline});
           if(sw.effective!=='on') fail('E_HARVEST_OFF',`harvest is off for this instance: ${sw.reason}. Nothing was captured.`);
-          result=checkpointHarvest(s,{noLaunch:!!flags['no-launch'],deadline});
+          result=checkpointHarvest(s,{noLaunch:!!flags['no-launch'],deadline,consent:sw});
         }
       }
     } else if(event==='run-source') {

@@ -248,6 +248,13 @@ test('consent-off does not mistake own unpublished dispatch or redirected metada
   assert.throws(()=>settleCaptureOff(two),{code:'E_CAPTURE_PENDING'});assert.equal(fs.existsSync(join(dir,'consumed.json')),false);
   fs.writeFileSync(join(gate,'owner.json'),'{');assert.throws(()=>settleCaptureOff(two),{code:'E_CAPTURE_UNCERTAIN'});fs.rmSync(gate,{recursive:true});
   fs.symlinkSync(join(f.root,'absent'),join(dir,'runner.json'));assert.throws(()=>settleCaptureOff(two),{code:'E_CAPTURE_UNCERTAIN'});fs.rmSync(join(dir,'runner.json'));
-  const current=join(dirname(dir),'current.json'),pointer=JSON.parse(fs.readFileSync(current));fs.rmSync(current);assert.throws(()=>settleCaptureOff(two),{code:'E_CAPTURE_UNCERTAIN'});save(current,pointer);
+  const current=join(dirname(dir),'current.json'),pointer=JSON.parse(fs.readFileSync(current));save(join(dir,'dispatch.json'),{attempt:queued.attempt.id,requestHash:hash(queued.attempt)});fs.rmSync(current);assert.throws(()=>settleCaptureOff(two),{code:'E_CAPTURE_UNCERTAIN'});fs.rmSync(join(dir,'dispatch.json'));save(current,pointer);
   settleCaptureOff(two);assert.equal(f.calls().length,1);
+});
+
+test('consent-off preserves an existing normal consumption record byte-for-byte',t=>{
+  const f=fixture(t),s=f.source('already-recalled'),result=f.observe(s,5000);assert.equal(result.report.complete,true);consumeAttempt(s,result.attempt);
+  const file=join(f.attemptDir(result),'consumed.json'),before=fs.readFileSync(file),stat=fs.statSync(file);
+  settleCaptureOff(s);settleCaptureOff(s);
+  assert.deepEqual(fs.readFileSync(file),before);assert.equal(fs.statSync(file).mtimeMs,stat.mtimeMs);assert.equal(JSON.parse(before).settlement,undefined);assert.equal(f.calls().length,1);
 });

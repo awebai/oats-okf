@@ -122,6 +122,45 @@ function acquireGate(dir, request) {
   try { return withLock(join(parent, 'coordination.lock'), () => acquireGateLocked(dir, request), { reclaimDead: true, reclaimOwnerless: false, waitMs: 100 }); }
   catch (e) { if (e.code === 'E_LOCKED' || e.code === 'E_DEADLINE') return {acquired:false,blocker:{attempt:null,state:'unknown'}}; throw e; }
 }
+// Without a published pointer, pre-publication directories are inert only
+// while every durable dispatch/closure artifact is absent. Never discard them.
+function assertInertOrphans(base, source, proof) {
+  privateDirectory(base);
+  const entries=fs.opendirSync(base);
+  try {
+    let entry;
+    while((entry=entries.readSync())) {
+      const path=join(base,entry.name);
+      if(/^current\.json\.tmp-[a-f0-9-]{36}$/.test(entry.name)) {
+        assertUnpublishedFile(path);continue;
+      }
+      if(!uuid(entry.name)) unknown();
+      privateDirectory(path);
+      for(const marker of ['dispatch.json','runner.json','receipt.json','consumed.json']) if(hasEvidence(join(path,marker))) unknown();
+      const files=fs.opendirSync(path);
+      try {
+        let file;
+        while((file=files.readSync())) {
+          if(file.name!=='request.json'&&!/^request\.json\.tmp-[a-f0-9-]{36}$/.test(file.name)) unknown();
+          assertUnpublishedFile(join(path,file.name));
+        }
+      } finally {files.closeSync();}
+      if(hasEvidence(join(path,'request.json'))) {
+        const request=readAttempt(path);
+        if(!same(request.source,proof)||request.cwd!==source.context) unknown();
+        // A gate published after a lost pointer is still an ambiguous dispatch
+        // window, even if no dispatch intent was subsequently saved.
+        safePath(request.root);if(fs.realpathSync(request.root)!==request.root) unknown();
+        const held=gateOwner(request.root);
+        if(held && (held.owner.directory===path || held.request.source.id===source.id || held.request.source.file===source.file)) unknown();
+      }
+    }
+  } finally {entries.closeSync();}
+}
+function assertUnpublishedFile(path) {
+  safePath(path);const stat=fs.lstatSync(path);
+  if(!stat.isFile()||stat.nlink!==1||stat.uid!==process.getuid?.()||(stat.mode&0o077)||stat.size>65536) unknown();
+}
 // Shared by capture, backlog admission and consent-off retirement. A saved
 // attempt binds the same physical home and stable identity across these paths.
 export function assertCaptureSource(source) {
@@ -129,8 +168,7 @@ export function assertCaptureSource(source) {
     const proof = sourceProof(source), base = join(dirname(source.file), 'capture-attempts');
     if (!hasEvidence(join(base, 'current.json'))) {
       if(hasEvidence(base)) {
-        privateDirectory(base);const entries=fs.opendirSync(base);
-        try {if(entries.readSync())unknown();} finally {entries.closeSync();}
+        assertInertOrphans(base,source,proof);
       }
       return { proof };
     }
@@ -183,7 +221,8 @@ export function settleCaptureOff(source) {
       }
       if (hasEvidence(join(dir, 'consumed.json'))) {
         const done = privateJSON(join(dir, 'consumed.json'));
-        if (done.attempt !== request.id || done.requestHash !== hash(request)) unknown();
+        if (done.version !== 1 || done.attempt !== request.id || done.requestHash !== hash(request)) unknown();
+        return; // Preserve the original custody/settlement observation byte-for-byte.
       }
       save(join(dir, 'consumed.json'), { version: 1, attempt: request.id, requestHash: hash(request), settlement: 'settled-under-harvest-off' });
     }, { reclaimDead: true, reclaimOwnerless: false, waitMs: 100 });

@@ -974,7 +974,7 @@ function settleDelivered(source,{deadline}={}) {
 }
 /** `oats okf harvest`, run by the working agent from its home at a checkpoint,
  *  within ONE `deadline` for settlement, capture, staging and launch. */
-export function checkpointHarvest(source,{noLaunch=false,deadline}={}) {
+export function checkpointHarvest(source,{noLaunch=false,deadline,consent}={}) {
   requireQualifiedHelper(source);
   return withDeadline(deadline,()=>tryWorkerLock(source,()=>{
     let status=loadStatus(source);
@@ -983,9 +983,11 @@ export function checkpointHarvest(source,{noLaunch=false,deadline}={}) {
     if(status.activeRun) return {...activeRunState(source,readRun(source,status.activeRun)),source:source.file,settled:[],settlement:'not attempted while a run is active; the next idle checkpoint settles earlier PRs'};
     const resume=()=>operatorCommand(source,['run-source','--source',source.file,'--manual']);
     if(status.retired) return {status:'retired',source:source.file,settled:[],reason:'this source is retired; harvest-status lists remaining custody obligations'};
+    if(consent!==undefined&&!['on','off'].includes(consent?.effective)) fail('E_HARVEST_CONSENT_UNKNOWN','known live harvest consent is required before starting custody');
+    if(consent?.effective==='off') return {status:'harvest-off',source:source.file,settled:[],next:resume()};
     const custodyReady=unprocessed(status).length>0 || !!status.pendingRejudgment;
     if(custodyReady) {
-      const sw=sourceSwitch(source,{firstBatch:true,deadline});
+      const sw=consent ?? sourceSwitch(source,{firstBatch:true,deadline});
       if(sw.effective!=='on') return {status:'harvest-off',source:source.file,settled:[],next:resume()};
       assertLiveSource(source);
     }

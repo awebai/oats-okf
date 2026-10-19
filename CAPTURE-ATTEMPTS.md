@@ -113,7 +113,15 @@ dispatch but before receipt publication is intentionally different: its native
 child may still be running, so the source and shared gate remain held regardless
 of PID or age. An existing exclusive runner claim can belong to that live
 runner; a duplicate runner never overwrites its receipt or releases its gate.
-Missing/unreadable request, dispatch or gate ownership, an unobserved foreground
+When no current pointer was published, private empty or request-only attempt
+directories (including uncommitted request/pointer temporary files) are inert
+provided no dispatch, runner, receipt or consumed evidence exists and no owned
+gate suggests partial dispatch. They remain retained and do not block a new
+attempt or harvest-off retirement. A missing pointer alongside any dispatch or
+terminal evidence stays uncertain. Existing consumption records retain their
+original meaning; off settlement never relabels a prior normal recall.
+
+Missing/unreadable request, dispatch or gate ownership for a published attempt, an unobserved foreground
 crash around runner launch, and corrupt/overflowed native output likewise remain
 uncertain. Queued observations include a bounded blocker attempt ID and uncertain
 completion state when exact gate/request metadata supports it; unreadable ownership

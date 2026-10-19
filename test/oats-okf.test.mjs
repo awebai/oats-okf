@@ -3359,3 +3359,44 @@ test('#91 consent-off resolves a never-dispatched queued retirement while anothe
   assert.equal(fs.existsSync(join(dirname(two.file),'retirement-deferred.json')),false);assert.equal(fs.existsSync(join(queued.dir,'receipt.json')),false);
   fs.rmSync(join(f.dir,'capture-hold'));await waitCaptureFixture(()=>closedCaptureFixture(active));
 });
+
+async function unpublishedAttempt(f,s) {
+  const {sourceProof}=await mod('capture-attempt'),id=randomUUID(),root=join(f.dir,'unissued-root'),base=join(dirname(s.file),'capture-attempts'),dir=join(base,id);
+  fs.mkdirSync(root,{mode:0o700});fs.mkdirSync(dir,{recursive:true,mode:0o700});
+  const request={version:1,id,source:sourceProof(s),root,owner:hostname().split('.')[0],cli:process.env.OATS_CLI_BIN,cwd:s.context,final:false,created:Date.now()};
+  save(join(dir,'request.json'),request);
+  fs.mkdirSync(join(base,randomUUID()),{mode:0o700});
+  fs.writeFileSync(join(base,`current.json.tmp-${randomUUID()}`),'{',{mode:0o600});
+  fs.writeFileSync(join(dir,`request.json.tmp-${randomUUID()}`),'{',{mode:0o600});
+  return {base,dir,root,id,request};
+}
+for(const action of ['checkpoint','off']) test(`#91 unissued orphan attempts do not block ${action}`,async t=>{
+  const f=fixture(t),s=f.source(),orphan=await unpublishedAttempt(f,s),before=inventory(orphan.dir);
+  if(action==='checkpoint') {
+    note(f);const result=checkpointHarvest(s,{noLaunch:true,deadline:Date.now()+110000});assert.equal(result.status,'started');assert.equal(callsOf(f).filter(c=>c.a[0]==='capture').length,1);
+    assert.notEqual(captureAttemptOf(s).id,orphan.id);await waitCaptureFixture(()=>closedCaptureFixture(captureAttemptOf(s)));
+  } else {
+    const result=f.cli('retire',[],deploymentHarvest(f,'off'));assert.equal(result.status,0,result.stdout);assert.equal(result.out.meta.retired,true);assert.equal(fs.existsSync(f.calls),false);assert.equal(fs.existsSync(join(orphan.base,'current.json')),false);
+  }
+  assert.deepEqual(inventory(orphan.dir),before);
+});
+test('#91 a lost pointer with dispatch or terminal evidence still refuses every retirement',async t=>{
+  const f=fixture(t),s=f.source(),orphan=await unpublishedAttempt(f,s);let since;
+  const off=deploymentHarvest(f,'off'),marker=join(dirname(s.file),'retirement-deferred.json');
+  for(const artifact of ['dispatch.json','runner.json','receipt.json','consumed.json']) {
+    save(join(orphan.dir,artifact),{});
+    assert.throws(()=>checkpointHarvest(s,{noLaunch:true,deadline:Date.now()+110000}),{code:'E_CAPTURE_UNCERTAIN'});
+    const result=f.cli('retire',[],off);assert.equal(result.status,1);assert.equal(result.out.meta.retired,false);assert.equal(loadStatus(s).retired,false);assert.equal(fs.existsSync(f.calls),false);
+    since??=readJSON(marker).since;assert.equal(readJSON(marker).since,since);fs.rmSync(join(orphan.dir,artifact));
+  }
+  const gate=join(orphan.root,'.oats-okf-capture','gate');fs.mkdirSync(gate,{recursive:true,mode:0o700});save(join(gate,'owner.json'),{version:1,attempt:orphan.id,directory:orphan.dir,requestHash:hash(orphan.request)});
+  assert.throws(()=>checkpointHarvest(s,{noLaunch:true,deadline:Date.now()+110000}),{code:'E_CAPTURE_UNCERTAIN'});assert.equal(f.cli('retire',[],off).status,1);assert.equal(readJSON(marker).since,since);assert.equal(fs.existsSync(f.calls),false);
+  fs.rmSync(gate,{recursive:true});assert.equal(f.cli('retire',[],off).status,0);assert.equal(fs.existsSync(marker),false);assert.equal(fs.existsSync(f.calls),false);
+});
+test('#91 a checkpoint reuses its callers live switch without a second consent subprocess',t=>{
+  const f=fixture(t),s=f.source();note(f);
+  assert.equal(checkpointHarvest(s,{consent:{effective:'off'},deadline:Date.now()+110000}).status,'harvest-off');
+  assert.throws(()=>checkpointHarvest(s,{consent:{effective:'unknown'},deadline:Date.now()+110000}),{code:'E_HARVEST_CONSENT_UNKNOWN'});assert.equal(fs.existsSync(f.calls),false);
+  capture(s);const before=consentReads(f).length,captures=callsOf(f).filter(c=>c.a[0]==='capture').length;
+  const result=f.cli('harvest',['--no-launch']);assert.equal(result.status,0,result.stdout);assert.equal(result.out.result.status,'started');assert.equal(consentReads(f).length-before,1);assert.equal(callsOf(f).filter(c=>c.a[0]==='capture').length,captures);
+});
