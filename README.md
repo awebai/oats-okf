@@ -330,12 +330,31 @@ Source: instance <instance name>, home <instance home>, soul <soul name>
 
 and, unless its previous harvester is still listed, spawns a harvester from
 instance home. The capability inject and compulsory `okf-propose` skill own
-this procedure, not the spawn brief:
+this procedure, not the spawn brief. First use the skill's Node recipe to
+print a name for this proposal, record it in log.md, and check it is unused
+with `oats status` and not a soul name with `oats souls`. Substitute that
+literal name below; preview with `--preview`, then apply the same command
+without it:
 
 ```sh
-oats spawn oats.okf/knowledge-harvester --task-file proposals/<file>.md --relation unrelated
+oats spawn oats.okf/knowledge-harvester --name <harvester-name> --task-file proposals/<file>.md --relation unrelated
 ```
 
+- `--name` is required by the procedure: the first (up to) 21 characters of
+  the source instance, trimmed of a trailing dash, then a fresh full UUID
+  without dashes and `-harvester`, separated by dashes. At most 64 characters,
+  a kernel slug and a valid aweb alias. Generate it once per proposal, not
+  once per command: preview and apply reuse the recorded name. The UUID
+  distinguishes proposals even when source prefixes match; a timestamp alone
+  is insufficient. Names must contain no sensitive data.
+- Deployment uniqueness is checked by the kernel, not reserved by preview.
+  `E_INSTANCE_NAME_TAKEN` means stop, record and report: no implicit suffix,
+  dropping `--name`, or automatic rename/retry. Only after resolving the
+  refusal and confirming no harvester already started may a later explicit
+  attempt record a new name. Recover uncertain spawn/session state first.
+  A stale messaging certificate can occupy an alias without a live instance;
+  identity-minting failures are separate, and must be reported to the
+  spawner/operator, never worked around by renaming or deleting certificates.
 - `--relation unrelated` alone: the harvester is a top-level instance that
   can outlive the source. The kernel refuses `--relation unrelated` with
   `--relative-to`.
@@ -359,7 +378,10 @@ oats spawn oats.okf/knowledge-harvester --task-file proposals/<file>.md --relati
 
 A checkpoint whose claims fail the promotion test proposes nothing, and its
 log.md line says so. Proposing is procedure, not a command: oats.okf adds no
-CLI for it.
+CLI for it. Naming is a tested recipe in `okf-propose`, not a new command,
+registry or scheduler; `oats okf harvest` continues to refuse with `E_REMOVED`.
+The harvester's source checks, snapshot and provenance use recorded identities,
+not a numbered harvester-name convention; no hook changes are needed.
 
 ### What the harvester does
 
@@ -667,7 +689,7 @@ runs, completes or drains anything.
 
 | Removed | Instead |
 |---|---|
-| `oats okf harvest` and the `knowledge:harvest` operation | a proposal and `oats spawn oats.okf/knowledge-harvester --task-file <proposal> --relation unrelated` |
+| `oats okf harvest` and the `knowledge:harvest` operation | a proposal and `oats spawn oats.okf/knowledge-harvester --name <harvester-name> --task-file <proposal> --relation unrelated` (name recipe in `okf-propose`) |
 | `oats okf run-source`, `complete`, `retry` | nothing: 5.0 keeps no runs or custody |
 | `oats okf harvest-status` | nothing: there is no harvest state to report |
 | `oats okf setup --harvest`, `--enable`, `--disable`, `--install-host`, `--remove-schedules` | `oats okf setup --remove-legacy-settings` removes the old keys |

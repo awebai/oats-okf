@@ -25,6 +25,20 @@
   next checkpoint**, with that checkpoint's claims added, instead of "at a
   later natural task boundary".
 
+### Fixed
+
+- **Instances name their harvesters explicitly.** The inject, `okf-propose`
+  and README use `oats spawn … --name <harvester-name>` rather than the
+  kernel-numbered default, which can reuse an alias still held by a retired
+  harvester's messaging certificate. The skill's tested recipe uses up to
+  21 source-instance characters, a fresh compact UUID, and `-harvester`
+  (at most 64 characters). Record one name per proposal before preview;
+  preview and apply use the same name. The kernel still checks deployment
+  uniqueness; this is not an alias reservation. `E_INSTANCE_NAME_TAKEN`,
+  uncertain spawns and identity-minting failures stop and report, without
+  automatic rename/retry or certificate cleanup. No new CLI command or state
+  registry; the removed `oats okf harvest` still refuses.
+
 ### Removed
 
 - **The memory gate.** No instance checks host memory before spawning a
@@ -36,9 +50,9 @@
 ### Upgrade
 
 - Existing homes keep their captured provider and instructions: respawn to
-  get the new checkpoints. No kernel, binding, settings, policy-file or
-  harvester change; the proposal format, source capture and review flow
-  are unchanged from 5.2.1. Minor, not a patch: instances will harvest more
+  get the new checkpoints and explicit naming procedure. No kernel, binding,
+  settings, policy-file or harvester-hook change; the proposal format, source
+  capture and review flow are unchanged from 5.2.1. Minor, not a patch: instances will harvest more
   often.
 
 ## 5.2.1 — 2026-10-15

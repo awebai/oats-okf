@@ -136,12 +136,46 @@ harvester's name, then `oats status`. While it still lists that harvester,
 do not spawn another, even if it has handed over or appears idle: retired is
 not the same as stopped. Keep the proposal instead (below).
 
-From your instance home, first append `--preview` to the following command
-and read the resolved harvester composition, then run it without
-`--preview`:
+**Name your harvester explicitly with `--name`.** Never leave it to the
+kernel's numbered default or use `--purpose`: a retired harvester's messaging
+alias can remain occupied even when no instance is listed. For each new
+proposal, run this once from instance home to print a fresh name:
 
 ```sh
-oats spawn oats.okf/knowledge-harvester --task-file <proposal> --relation unrelated
+node --input-type=module <<'JS'
+import { readFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+const { instance } = JSON.parse(readFileSync('instance.json', 'utf8'));
+if (typeof instance !== 'string' || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(instance)) {
+  throw new Error('instance.json must name the source instance as a slug');
+}
+const prefix = instance.slice(0, 21).replace(/-+$/, '');
+console.log(`${prefix}-${randomUUID().replaceAll('-', '')}-harvester`);
+JS
+```
+
+The name is `<source-prefix>-<fresh-uuid-without-dashes>-harvester`: at most
+21 source characters + 1 dash + 32 UUID characters + 10 for `-harvester` =
+64, within both the kernel and aweb alias limits. Removing a trailing dash
+from the prefix keeps it a slug. The full random UUID distinguishes proposals,
+including ones from sources with the same truncated prefix; a timestamp alone
+can collide across hosts or within a minute. Use only non-sensitive source
+names, since the harvester name is also its messaging alias and provenance.
+
+Record the printed name with the proposal path in log.md **before preview**.
+Check `oats status` for that exact name (and `oats souls` for a soul-name
+conflict); it must be unused in the deployment. The kernel checks again at
+spawn: this check is not a reservation or proof that a messaging alias is free.
+Reuse this recorded name after interruption; do not regenerate it for the
+same proposal or between preview and apply.
+
+Replace `<harvester-name>` with that exact name and `<proposal>` with the
+proposal path. From instance home, first append `--preview` to this complete
+command and read the resolved harvester composition, then run the same
+command without `--preview`:
+
+```sh
+oats spawn oats.okf/knowledge-harvester --name <harvester-name> --task-file <proposal> --relation unrelated
 ```
 
 Use that relation exactly as written, without extra relation flags. The
@@ -151,6 +185,16 @@ permission bypass. A scaffold is not a running harvester.
 Record the checkpoint, proposal path and returned harvester instance name
 in log.md; keep STATE.md's current picture up to date. Report a refused or
 uncertain spawn, do not retry it in a loop or spawn around it.
+
+On `E_INSTANCE_NAME_TAKEN`, stop, record the chosen name and refusal, and
+report it in your hand-back. Do not drop `--name`, switch to `--purpose`,
+append a counter, regenerate a UUID or launch a replacement in a retry loop.
+A later explicitly resolved attempt may choose and record a new unused name;
+first establish that this proposal has no harvester already started. For an
+uncertain result, recover the spawn/session record before any further action.
+A messaging identity-minting failure is not `E_INSTANCE_NAME_TAKEN`: report
+that exact failure to your spawner/operator and stop. Never remove a stale
+certificate, re-onboard an identity or rename around that failure yourself.
 
 **While your last harvester is still listed,** keep the proposal and its
 backing notes, and note it as pending in STATE.md and log.md. At your next

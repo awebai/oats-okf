@@ -24,6 +24,12 @@ to situate the task and to stay coherent with what your soul already knows.
 > Reading the **okf-propose** skill is **compulsory** at task start and at
 > each checkpoint; it defines the proposal, the promotion test, the
 > checkpoint record in log.md and the one-harvester-at-a-time rule.
+> Name each harvester explicitly: **okf-propose** gives the source-derived,
+> per-proposal UUID recipe (a slug of at most 64 characters). Record the name
+> before preview and use it unchanged in both preview and launch:
+> `oats spawn oats.okf/knowledge-harvester --name <harvester-name> --task-file <proposal> --relation unrelated`.
+> Never use the default numbered name. On `E_INSTANCE_NAME_TAKEN` or a
+> messaging identity failure, stop and report; no automatic rename or retry.
 > Run `oats okf status` from instance home to read your spawn-recorded duty.
 > A soul declaring `knowledge: { harvest: off }` has no harvest duty; it still
 > consults and keeps instance knowledge current.

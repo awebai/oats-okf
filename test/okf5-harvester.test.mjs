@@ -295,7 +295,7 @@ test('the skill\'s v2 provenance example parses once its placeholders are filled
 
 test('the working skill teaches the proposal and the harvester agrees on its source format',()=>{
   const skill=read('capabilities/oats-okf/skills/okf-propose/SKILL.md');
-  assert.ok(skill.includes('oats spawn oats.okf/knowledge-harvester --task-file <proposal> --relation unrelated'));
+  assert.ok(skill.includes('oats spawn oats.okf/knowledge-harvester --name <harvester-name> --task-file <proposal> --relation unrelated'));
   assert.match(skill,/Source: instance <your instance name>, home <your instance home>, soul <your soul's name>/);
   assert.match(skill,/Use \*\*exactly one\*\* `Source:` line/);
   assert.match(prose('capabilities/oats-okf-harvest/skills/knowledge-harvest/SKILL.md'),/exactly one line `Source: instance <name>, home <path>, soul <name>` \(two or more `Source:` lines are ambiguous: STOP and report/);
