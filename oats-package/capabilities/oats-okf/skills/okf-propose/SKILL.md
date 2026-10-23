@@ -4,7 +4,8 @@ description: >-
   The compulsory harvest procedure for working instances with oats.okf:
   keep instance knowledge current and, at every harvest checkpoint (a PR
   handed over for review, a finished task, and in a long-lived role such as
-  a maintainer's a feature ready or a release or deploy shipped), judge
+  a maintainer's a feature ready, a release or deploy shipped, or a direction
+  decision taken with the human), judge
   durable claims, write one proposal and launch one knowledge harvester.
   Read at task start and at each checkpoint. Covers the checkpoints, the
   soul opt-out, promotion and duplicate checks, the checkpoint record,
@@ -53,7 +54,8 @@ on, and none waits for a task to close:
   - **a direction decision is taken with your human.**
 
 These are not checkpoints: a commit, a review round or a new head of the
-same PR, and each decision as it happens. Capture decisions and discoveries
+same PR, and each decision you make while working (a direction decision taken
+with your human is the checkpoint above). Capture decisions and discoveries
 the moment they happen, in notes/; the next checkpoint carries them.
 
 **One proposal per checkpoint, carrying only what no earlier proposal

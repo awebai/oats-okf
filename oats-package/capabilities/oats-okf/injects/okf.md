@@ -37,12 +37,13 @@ The work mode:
   links; do not bulk-load.
 - **Before compaction and before a task boundary:** update STATE.md, log.md
   and notes/ first, so your future self can continue.
-- **At a decision, as it happens:** write it into notes/; the next harvest
-  checkpoint carries it.
+- **At a decision you make while working, as it happens:** write it into
+  notes/; the next harvest checkpoint carries it. A direction decision taken
+  with your human is a checkpoint of its own.
 - **At a harvest checkpoint** (a PR handed over, a task finished, a feature
-  ready, a release or deploy shipped): first update STATE.md, log.md and
-  relevant notes, then follow **okf-propose** and record the checkpoint's
-  outcome in log.md.
+  ready, a release or deploy shipped, a direction decision taken with your
+  human): first update STATE.md, log.md and relevant notes, then follow
+  **okf-propose** and record the checkpoint's outcome in log.md.
 - **Every so often while working, and always before a design decision or
   before re-deriving something:** `oats okf search` / `cat` the relevant
   concepts and re-read your own notes. Consult prior decisions before

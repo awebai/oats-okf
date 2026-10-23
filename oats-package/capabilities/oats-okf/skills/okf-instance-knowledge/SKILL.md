@@ -97,10 +97,11 @@ Relates to: oats/expert/decisions/retries.md@5b6a9cab (refines it).
 - **Before compaction** and **before a task boundary**: update STATE.md and
   log.md, and write the notes you have been meaning to write.
 - **At a harvest checkpoint** (a PR handed over, a task finished, and in a
-  long-lived role a feature ready or a release or deploy shipped): first
-  update STATE.md, log.md and the relevant notes, then follow the
-  capability's harvest procedure. A decision on its own is captured, not
-  harvested: the next checkpoint carries it.
+  long-lived role a feature ready, a release or deploy shipped, or a
+  direction decision taken with your human): first update STATE.md, log.md
+  and the relevant notes, then follow the capability's harvest procedure. A
+  decision you make while working is captured, not harvested: the next
+  checkpoint carries it.
 - **Consult first**: before writing a note, check notes/ and `oats okf search`
   so you refine or cite rather than duplicate.
 
@@ -109,7 +110,8 @@ Relates to: oats/expert/decisions/retries.md@5b6a9cab (refines it).
 Soul knowledge changes only through a reviewed PR; you never write it.
 The duty to propose comes from the `oats.okf` capability, not a task briefing.
 Follow its harvest instructions: one proposal per harvest checkpoint (a PR
-handed over, a task finished, a feature ready, a release or deploy shipped),
+handed over, a task finished, a feature ready, a release or deploy shipped, a
+direction decision taken with your human),
 only for durable, non-duplicate claims in nodes your soul owns, and a line
 in log.md for every checkpoint, including one with nothing to propose. A soul with `knowledge: { harvest: off }`
 has no harvest duty: keep consulting and capturing for your own work, but do

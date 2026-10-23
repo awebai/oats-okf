@@ -135,13 +135,13 @@ test('the shared IMPORTANT block requires the proposing skill and explicitly exe
   const inject=prose(read('injects/okf.md'));
   assert.match(inject,/IMPORTANT.*MUST keep STATE\.md, log\.md and notes\/ up to date/);
   assert.match(inject,/MUST launch a knowledge harvest at every harvest checkpoint/);
-  for(const checkpoint of [/hand over a PR for review/,/finish a task/,/a feature is ready/,/ship a release or a deploy/]) assert.match(inject,checkpoint);
+  for(const checkpoint of [/hand over a PR for review/,/finish a task/,/a feature is ready/,/ship a release or a deploy/,/a direction decision/]) assert.match(inject,checkpoint);
   assert.match(inject,/Reading the okf-propose skill is compulsory/);
   assert.match(inject,/Run `oats okf status` from instance home/);
   assert.match(inject,/knowledge: \{ harvest: off \}.*has no harvest duty/);
   const skill=prose(read('skills/okf-propose/SKILL.md'));
   assert.ok(skill.includes(SPAWN));
-  for(const required of [/You hand over a PR for review/,/You finish a task/,/a feature is ready/,/you ship a release or a deploy/,
+  for(const required of [/You hand over a PR for review/,/You finish a task/,/a feature is ready/,/you ship a release or a deploy/,/a direction decision is taken with your human/,
     /These are not checkpoints: a commit, a review round or a new head of the same PR/,/One proposal per checkpoint/,
     /Record the checkpoint in log\.md, whatever its outcome/,/nothing to propose/,
     /oats okf search/,/One harvester at a time per instance/,/do not spawn another/,
