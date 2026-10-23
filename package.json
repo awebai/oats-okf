@@ -1,6 +1,6 @@
 {
   "name": "@awebai/oats-okf",
-  "version": "5.2.1",
+  "version": "5.3.0",
   "description": "Official OATS knowledge operations on Open Knowledge Format bases: consultation, instance knowledge, harvest and maintenance.",
   "license": "MIT",
   "type": "module",

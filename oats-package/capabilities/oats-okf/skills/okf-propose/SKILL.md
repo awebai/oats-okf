@@ -2,12 +2,15 @@
 name: okf-propose
 description: >-
   The compulsory harvest procedure for working instances with oats.okf:
-  keep instance knowledge current, judge durable claims at a finished task
-  or PR hand-over, write one proposal and launch one knowledge harvester.
-  Read at task start and before a harvest checkpoint. Covers the soul
-  opt-out, promotion and duplicate checks, memory pressure, one-at-a-time
-  spawning, proposal provenance, deferral and hand-back. The harvester's
-  own publication procedure is knowledge-harvest, not this skill.
+  keep instance knowledge current and, at every harvest checkpoint (a PR
+  handed over for review, a finished task, and in a long-lived role such as
+  a maintainer's a feature ready or a release or deploy shipped), judge
+  durable claims, write one proposal and launch one knowledge harvester.
+  Read at task start and at each checkpoint. Covers the checkpoints, the
+  soul opt-out, promotion and duplicate checks, the checkpoint record,
+  one-at-a-time spawning, proposal provenance, carrying a proposal over and
+  hand-back. The harvester's own publication procedure is knowledge-harvest,
+  not this skill.
 ---
 
 # Propose knowledge at checkpoints
@@ -34,14 +37,28 @@ duty. The private `okf-harvest-policy.json` in home is written by the provider,
 not a user setting or a publication authorization; the harvester still checks
 the source independently.
 
-## When a checkpoint merits a harvest
+## When to harvest
 
-A **harvest checkpoint** is a finished task or a PR hand-over. Make **at most
-one proposal for that completed unit of work**: handing over its PR and then
-closing the same task are not two opportunities. Never launch per commit,
-per review round, on every decision, or merely because a PR was opened.
-Capture decisions and discoveries when they happen; collect them for the
-next harvest checkpoint. Most checkpoints propose nothing.
+A **harvest checkpoint** is any of these moments. Each one is yours to act
+on, and none waits for a task to close:
+
+- **You hand over a PR for review:** you open it, or mark it ready, and tell
+  its reviewer or maintainer. The work it carries is done enough to know
+  what it taught.
+- **You finish a task,** before you hand back or retire.
+- **In a long-lived role** whose task never finishes (a maintainer, an
+  expert holding an area, a support desk):
+  - **a feature is ready:** its last PR merged or approved;
+  - **you ship a release or a deploy;**
+  - **a direction decision is taken with your human.**
+
+These are not checkpoints: a commit, a review round or a new head of the
+same PR, and each decision as it happens. Capture decisions and discoveries
+the moment they happen, in notes/; the next checkpoint carries them.
+
+**One proposal per checkpoint, carrying only what no earlier proposal
+carried.** A PR handed over and then the same task closing are two
+checkpoints, and the second proposes only what was learned since the first.
 
 At a checkpoint, first update STATE.md, log.md and the relevant notes. Then:
 
@@ -67,6 +84,10 @@ At a checkpoint, first update STATE.md, log.md and the relevant notes. Then:
    after a restart, compaction, a review fix or a hand-over acknowledgment.
    Recover an uncertain spawn's recorded result before any further action;
    a missing reply is not permission to spawn a duplicate.
+6. **Record the checkpoint in log.md, whatever its outcome:** what the
+   checkpoint was (`PR #123 handed over`, `v2.4.0 shipped`), and either the
+   proposal and its harvester, or `nothing to propose` with the reason in a
+   few words. A checkpoint with no line in log.md is a harvest skipped.
 
 ## Write one self-contained proposal
 
@@ -106,25 +127,16 @@ the person out. Naming the author of a published source you cite is fine.
 That covers the names you choose as well: a note's file name, a task ref and an
 instance's name are published as provenance when knowledge is harvested.
 
-## Launch only when the gates permit it
+## Launch the harvester
 
-A harvester is another model session on a shared host. These gates are
-instructions, not a scheduler or a resource reservation:
-
-- **One harvester at a time per instance.** Read log.md for your last
-  harvester's name, then `oats status`. While it still lists that harvester,
-  do not spawn another, even if it has handed over or appears idle. Retired
-  is not the same as stopped. Keep new claims for the next eligible proposal.
-- **No spawn under memory pressure.** Immediately before spawning, run
-  `free -g` on Linux: if `available` is less than **8 GB**, do not spawn.
-  If the host is otherwise under memory pressure, do not spawn either. On
-  a host without `free`, use its documented available-memory check; if you
-  cannot establish at least 8 GB available, defer and report that limit.
-  Do not stop somebody else's instances or change host setup to make room.
+**One harvester at a time per instance.** Read log.md for your last
+harvester's name, then `oats status`. While it still lists that harvester,
+do not spawn another, even if it has handed over or appears idle: retired is
+not the same as stopped. Keep the proposal instead (below).
 
 From your instance home, first append `--preview` to the following command
-and read the resolved harvester composition. When both gates permit it,
-run the command without `--preview`:
+and read the resolved harvester composition, then run it without
+`--preview`:
 
 ```sh
 oats spawn oats.okf/knowledge-harvester --task-file <proposal> --relation unrelated
@@ -138,11 +150,12 @@ Record the checkpoint, proposal path and returned harvester instance name
 in log.md; keep STATE.md's current picture up to date. Report a refused or
 uncertain spawn, do not retry it in a loop or spawn around it.
 
-If a gate blocks you, keep the proposal and its backing notes, record the
-reason in STATE.md and log.md, and name the deferred proposal and claims in
-your hand-back. Reconsider at a later natural task boundary, not by sleeping,
-polling or busy-waiting. If the last harvester is still listed at hand-back,
-name it and any claims still waiting. Do not wait for it to finish.
+**While your last harvester is still listed,** keep the proposal and its
+backing notes, and note it as pending in STATE.md and log.md. At your next
+checkpoint, add that checkpoint's claims to the pending proposal and launch
+it then, once the last harvester is gone. Never sleep, poll or busy-wait for
+it. If it is still listed at hand-back, name it, the pending proposal and
+its claims in your hand-back. Do not wait for it to finish.
 
 ## What happens after launch
 

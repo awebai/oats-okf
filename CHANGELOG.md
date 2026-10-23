@@ -1,5 +1,46 @@
 # Changelog
 
+## 5.3.0 — 2026-10-23
+
+### Changed
+
+- **Harvest checkpoints are named, and none waits for a task to close.**
+  The inject's IMPORTANT block, `okf-propose` and `okf-instance-knowledge`
+  list them: a PR handed over for review; a finished task; and, in a
+  long-lived role such as a maintainer's, a feature ready (its last PR
+  merged or approved), a release or deploy shipped, and a direction
+  decision taken with the human. After 5.2.0, harvest PRs nearly stopped:
+  the only checkpoints were "a finished task or PR hand-over", the text
+  also said "never … merely because a PR was opened" and "most checkpoints
+  propose nothing", and long-lived maintainers and experts deferred to a
+  task close that never came.
+- **One proposal per checkpoint, carrying only what no earlier proposal
+  carried.** A PR hand-over and the close of the same task are two
+  checkpoints; the second proposes what was learned since the first. This
+  replaces "at most one proposal per completed unit of work".
+- **Every checkpoint gets a line in log.md**, with its proposal and
+  harvester or `nothing to propose` and the reason. A checkpoint with no
+  line is a harvest skipped, which makes skipped harvests visible.
+- **A proposal held back by a still-listed harvester is launched at the
+  next checkpoint**, with that checkpoint's claims added, instead of "at a
+  later natural task boundary".
+
+### Removed
+
+- **The memory gate.** No instance checks host memory before spawning a
+  harvester: the `free -g` / "8 GB available" / "memory pressure" rule is
+  gone from `okf-propose` and the README. On 16 GB macOS hosts, which have
+  no `free`, the rule deferred every harvest it reached. One harvester at a
+  time per instance stays.
+
+### Upgrade
+
+- Existing homes keep their captured provider and instructions: respawn to
+  get the new checkpoints. No kernel, binding, settings, policy-file or
+  harvester change; the proposal format, source capture and review flow
+  are unchanged from 5.2.1. Minor, not a patch: instances will harvest more
+  often.
+
 ## 5.2.1 — 2026-10-15
 
 ### Fixed

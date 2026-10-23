@@ -1,7 +1,7 @@
 # oats.okf 5 — external knowledge, consulted remotely, proposed at checkpoints
 
 The official OKF (Open Knowledge Format) knowledge package for OATS:
-**5.2.1**, requiring **OATS >=0.49.0**. CI runs it against the released
+**5.3.0**, requiring **OATS >=0.49.0**. CI runs it against the released
 OATS 0.49.0 kernel (see [Tests and CI](#tests-and-ci)).
 
 A working soul's knowledge lives outside the soul, in OKF bases: Git
@@ -45,7 +45,7 @@ capability's `schemas/`, with copies in the repository's `schemas/`.
 
 ## Configuration
 
-A workspace declares the package (`packages: { oats.okf: v5.2.1 }`) and
+A workspace declares the package (`packages: { oats.okf: v5.3.0 }`) and
 selects it as the knowledge capability (`defaults: { knowledge: { oats.okf:
 { from: package } } }`, or per soul). Each deployment points it at its
 bindings file in its own `oats-local.yaml`:
@@ -300,13 +300,17 @@ harvester's source opt-out check remains independent.
 
 ## How knowledge is proposed
 
-**At a harvest checkpoint** (a finished task or PR hand-over) the working
-agent first updates STATE.md, log.md and its notes. It reads `okf-propose`
-and `oats okf status`; `off`, `unknown` or an error means no proposal.
-Capture decisions as they happen, but never launch per commit, per decision,
-per review round or merely because a PR was opened. Make at most one proposal
-for a completed unit of work: handing over its PR and then closing the same
-task are not two opportunities. If it learned something that passes the promotion test
+**At a harvest checkpoint** the working agent first updates STATE.md,
+log.md and its notes. The checkpoints are: a PR handed over for review, a
+finished task, and, in a long-lived role such as a maintainer's, a feature
+ready (its last PR merged or approved), a release or deploy shipped, and a
+direction decision taken with its human. It reads `okf-propose` and
+`oats okf status`; `off`, `unknown` or an error means no proposal. Capture
+decisions as they happen, but never launch per commit, per decision, per
+review round or per new head of the same PR. One proposal per checkpoint,
+carrying only what no earlier proposal carried, and a line in log.md for
+every checkpoint, including one with nothing to propose: a checkpoint with
+no line is a harvest skipped. If it learned something that passes the promotion test
 (`knowledge-theory`: it would change how a future instance of the soul
 decides or acts, and it is not already in the code, the tracker, the docs or
 the accepted knowledge), it writes **one short, self-contained proposal**, a
@@ -324,7 +328,7 @@ Source: instance <instance name>, home <instance home>, soul <soul name>
 - notes/<file>.md
 ```
 
-and, after the concurrency and memory gates below, spawns a harvester from
+and, unless its previous harvester is still listed, spawns a harvester from
 instance home. The capability inject and compulsory `okf-propose` skill own
 this procedure, not the spawn brief:
 
@@ -337,29 +341,25 @@ oats spawn oats.okf/knowledge-harvester --task-file proposals/<file>.md --relati
   `--relative-to`.
 - The kernel picks the harvester's harness and model from its own defaults;
   oats.okf passes none.
-- At most one proposal per finished task or PR hand-over, each concept a
+- One proposal per checkpoint, each concept a
   claim in it, and claims only for the nodes the soul owns. A lesson for a node the soul only reads is named in
   one line in the source's hand-back, for that node's owner.
 - One harvester at a time. The source notes the harvester's instance name in
   log.md and spawns no other while `oats status` still lists it; a harvester
-  retires once it has handed over. What the source learns meanwhile goes into
-  its next proposal. A source that hands back with the harvester still listed
-  names it and the claims still waiting in its hand-back; it does not wait for
-  it or spawn around it. A refused spawn is reported, not retried in a loop.
-- No spawn under memory pressure. On Linux run `free -g` immediately before
-  spawning; less than 8 GB `available` means defer. Elsewhere use the host's
-  documented available-memory check; if at least 8 GB cannot be established,
-  defer. Record the reason and pending proposal/claims in STATE.md, log.md and
-  the hand-back; reconsider at a natural task boundary, never by polling or
-  by changing somebody else's host/session state. These are instructions,
-  not an enforced scheduler or memory reservation.
+  retires once it has handed over. Meanwhile the source keeps the proposal
+  pending, adds the next checkpoint's claims to it and launches it at that
+  checkpoint, never by sleeping or polling. A source that hands back with the
+  harvester still listed names it, the pending proposal and its claims in its
+  hand-back; it does not wait for it or spawn around it. A refused spawn is
+  reported, not retried in a loop.
 - The source keeps a proposal's backing notes until its harvester has retired,
   but need not stay alive: its retirement recovery copy can supply the source.
   Do not dispose of that copy before the harvester captures it. After capture,
   the harvester's private snapshot is independent of both source locations.
 
-Most checkpoints have nothing to propose. Proposing is procedure, not a
-command: oats.okf adds no CLI for it.
+A checkpoint whose claims fail the promotion test proposes nothing, and its
+log.md line says so. Proposing is procedure, not a command: oats.okf adds no
+CLI for it.
 
 ### What the harvester does
 
