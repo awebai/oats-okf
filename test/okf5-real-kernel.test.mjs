@@ -25,6 +25,7 @@ import { createHash } from 'node:crypto';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { parseProvenance } from '../oats-package/capabilities/oats-okf-maintenance/lib/provenance.mjs';
+import { generateHarvesterName } from './fixtures/harvester-name.mjs';
 
 const cli = process.env.OATS_OKF_REAL_CLI;
 const KERNEL = '0.49.0';
@@ -42,7 +43,7 @@ const listing = dir => {
 const strings = (v, out = []) => { if (typeof v === 'string') out.push(v); else if (v && typeof v === 'object') for (const x of Object.values(v)) strings(x, out); return out; };
 
 const HARVESTER_DIR = 'oats-okf--knowledge-harvester'; // packageSoulAgentName('oats.okf', 'knowledge-harvester')
-const SPAWN_LINE = 'oats spawn oats.okf/knowledge-harvester --task-file <proposal> --relation unrelated';
+const SPAWN_LINE = 'oats spawn oats.okf/knowledge-harvester --name <harvester-name> --task-file <proposal> --relation unrelated';
 
 test(`${json(join(root, 'package.json')).version} real OATS ${KERNEL}: legacy-key cleanup, a source spawn, its checkpoint proposal spawning a top-level harvester, the harvester's source records, removed surfaces, and the source retired`, { skip: !cli }, async t => {
   const base = real(fs.mkdtempSync(join(tmpdir(), 'okf5-real-kernel-')));
@@ -181,9 +182,22 @@ test(`${json(join(root, 'package.json')).version} real OATS ${KERNEL}: legacy-ke
     assert.match(nap.text, /oats-okf-harvest E_SOURCE/, nap.text);
     assert.deepEqual(harvesterHomes(), [], 'a refused harvester spawn keeps no home (the hook reported no meta to quarantine)');
 
-    // The real spawn, from the source home, exactly as the skill writes it (the task file relative to the home).
-    const h = ok(['spawn', 'oats.okf/knowledge-harvester', '--task-file', 'proposals/2026-10-07-retry-budget.md', '--relation', 'unrelated', '--no-launch'], { cwd: src, as }).result;
+    // Execute the composed skill's recipe once; use the SAME explicit name in preview and apply.
+    const generated = generateHarvesterName(join(src, '.agents/skills/okf-propose/SKILL.md'), src, env);
+    assert.equal(generated.status, 0, generated.stderr);
+    const name = generated.stdout.trim();
+    assert.match(name, /^src-[0-9a-f]{32}-harvester$/);
+    write(join(src, 'log.md'), `# Instance log\n\nCheckpoint: fixture proposal; chosen harvester: ${name}\n`);
+    const launch = ['spawn', 'oats.okf/knowledge-harvester', '--name', name, '--task-file', 'proposals/2026-10-07-retry-budget.md', '--relation', 'unrelated', '--no-launch'];
+    ok([...launch, '--preview'], { cwd: src, as });
+    assert.deepEqual(harvesterHomes(), [], 'preview does not reserve or spawn the name');
+    // Real kernel spawn, with --no-launch only to keep the fixture model-free.
+    const h = ok(launch, { cwd: src, as }).result;
+    assert.equal(h.instance, name, '--name is exact: no soul prefix or numeric suffix');
     assert.equal(h.launched, false);
+    const namedBefore = listing(h.home);
+    refused(launch, 'E_INSTANCE_NAME_TAKEN', { cwd: src, as });
+    assert.deepEqual(listing(h.home), namedBefore, 'a collision does not touch the existing harvester');
     assert.deepEqual(harvesterHomes(), [h.instance]);
     const hHome = join(dep, 'agents', HARVESTER_DIR, 'instances', h.instance);
     assert.equal(real(h.home), real(hHome), 'the harvester lives in the deployment, under the package soul\'s agent dir');
@@ -318,7 +332,7 @@ test(`${json(join(root, 'package.json')).version} real OATS ${KERNEL}: legacy-ke
     const manifest=json(join(recovery,'recovery.json'));
     const sourceCopy=join(recovery,...(manifest.afterHooks?.home?['after-hooks','home']:['home']));
     const recoveredProposal=join(sourceCopy,'proposals/2026-10-07-retry-budget.md');
-    const retiredHarvester=ok(['spawn','oats.okf/knowledge-harvester','--task-file',recoveredProposal,'--relation','unrelated','--no-launch']).result;
+    const retiredHarvester=ok(['spawn','oats.okf/knowledge-harvester','--name','src-recovery-harvester','--task-file',recoveredProposal,'--relation','unrelated','--no-launch']).result;
     const snapshot=join(retiredHarvester.home,'harvest-source');
     const captured=json(join(snapshot,'source.json'));
     assert.equal(captured.from,'recovery');assert.equal(captured.source.home,src);assert.equal(captured.recovery,recovery);

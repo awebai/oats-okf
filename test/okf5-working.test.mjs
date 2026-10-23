@@ -7,13 +7,15 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { initBase } from '../oats-package/capabilities/oats-okf/lib/migration.mjs';
 import { loadBindings } from '../oats-package/capabilities/oats-okf/lib/config.mjs';
+import { generateHarvesterName } from './fixtures/harvester-name.mjs';
 // oats.okf 5.0.0: the working-soul CLI (oats okf) against a directory base:
 // the spawn hook, inspection, consultation, provisioning, and the 4.x harvest
 // surfaces that now refuse with the proposal + knowledge-harvester spawn.
 const ROOT=fileURLToPath(new URL('../',import.meta.url));
 const MANIFEST=join(ROOT,'oats-package/capabilities/oats-okf/oats.json');
 const CLI=join(ROOT,'oats-package/capabilities/oats-okf/bin/oats-okf.mjs');
-const SPAWN='oats spawn oats.okf/knowledge-harvester --task-file <proposal> --relation unrelated';
+const SPAWN='oats spawn oats.okf/knowledge-harvester --name <harvester-name> --task-file <proposal> --relation unrelated';
+const PROPOSE=join(ROOT,'oats-package/capabilities/oats-okf/skills/okf-propose/SKILL.md');
 const GIT_DIR=(process.env.PATH||'').split(delimiter).find(d=>d && fs.existsSync(join(d,'git')));
 const write=(file,text)=>{fs.mkdirSync(dirname(file),{recursive:true});fs.writeFileSync(file,text);};
 const json=(file,value)=>write(file,JSON.stringify(value,null,2)+'\n');
@@ -141,6 +143,10 @@ test('the shared IMPORTANT block requires the proposing skill and explicitly exe
   assert.match(inject,/knowledge: \{ harvest: off \}.*has no harvest duty/);
   const skill=prose(read('skills/okf-propose/SKILL.md'));
   assert.ok(skill.includes(SPAWN));
+  assert.ok(inject.includes(SPAWN));
+  for(const required of [/E_INSTANCE_NAME_TAKEN/,/before preview/,/do not regenerate it/,/oats status/,/oats souls/,
+    /Never remove a stale certificate/,/recover the spawn\/session record/]) assert.match(skill,required);
+  assert.doesNotMatch(skill,/oats spawn oats\.okf\/knowledge-harvester --task-file/);
   for(const required of [/You hand over a PR for review/,/You finish a task/,/a feature is ready/,/you ship a release or a deploy/,/a direction decision is taken with your human/,
     /These are not checkpoints: a commit, a review round or a new head of the same PR/,/One proposal per checkpoint/,
     /Record the checkpoint in log\.md, whatever its outcome/,/nothing to propose/,
@@ -151,6 +157,46 @@ test('the shared IMPORTANT block requires the proposing skill and explicitly exe
     assert.doesNotMatch(text,/TASK\.md|without that instruction never propose|whenever your briefing gives no such instruction/,file);
     assert.doesNotMatch(text,/free -g|8 GB|memory pressure|Most checkpoints propose nothing|merely because a PR was opened/,file);
   }
+});
+
+test('the shipped name recipe yields source-derived slugs within both 64-character limits, fresh per proposal',t=>{
+  const f=fixture(t),seen=new Set();
+  for(const source of ['worker-1','x','a'.repeat(64),'a'.repeat(20)+'-tail','shared-prefix-worker-one','shared-prefix-worker-two']) {
+    json(join(f.home,'instance.json'),{instance:source});
+    const before=snapshot(f.home);
+    for(let proposal=0;proposal<2;proposal++) {
+      const r=generateHarvesterName(PROPOSE,f.home,env(f));
+      assert.equal(r.status,0,r.stderr);
+      const name=r.stdout.trim();
+      assert.match(name,/^[a-z0-9]+(?:-[a-z0-9]+)*$/,'kernel slug, not rewritten');
+      assert.match(name,/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/,'aweb alias rule');
+      assert.ok(name.length<=64);
+      assert.ok(name.startsWith(source.slice(0,21).replace(/-+$/,'')+'-'));
+      assert.match(name,/-[0-9a-f]{12}4[0-9a-f]{3}[89ab][0-9a-f]{15}-harvester$/,'full random UUID v4, not a timestamp or counter');
+      if(source==='a'.repeat(64)) assert.equal(name.length,64);
+      assert.ok(!seen.has(name),'different proposals, including equal source prefixes, get fresh names');
+      seen.add(name);
+    }
+    assert.deepEqual(snapshot(f.home),before,'recipe prints only; no spawn, reservation or state mutation');
+  }
+});
+
+test('the shipped name recipe refuses missing or invalid source identity rather than inventing one',t=>{
+  const f=fixture(t);
+  for(const instance of [undefined,null,23,'','UPPER','a--b','a_b','../source','a;echo bad']) {
+    json(join(f.home,'instance.json'),{instance});
+    const r=generateHarvesterName(PROPOSE,f.home,env(f));
+    assert.notEqual(r.status,0);assert.equal(r.stdout,'');
+    assert.match(r.stderr,/instance.json must name the source instance as a slug/);
+  }
+  for(const text of ['{','null']) {
+    write(join(f.home,'instance.json'),text);
+    const r=generateHarvesterName(PROPOSE,f.home,env(f));
+    assert.notEqual(r.status,0);assert.equal(r.stdout,'');
+  }
+  fs.rmSync(join(f.home,'instance.json'));
+  const r=generateHarvesterName(PROPOSE,f.home,env(f));
+  assert.notEqual(r.status,0);assert.equal(r.stdout,'');
 });
 
 test('status reads only bounded spawn state, not live settings or the soul file, and never enables missing state',t=>{
