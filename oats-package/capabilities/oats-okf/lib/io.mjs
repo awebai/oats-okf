@@ -65,7 +65,7 @@ export function materialize(root, files) {
   safePath(root); fs.mkdirSync(root, { recursive: true });
   for (const [p, content] of Object.entries(files)) atomic(join(root, relPath(p)), Buffer.from(content, 'base64'));
 }
-const pause = ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+export const pause = ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 /** Cooperative directory lock. `waitMs` lets a caller queue behind a live
  *  holder for a bounded time; a live holder is never stolen from, whatever its
  *  age. With `reclaimDead`, a lock whose owner is provably gone (reclaimable)

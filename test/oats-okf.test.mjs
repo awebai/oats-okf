@@ -42,7 +42,8 @@ const a=process.argv.slice(2),root=process.env.FIXTURE_ROOT;
 const consentRead=a[0]==='okf' && a[1]==='harvest-status';
 fs.appendFileSync(consentRead?join(root,'consent-reads.jsonl'):process.env.FIXTURE_CALLS,JSON.stringify({a,cwd:process.cwd(),identity:process.env.OATS_HOME || null})+'\\n');
 const val=k=>a[a.indexOf(k)+1];const out=result=>console.log(JSON.stringify({schemaVersion:1,ok:true,result}));
-if(a[0]==='capture') {const p=join(root,'capture.json');console.log(fs.existsSync(p)?fs.readFileSync(p,'utf8'):JSON.stringify({status:'complete',complete:true,sessions:[],ignored:0}));}
+if(a[0]==='capture' && fs.existsSync(join(root,'capture-sequence.json'))) {const p=join(root,'capture-sequence.json'),answers=JSON.parse(fs.readFileSync(p,'utf8'));if(answers.length>1) fs.writeFileSync(p,JSON.stringify(answers.slice(1)));console.log(JSON.stringify(answers[0]));}
+else if(a[0]==='capture') {const p=join(root,'capture.json');console.log(fs.existsSync(p)?fs.readFileSync(p,'utf8'):JSON.stringify({status:'complete',complete:true,sessions:[],ignored:0}));}
 else if(a[0]==='recall') {const all=JSON.parse(fs.readFileSync(join(root,'turns.json')));const start=a.includes('--after')?all.findIndex(t=>t.id===val('--after'))+1:0;const end=all.findIndex(t=>t.id===val('--until'))+1;const turns=all.slice(start,Math.min(end,start+Number(val('--limit'))));const result=a.includes('--ids-only')?turns.map(({text,...t})=>({...t,bytes:Buffer.byteLength(JSON.stringify({...t,text},null,2))+8})):turns;const fault=join(root,'recall-fail');if(!a.includes('--ids-only') && fs.existsSync(fault) && turns.some(t=>t.id===fs.readFileSync(fault,'utf8'))) process.exit(47);console.log(JSON.stringify({turns:result,remaining:end-start-turns.length}));}
 else if(a[0]==='--deployment') {
   const target=JSON.parse(fs.readFileSync(join(root,'captured-dispatch.json'),'utf8'));
@@ -217,6 +218,46 @@ test('capture incomplete, held, skipped, failed and uncertified results retain h
     save(join(f.dir,'capture.json'),{status,complete:false,sessions:[]});const r=f.cli('retire');assert.equal(r.status,1);assert.equal(r.out.meta.retired,false);assert.equal(loadStatus(s).retired,false);assert.equal(fs.existsSync(f.home),true);
   }
   assert.equal(loadStatus(s).captured.inputs.length,1);
+});
+// The kernel's `oats capture --home H --quiet` answer when another pass holds
+// its capture lock (OATS 0.29 to 0.67: `lock` is the holder, `sessions` empty).
+const lockHeld=(liveness='alive')=>({home:'/h',owner:'host',appended:0,skipped:true,held:0,incomplete:0,failed:0,ignored:0,
+  lock:{pid:4242,startedAt:'2026-10-25T21:00:00.000Z',liveness,recovery:`/r/.capture.lock is held by pid 4242 (started 2026-10-25T21:00:00.000Z, now ${liveness}); let it finish, the next pass catches up`},
+  status:'skipped',complete:false,sessions:[],sourceRoots:'launch-history'});
+const captureCalls=f=>fs.readFileSync(f.calls,'utf8').trim().split('\n').map(JSON.parse).filter(c=>c.a[0]==='capture').length;
+test('retire capture waits out a capture lock held by a live pass, within its deadline',t=>{
+  const f=fixture(t);const s=f.source();note(f);
+  save(join(f.dir,'capture-sequence.json'),[lockHeld(),lockHeld(),{status:'complete',complete:true,sessions:[],ignored:0}]);
+  const r=f.cli('retire');assert.equal(r.status,0,r.stdout+r.stderr);assert.equal(r.out.meta.retired,true);assert.equal(r.out.meta.capture.complete,true);
+  assert.equal(captureCalls(f),3);assert.equal(loadStatus(s).retired,true);
+});
+test('a capture lock held until the deadline fails E_CAPTURE naming the holder, and the retry is safe',t=>{
+  const f=fixture(t);const s=f.source();note(f);save(join(f.dir,'capture-sequence.json'),[lockHeld()]);
+  const started=Date.now(),deadline=started+5000;
+  assert.throws(()=>capture(s,{final:true,deadline}),e=>{
+    assert.equal(e.code,'E_CAPTURE');
+    assert.match(e.message,/capture lock is held by pid 4242 \(started 2026-10-25T21:00:00\.000Z, alive\)/);
+    assert.match(e.message,/let it finish, the next pass catches up/);
+    assert.match(e.message,/retain source and retry/);assert.match(e.message,/safe/);
+    return true;
+  });
+  assert.ok(Date.now()<=deadline+1000,'never waits past the deadline');assert.ok(captureCalls(f)>=2,'retried while the deadline allowed');
+  const st=loadStatus(s);assert.equal(st.retired,false);assert.equal(st.captured.inputs.length,1);assert.equal(st.lastCapture.complete,false);
+});
+test('a capture lock whose holder is dead, or a skip without a holder, is not waited for',t=>{
+  const f=fixture(t);const s=f.source();note(f);
+  save(join(f.dir,'capture-sequence.json'),[lockHeld('dead')]);
+  assert.throws(()=>capture(s,{final:true}),e=>e.code==='E_CAPTURE' && /held by pid 4242 \(started [^)]*, dead\)/.test(e.message) && /let it finish/.test(e.message));
+  assert.equal(captureCalls(f),1);
+  save(join(f.dir,'capture-sequence.json'),[{status:'skipped',complete:false,sessions:[]}]);
+  assert.throws(()=>capture(s,{final:true}),{code:'E_CAPTURE',message:'capture skipped: retain source and retry'});
+  assert.equal(captureCalls(f),2);
+});
+test('a non-lock incomplete capture keeps failing at once with its status',t=>{
+  const f=fixture(t);const s=f.source();note(f);
+  save(join(f.dir,'capture-sequence.json'),[{status:'incomplete',complete:false,incomplete:1,sessions:[]}]);
+  assert.throws(()=>capture(s,{final:true}),{code:'E_CAPTURE',message:'capture incomplete: retain source and retry'});
+  assert.equal(captureCalls(f),1);assert.equal(loadStatus(s).retired,false);
 });
 test('notes content rewrite is captured, replay is idempotent, completion never deletes live notes',t=>{
   const f=fixture(t);note(f);const {s,run}=prepared(f);note(f,'decision.md','Revised observation while the worker is running.');capture(s);const before=loadStatus(s);assert.equal(before.captured.inputs.length,2);capture(s);assert.equal(loadStatus(s).captured.inputs.length,2);
