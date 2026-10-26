@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { basename } from 'node:path';
-import { fs, join, dirname, resolve, safePath, readJSON, save, atomic, hash, withLock, oats, fail, tree, overlaps, identifier, cleanEnv, quote, redactUrls } from './io.mjs';
+import { fs, join, dirname, resolve, safePath, readJSON, save, atomic, hash, withLock, pause, oats, fail, tree, overlaps, identifier, cleanEnv, quote, redactUrls } from './io.mjs';
 import { loadBindings, declaration, bindingFingerprint, settings, validateBindings, resolveNodes } from './config.mjs';
 import { acceptedResolution, short } from './consult.mjs';
 import { loadInvocationKnowledgeBinding, readPrivateInvocationJson, sourceRuntimeFromKnowledgeBinding } from './binding-wire.mjs';
@@ -436,6 +436,24 @@ export function capture(source,{final=false,deadlineMs=85000,deadline=Date.now()
   try {return captureLocked(source,{final,deadline},()=>{entered=true;});}
   catch(e) {if(!entered && e.code==='E_LOCKED') e.captureBusy=true;throw e;}
 }
+// The kernel's `oats capture --home` answers `skipped`, with the holder in
+// `lock`, when another pass holds its capture lock: on a host with many
+// Claude agents a hook pass after every turn holds it for seconds at a time.
+// The holder is waited out with a bounded backoff within the capture's
+// deadline, leaving each attempt CAPTURE_ATTEMPT_MS, whatever its liveness:
+// `liveness` is the supervisor's alone, and a lock whose supervisor died is
+// still held by its live worker until that worker exits (OATS 0.62 and later).
+const CAPTURE_LOCK_BACKOFF_MS=[2000,4000,8000,10000],CAPTURE_ATTEMPT_MS=2000;
+function kernelCapture(source,deadline,remainingTime) {
+  for(let attempt=0;;attempt++) {
+    const report=oats(['capture','--home',source.home,'--quiet'],source.context,{native:true,timeout:Math.min(remainingTime(),60000)});
+    if(report?.status!=='skipped' || report.skipped!==true || !obj(report.lock)) return report;
+    const delay=CAPTURE_LOCK_BACKOFF_MS[Math.min(attempt,CAPTURE_LOCK_BACKOFF_MS.length-1)],{pid,startedAt,liveness,recovery}=report.lock;
+    if(deadline-Date.now()<delay+CAPTURE_ATTEMPT_MS)
+      fail('E_CAPTURE',`capture skipped: the capture lock is held by pid ${pid ?? '?'} (started ${startedAt || '?'}, ${liveness || 'unknown'}) after ${attempt+1} attempt${attempt?'s':''}: ${recovery}; retain source and retry: the source and what is in custody are kept, so the retry is safe`);
+    pause(delay);
+  }
+}
 function captureLocked(source,{final,deadline},enter) {
   return withLock(join(dirname(source.file),'capture.lock'),()=>{
     enter();
@@ -462,7 +480,7 @@ function captureLocked(source,{final,deadline},enter) {
         if(remaining<=0) fail('E_CAPTURE','capture deadline: backlog preserved; retire must retry');
         return remaining;
       };
-      report=oats(['capture','--home',source.home,'--quiet'],source.context,{native:true,timeout:Math.min(remainingTime(),60000)});
+      report=kernelCapture(source,deadline,remainingTime);
       if(!Array.isArray(report.sessions)) fail('E_CAPTURE','capture response has no sessions');
       for(const session of report.sessions) {
         if(!session.thread || !session.lastTurnId) continue;

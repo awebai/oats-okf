@@ -1,5 +1,28 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **A retire or checkpoint capture waits out a held kernel capture lock**
+  (#101). Every turn of a Claude agent runs a kernel capture pass from its
+  Stop and SessionEnd hooks, about 20 s each on a busy host, so the
+  kernel's capture lock is often held. `oats capture --home H --quiet` then
+  answers `status: "skipped"` with the holder in `lock`, and okf failed at
+  once with `E_CAPTURE: capture skipped: retain source and retry`, leaving
+  the retire half-done and not naming the cause. Now:
+  - The capture retries after 2 s, 4 s, 8 s and then every 10 s, within its
+    existing deadline (85 s of the retire hook's 110 s), and never starts an
+    attempt with less than 2 s of it left.
+  - If the lock is still held, the error is still `E_CAPTURE`, and it names
+    the holder (pid, start time, liveness and the kernel's recovery line)
+    and says the retry is safe. A holder reported dead is waited for too:
+    the liveness is its supervisor's, and from OATS 0.62 a live capture
+    worker keeps the lock after its supervisor dies. okf never removes the
+    lock.
+  - A skip without a holder, and every other incomplete status, fails at
+    once as before.
+
 ## 4.2.1 — 2026-10-19
 
 ### Fixed

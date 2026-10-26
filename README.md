@@ -91,7 +91,14 @@ to run it. `oats okf harvest [--no-launch] --json`, from the instance home:
 5. Captures (notes and transcript windows, by content hash and cursor). A
    busy capture lock (another process capturing) answers `already-running`,
    `preparing: true`; a busy lock met inside the capture (its status writes)
-   is an error, not another capture. Nothing new answers `empty`.
+   is an error, not another capture. The kernel's own capture lock
+   (`oats capture --home` answering `skipped`, with its holder in `lock`) is
+   waited out within the capture's budget, retrying after 2 s, 4 s, 8 s and
+   then every 10 s; still held, it is `E_CAPTURE` naming the holder (pid,
+   start time, liveness and the kernel's recovery line), and the retry is
+   safe. A holder reported dead is waited for too: the liveness is its
+   supervisor's, and its worker may still hold the lock. okf never removes
+   the lock. Nothing new answers `empty`.
 6. Requests a **finite drain** of the input captured so far: the ids are
    persisted as `status.drain.boundary` before any effect, and one run takes
    at most 192 KB of them (`started`, with `inputs: {run, pending}`). When a
@@ -165,7 +172,8 @@ confirmed off since spawn takes no final capture and starts nothing;
 unknown consent refuses the retirement (`E_HARVEST_CONSENT_UNKNOWN`,
 nothing captured, not recorded as harvest-off, the home kept). An
 incomplete or uncertified capture (including a busy capture lock) still
-refuses retirement, as before. Once custody is certified it requests
+refuses retirement, as before; a held kernel capture lock is first waited
+out within the budget, as at a checkpoint. Once custody is certified it requests
 the same finite drain of everything unprocessed and reports it in
 `meta.drain`, separately from `meta.capture`. The hook's first batch is
 admitted as a checkpoint's is: by the deployment's switch now, or by an
