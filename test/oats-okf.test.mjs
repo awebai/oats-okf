@@ -244,14 +244,17 @@ test('a capture lock held until the deadline fails E_CAPTURE naming the holder, 
   assert.ok(Date.now()<=deadline+1000,'never waits past the deadline');assert.ok(captureCalls(f)>=2,'retried while the deadline allowed');
   const st=loadStatus(s);assert.equal(st.retired,false);assert.equal(st.captured.inputs.length,1);assert.equal(st.lastCapture.complete,false);
 });
-test('a capture lock whose holder is dead, or a skip without a holder, is not waited for',t=>{
+test('a capture lock whose supervisor is dead is still waited out: its live worker holds it until it exits',t=>{
   const f=fixture(t);const s=f.source();note(f);
-  save(join(f.dir,'capture-sequence.json'),[lockHeld('dead')]);
-  assert.throws(()=>capture(s,{final:true}),e=>e.code==='E_CAPTURE' && /held by pid 4242 \(started [^)]*, dead\)/.test(e.message) && /let it finish/.test(e.message));
-  assert.equal(captureCalls(f),1);
+  const held=lockHeld('dead');held.lock.recovery='/r/.capture.lock records supervisor pid 4242 (dead) and worker pid 4343; wait for both to finish. If interrupted, stop capture triggers and verify BOTH processes are gone before removing the lock with: rm -r -- \'/r/.capture.lock\'  and rerun';
+  save(join(f.dir,'capture-sequence.json'),[held,{status:'complete',complete:true,sessions:[],ignored:0}]);
+  assert.equal(capture(s,{final:true}).complete,true);assert.equal(captureCalls(f),2);assert.equal(loadStatus(s).retired,true);
+});
+test('a skip without a holder is not waited for',t=>{
+  const f=fixture(t);const s=f.source();note(f);
   save(join(f.dir,'capture-sequence.json'),[{status:'skipped',complete:false,sessions:[]}]);
   assert.throws(()=>capture(s,{final:true}),{code:'E_CAPTURE',message:'capture skipped: retain source and retry'});
-  assert.equal(captureCalls(f),2);
+  assert.equal(captureCalls(f),1);
 });
 test('a non-lock incomplete capture keeps failing at once with its status',t=>{
   const f=fixture(t);const s=f.source();note(f);

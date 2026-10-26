@@ -96,8 +96,9 @@ to run it. `oats okf harvest [--no-launch] --json`, from the instance home:
    waited out within the capture's budget, retrying after 2 s, 4 s, 8 s and
    then every 10 s; still held, it is `E_CAPTURE` naming the holder (pid,
    start time, liveness and the kernel's recovery line), and the retry is
-   safe. A holder the kernel reports dead is not waited for: its recovery
-   line is the operator's. Nothing new answers `empty`.
+   safe. A holder reported dead is waited for too: the liveness is its
+   supervisor's, and its worker may still hold the lock. okf never removes
+   the lock. Nothing new answers `empty`.
 6. Requests a **finite drain** of the input captured so far: the ids are
    persisted as `status.drain.boundary` before any effect, and one run takes
    at most 192 KB of them (`started`, with `inputs: {run, pending}`). When a

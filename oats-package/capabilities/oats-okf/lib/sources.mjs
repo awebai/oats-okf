@@ -439,16 +439,17 @@ export function capture(source,{final=false,deadlineMs=85000,deadline=Date.now()
 // The kernel's `oats capture --home` answers `skipped`, with the holder in
 // `lock`, when another pass holds its capture lock: on a host with many
 // Claude agents a hook pass after every turn holds it for seconds at a time.
-// A live (or not yet recorded) holder is waited out with a bounded backoff
-// within the capture's deadline, leaving each attempt CAPTURE_ATTEMPT_MS; a
-// dead holder is the operator's, so it fails at once with its recovery line.
+// The holder is waited out with a bounded backoff within the capture's
+// deadline, leaving each attempt CAPTURE_ATTEMPT_MS, whatever its liveness:
+// `liveness` is the supervisor's alone, and a lock whose supervisor died is
+// still held by its live worker until that worker exits (OATS 0.62 and later).
 const CAPTURE_LOCK_BACKOFF_MS=[2000,4000,8000,10000],CAPTURE_ATTEMPT_MS=2000;
 function kernelCapture(source,deadline,remainingTime) {
   for(let attempt=0;;attempt++) {
     const report=oats(['capture','--home',source.home,'--quiet'],source.context,{native:true,timeout:Math.min(remainingTime(),60000)});
     if(report?.status!=='skipped' || report.skipped!==true || !obj(report.lock)) return report;
     const delay=CAPTURE_LOCK_BACKOFF_MS[Math.min(attempt,CAPTURE_LOCK_BACKOFF_MS.length-1)],{pid,startedAt,liveness,recovery}=report.lock;
-    if(liveness==='dead' || deadline-Date.now()<delay+CAPTURE_ATTEMPT_MS)
+    if(deadline-Date.now()<delay+CAPTURE_ATTEMPT_MS)
       fail('E_CAPTURE',`capture skipped: the capture lock is held by pid ${pid ?? '?'} (started ${startedAt || '?'}, ${liveness || 'unknown'}) after ${attempt+1} attempt${attempt?'s':''}: ${recovery}; retain source and retry: the source and what is in custody are kept, so the retry is safe`);
     pause(delay);
   }

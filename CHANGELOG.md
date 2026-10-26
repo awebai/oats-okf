@@ -16,8 +16,10 @@
     attempt with less than 2 s of it left.
   - If the lock is still held, the error is still `E_CAPTURE`, and it names
     the holder (pid, start time, liveness and the kernel's recovery line)
-    and says the retry is safe. A holder the kernel reports dead is not
-    waited for.
+    and says the retry is safe. A holder reported dead is waited for too:
+    the liveness is its supervisor's, and from OATS 0.62 a live capture
+    worker keeps the lock after its supervisor dies. okf never removes the
+    lock.
   - A skip without a holder, and every other incomplete status, fails at
     once as before.
 
