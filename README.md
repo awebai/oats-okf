@@ -1,6 +1,18 @@
 # oats.okf 4 — external knowledge, consulted remotely, independent judgment
 
-The official OKF knowledge capability: **4.2.1**, requiring **OATS >=0.29.0**.
+The official OKF knowledge capability: **4.2.2**, requiring **OATS >=0.29.0**.
+
+## 4.2.2 — a retire waits out a held capture lock (#101)
+
+- A retire or checkpoint capture that meets the kernel's capture lock held by
+  another pass (on a busy host, a Claude agent's per-turn capture) now waits it
+  out within its existing deadline, retrying after 2 s, 4 s, 8 s and then every
+  10 s. Before, it failed at once with `E_CAPTURE` and left the retire half-done.
+- Still held at the deadline, `E_CAPTURE` names the holder (pid, start time,
+  liveness and the kernel's recovery line), and the retry is safe. okf never
+  removes the lock.
+
+See [CHANGELOG.md](CHANGELOG.md).
 
 ## 4.2.1 — harvest readiness with a legacy alias (#90)
 

@@ -174,7 +174,7 @@ test('exported payload version, floor, required hooks and complete command inven
   assert.equal(fs.existsSync(join(CAP,'agents')),false,'the harvester is the package soul oats.okf/knowledge-harvester, not a capability agent');
   assert.ok(fs.statSync(join(ROOT,'oats-package/souls/knowledge-harvester/AGENTS.md')).isFile(),'the harvester soul keeps its one canonical instruction file');
   const m=readJSON(join(CAP,'oats.json')),distribution=readJSON(join(ROOT,'oats-package/oats-package.json'));
-  for(const manifest of [readJSON(join(ROOT,'package.json')),distribution,m])assert.equal(manifest.version,'4.2.1');
+  for(const manifest of [readJSON(join(ROOT,'package.json')),distribution,m])assert.equal(manifest.version,'4.2.2');
   for(const manifest of [distribution,m])assert.equal(manifest.compatibility.oats,'>=0.29.0');
   assert.equal(m.hooks.spawn.required,true);
   for(const c of ['harvest','inspect','setup','run-source','complete','retry','migrate','read','refresh','init','bases','index','cat','ls','links','search','harvest-status']) assert.ok(m.commands[c]);
@@ -243,6 +243,10 @@ test('a capture lock held until the deadline fails E_CAPTURE naming the holder, 
   });
   assert.ok(Date.now()<=deadline+1000,'never waits past the deadline');assert.ok(captureCalls(f)>=2,'retried while the deadline allowed');
   const st=loadStatus(s);assert.equal(st.retired,false);assert.equal(st.captured.inputs.length,1);assert.equal(st.lastCapture.complete,false);
+});
+test('a held capture lock without a recovery line still names where to look',t=>{
+  const f=fixture(t);const s=f.source();note(f);const held=lockHeld();delete held.lock.recovery;save(join(f.dir,'capture-sequence.json'),[held]);
+  assert.throws(()=>capture(s,{final:true,deadline:Date.now()+3000}),e=>{assert.equal(e.code,'E_CAPTURE');assert.match(e.message,/held by pid 4242 .*: see the kernel capture log; retain source and retry/);assert.doesNotMatch(e.message,/undefined/);return true;});
 });
 test('a capture lock whose supervisor is dead is still waited out: its live worker holds it until it exits',t=>{
   const f=fixture(t);const s=f.source();note(f);

@@ -450,7 +450,7 @@ function kernelCapture(source,deadline,remainingTime) {
     if(report?.status!=='skipped' || report.skipped!==true || !obj(report.lock)) return report;
     const delay=CAPTURE_LOCK_BACKOFF_MS[Math.min(attempt,CAPTURE_LOCK_BACKOFF_MS.length-1)],{pid,startedAt,liveness,recovery}=report.lock;
     if(deadline-Date.now()<delay+CAPTURE_ATTEMPT_MS)
-      fail('E_CAPTURE',`capture skipped: the capture lock is held by pid ${pid ?? '?'} (started ${startedAt || '?'}, ${liveness || 'unknown'}) after ${attempt+1} attempt${attempt?'s':''}: ${recovery}; retain source and retry: the source and what is in custody are kept, so the retry is safe`);
+      fail('E_CAPTURE',`capture skipped: the capture lock is held by pid ${pid ?? '?'} (started ${startedAt || '?'}, ${liveness || 'unknown'}) after ${attempt+1} attempt${attempt?'s':''}: ${recovery || 'see the kernel capture log'}; retain source and retry: the source and what is in custody are kept, so the retry is safe`);
     pause(delay);
   }
 }
