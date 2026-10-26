@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 4.2.2 — 2026-10-26
 
 ### Fixed
 
@@ -19,7 +19,8 @@
     and says the retry is safe. A holder reported dead is waited for too:
     the liveness is its supervisor's, and from OATS 0.62 a live capture
     worker keeps the lock after its supervisor dies. okf never removes the
-    lock.
+    lock. A holder without a recovery line is named with "see the kernel
+    capture log".
   - A skip without a holder, and every other incomplete status, fails at
     once as before.
 
