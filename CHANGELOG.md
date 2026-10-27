@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **A live source with a reused name can harvest a current proposal** (#83).
+  New proposals append `, incarnation <createdAt>` to their `Source:` line,
+  copying the source's `instance.json` value verbatim. The harvester matches
+  it against the live record and complete public event history; it never
+  selects an incarnation or substitutes a replacement's notes. Legacy lines
+  still work for unambiguous sources and refuse reused names, now with the
+  remedy to re-propose with the current incarnation or from a fresh name.
+  Mismatches, unknown/incomplete history and invalid live records still
+  refuse without recovery fallback. Retired-source capture remains limited
+  to a single known incarnation. No kernel field, version floor, settings,
+  publication provenance format or lifecycle relation changes.
+
 ## 5.4.0 — 2026-10-27
 
 ### Added

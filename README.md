@@ -319,7 +319,7 @@ Markdown file in its home such as `proposals/2026-10-07-retry-budget.md`:
 ```markdown
 # OKF proposal: <one-line claim>
 
-Source: instance <instance name>, home <instance home>, soul <soul name>
+Source: instance <instance name>, home <instance home>, soul <soul name>, incarnation <instance.json createdAt>
 
 ## What
 ## Why
@@ -328,8 +328,20 @@ Source: instance <instance name>, home <instance home>, soul <soul name>
 - notes/<file>.md
 ```
 
-and, unless its previous harvester is still listed, spawns a harvester from
-instance home. The capability inject and compulsory `okf-propose` skill own
+Copy `createdAt` verbatim from the source home's `instance.json`: it is the
+kernel's existing event incarnation, not a proposal date or session start.
+The hook matches it to the live record and public history, admitting a
+current proposal even when older incarnations used the name. Legacy Source
+lines without incarnation remain valid only for a single known incarnation.
+On an ambiguous legacy refusal, re-judge the claims and notes and write a
+new proposal with the current incarnation, or re-propose from an instance
+with a fresh name; never relabel an old proposal to bypass the check.
+Retired sources still require single-incarnation history. Unknown or
+incomplete history refuses on both paths. This proves consistency, not
+proposal authorship.
+
+Unless its previous harvester is still listed, the source spawns a harvester
+from instance home. The capability inject and compulsory `okf-propose` skill own
 this procedure, not the spawn brief. First use the skill's Node recipe to
 print a name for this proposal, record it in log.md, and check it is unused
 with `oats status` and not a soul name with `oats souls`. Substitute that
@@ -393,14 +405,17 @@ The harvester (`knowledge: none`, capability `oats.okf-harvest`) follows the
 2. **Establishes the source from the deployment's records**, never from the
    proposal: a single live `agents/*/instances/<instance>/instance.json`,
    or the completed retirement recovery named by the kernel's `retired`
-   event (`oats instance events`, OATS >=0.49.0). Live sources also require
-   complete event history for the same single incarnation as their record:
-   reusing a retired source's address must not substitute a new instance's
-   evidence. Source instance/home,
+   event (`oats instance events`, OATS >=0.49.0). Live sources require
+   complete known event history: an explicit proposal incarnation must match
+   the record's `createdAt`, the current history incarnation and a history
+   row; legacy proposals require a single incarnation. An old proposal must
+   never use a replacement's evidence, and a mismatch never falls back to
+   recovery. Retired sources still require a single known incarnation, with
+   any explicit proposal incarnation matching too. Source instance/home,
    event incarnation, recovery manifest and copied record must agree. Only
    the event-named copy under that agent's recovery directory is accepted;
    recorded `afterHooks.home` selects the final home snapshot. Guessed
-   copies, incomplete history, ambiguous/reused incarnations and missing
+   copies, incomplete/unknown history, ambiguous incarnations and missing
    sources refuse. The record supplies the soul (`soul.yaml`, `okf.json`)
    and bindings; an opted-out soul still refuses.
 3. **Snapshots at spawn, before the model starts.** The required hook

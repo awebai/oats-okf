@@ -307,7 +307,7 @@ test(`${json(join(root, 'package.json')).version} real OATS ${KERNEL}: legacy-ke
     assert.deepEqual(listing(hHome), before, 'a legacy 4.x TASK\'s complete writes nothing in the harvester home');
   });
 
-  await t.test('e) a real retirement precedes a new harvester spawn; public events resolve its source, then recovery disposal cannot lose either snapshot', () => {
+  await t.test('e) real retirement/reuse: legacy and stale proposals refuse; the current explicit incarnation captures only its own evidence', () => {
     const { src, hHome } = state;
     assert.ok(src && hHome, 'needs (b)');
     const hBefore = fs.readFileSync(join(hHome, 'instance.json'));
@@ -340,12 +340,38 @@ test(`${json(join(root, 'package.json')).version} real OATS ${KERNEL}: legacy-ke
     // must not capture the replacement's notes merely because its home exists.
     const replacement=ok(['spawn','source','--name','src','--no-launch']).result;
     assert.equal(replacement.home,src);
-    assert.notEqual(json(join(src,'instance.json')).createdAt,captured.source.incarnation);
-    write(join(src,'notes/decision.md'),'Replacement incarnation: unrelated evidence.\n');
+    const currentIncarnation=json(join(src,'instance.json')).createdAt;
+    assert.notEqual(currentIncarnation,captured.source.incarnation);
+    const currentEvidence='Replacement incarnation: unrelated evidence.\n';
+    write(join(src,'notes/decision.md'),currentEvidence);
     const beforeReuse=harvesterHomes();
     const reused=run(['spawn','oats.okf/knowledge-harvester','--task-file',join(snapshot,'proposal.md'),'--relation','unrelated','--no-launch']);
-    assert.notEqual(reused.status,0,reused.text);assert.match(reused.text,/never choose a reused name/);
+    assert.notEqual(reused.status,0,reused.text);assert.match(reused.text,/re-propose.*incarnation.*fresh name/);
     assert.deepEqual(harvesterHomes(),beforeReuse,'no harvester exists for an ambiguous live incarnation');
+    const oldTask=fs.readFileSync(join(snapshot,'proposal.md'),'utf8');
+    write(join(src,'proposals/stale.md'),oldTask.replace(/^(Source:.*)$/m,`$1, incarnation ${captured.source.incarnation}`));
+    const stale=run(['spawn','oats.okf/knowledge-harvester','--name','stale-harvester','--task-file',join(src,'proposals/stale.md'),'--relation','unrelated','--no-launch']);
+    assert.notEqual(stale.status,0,stale.text);assert.match(stale.text,/proposal incarnation does not match/);
+    assert.deepEqual(harvesterHomes(),beforeReuse,'a stale explicit proposal neither falls back nor captures the live replacement');
+
+    // Write a NEW proposal using the new source's composed template. The
+    // actual kernel record supplies createdAt; never edit a source record.
+    const skill=fs.readFileSync(join(src,'.agents/skills/okf-propose/SKILL.md'),'utf8');
+    const sourceLine=/^Source:.*$/m.exec(skill)[0]
+      .replace('<your instance name>','src').replace('<your instance home>',src)
+      .replace("<your soul's name>",'source').replace('<your instance.json createdAt>',currentIncarnation);
+    assert.ok(sourceLine.endsWith(`, incarnation ${currentIncarnation}`));
+    const currentTask=`# OKF proposal: Replacement's own lesson\n\n${sourceLine}\n\n## What\nA separate current claim.\n\n## Why\nCurrent evidence, not the retired source's claim.\n\n## Evidence\nDisposable fixture.\n\n## Backing notes\n- notes/decision.md\n`;
+    write(join(src,'proposals/current.md'),currentTask);
+    const as={instance:'src',home:src};
+    const current=ok(['spawn','oats.okf/knowledge-harvester','--name','current-harvester','--task-file','proposals/current.md','--relation','unrelated','--no-launch'],{cwd:src,as}).result;
+    const currentSnapshot=join(current.home,'harvest-source'),summary=json(join(currentSnapshot,'source.json'));
+    assert.equal(summary.from,'live');assert.equal(summary.source.incarnation,currentIncarnation);
+    assert.equal(summary.source.instance,'src');assert.equal(summary.source.home,src);
+    assert.deepEqual(summary.evidence,[{note:'notes/decision.md',status:'copied',sha256:createHash('sha256').update(currentEvidence).digest('hex')}]);
+    assert.equal(fs.readFileSync(join(currentSnapshot,'notes/decision.md'),'utf8'),currentEvidence);
+    assert.equal(fs.readFileSync(join(currentSnapshot,'proposal.md'),'utf8'),currentTask);
+    assert.notEqual(summary.evidence[0].sha256,captured.evidence[0].sha256);
     assert.deepEqual(fs.readFileSync(join(hHome, 'instance.json')), hBefore, 'retiring the source does not touch the harvester record');
     assert.equal(fs.existsSync(asked), false, 'no harness was ever asked to start a model');
   });

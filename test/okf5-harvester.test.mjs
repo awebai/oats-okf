@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { snapshotSource, backingNotes } from '../oats-package/capabilities/oats-okf-harvest/lib/source-snapshot.mjs';
+import { snapshotSource, backingNotes, proposalSource } from '../oats-package/capabilities/oats-okf-harvest/lib/source-snapshot.mjs';
 // oats.okf 5.1.0: publication is procedure-only (git + gh, skill
 // knowledge-harvest); its 4.x commands refuse so an old TASK never completes.
 const ROOT=fileURLToPath(new URL('../',import.meta.url)),PKG=join(ROOT,'oats-package');
@@ -296,9 +296,13 @@ test('the skill\'s v2 provenance example parses once its placeholders are filled
 test('the working skill teaches the proposal and the harvester agrees on its source format',()=>{
   const skill=read('capabilities/oats-okf/skills/okf-propose/SKILL.md');
   assert.ok(skill.includes('oats spawn oats.okf/knowledge-harvester --name <harvester-name> --task-file <proposal> --relation unrelated'));
-  assert.match(skill,/Source: instance <your instance name>, home <your instance home>, soul <your soul's name>/);
+  const sourceLine='Source: instance <your instance name>, home <your instance home>, soul <your soul\'s name>, incarnation <your instance.json createdAt>';
+  assert.ok(skill.includes(sourceLine));
+  const filled=sourceLine.replace('<your instance name>','src').replace('<your instance home>','/deployment/agents/source/instances/src').replace('<your soul\'s name>','source').replace('<your instance.json createdAt>','2026-10-14T00:00:00.000Z');
+  assert.deepEqual(proposalSource(filled),{instance:'src',home:'/deployment/agents/source/instances/src',soul:'source',incarnation:'2026-10-14T00:00:00.000Z'});
   assert.match(skill,/Use \*\*exactly one\*\* `Source:` line/);
-  assert.match(prose('capabilities/oats-okf-harvest/skills/knowledge-harvest/SKILL.md'),/exactly one line `Source: instance <name>, home <path>, soul <name>` \(two or more `Source:` lines are ambiguous: STOP and report/);
+  assert.match(prose('capabilities/oats-okf-harvest/skills/knowledge-harvest/SKILL.md'),/exactly one line `Source: instance <name>, home <path>, soul <name>, incarnation <createdAt>`/);
+  assert.match(prose('capabilities/oats-okf/skills/okf-propose/SKILL.md'),/Never stamp an old proposal/);
   assert.match(prose('capabilities/oats-okf/injects/okf.md'),/Reading the okf-propose skill is compulsory/);
   assert.match(prose('capabilities/oats-okf/skills/okf-instance-knowledge/SKILL.md'),/knowledge: \{ harvest: off \}/);
 });
@@ -332,7 +336,7 @@ assert.deepEqual(process.argv.slice(2),['instance','events',result.instance,'--h
 process.stdout.write(JSON.stringify({schemaVersion:1,ok:true,result}));\n`);
   return {d,home:home??join(d,'agents','src-agent','instances','src'),soul,history,events:()=>history};
 }
-const proposal=(home,{instance='src',soul='source'}={})=>`# OKF proposal: retry budget\n\nSource: instance ${instance}, home ${home}, soul ${soul}\n\n## What\nA claim.\n`;
+const proposal=(home,{instance='src',soul='source',incarnation}={})=>`# OKF proposal: retry budget\n\nSource: instance ${instance}, home ${home}, soul ${soul}${incarnation===undefined?'':`, incarnation ${incarnation}`}\n\n## What\nA claim.\n`;
 function spawnHook(task,deploymentDir) {
   const cwd=fs.realpathSync(fs.mkdtempSync(join(tmpdir(),'okf5-hook-cwd-')));
   try {
@@ -390,7 +394,7 @@ test('on a 4.x record, a soul off still denies, and an unproven or explicit remo
 
 test('the harvester spawn hook fails closed when the source cannot be established',t=>{
   const f=deployment(t);
-  refused(spawnHook('# 4.x TASK\nsource: /srv/state/sources/x/source.json run: 1234\n',f.d),'E_SOURCE',/not an oats\.okf 5\.0 proposal/);
+  refused(spawnHook('# 4.x TASK\nsource: /srv/state/sources/x/source.json run: 1234\n',f.d),'E_SOURCE',/not an oats\.okf 5\.x proposal/);
   refused(spawnHook(proposal(join(f.home,'..','gone'),{instance:'gone'}),f.d),'E_SOURCE',/source event lookup/);
   refused(spawnHook(proposal(f.home,{instance:'../src'}),f.d),'E_SOURCE',/plain names/);
   refused(spawnHook(proposal('/elsewhere/src'),f.d),'E_SOURCE',/does not match the proposal's home/);
@@ -428,7 +432,7 @@ function retiredSource(t, { afterHooks = false } = {}) {
   return {...f,recovery,history,events:()=>history};
 }
 const harvestHome=f=>{const home=join(f.d,'harvester');fs.mkdirSync(home);return home;};
-const withNotes=home=>proposal(home)+'\n## Backing notes\n- notes/decision.md\n';
+const withNotes=(home,options)=>proposal(home,options)+'\n## Backing notes\n- notes/decision.md\n';
 
 for(const afterHooks of [false,true]) test(`snapshot uses only event-addressed recovery, afterHooks=${afterHooks}; disposal cannot lose it`,t=>{
   const f=retiredSource(t,{afterHooks}),home=harvestHome(f);
@@ -486,8 +490,9 @@ test('missing/traversing/symlinked notes have no hash or copy; legacy named refe
   assert.deepEqual(fs.readdirSync(join(home,'harvest-source/notes')),['decision.md']);
 });
 
-test('retired A proposal cannot capture replacement live B at the same source address',t=>{
+test('retired A and legacy proposals refuse live B; explicit B captures only B evidence at the reused address',t=>{
   const f=retiredSource(t),home=harvestHome(f),task=withNotes(f.home);
+  const oldIncarnation=f.history.events[0].incarnation;
   const record=JSON.parse(fs.readFileSync(join(f.recovery,'home/instance.json')));
   fs.mkdirSync(join(f.home,'notes'),{recursive:true});
   record.createdAt='2026-10-14T01:00:00.000Z';
@@ -495,18 +500,76 @@ test('retired A proposal cannot capture replacement live B at the same source ad
   fs.writeFileSync(join(f.home,'notes/decision.md'),'Replacement B: must never substitute for A.');
   f.history.incarnation=record.createdAt;
   f.history.events.push({kind:'spawned',producer:'kernel',instance:'src',home:f.home,incarnation:record.createdAt});
-  assert.throws(()=>snapshotSource({task,deployment:f.d,home,events:f.events}),/never choose a reused name/);
+  assert.throws(()=>snapshotSource({task,deployment:f.d,home,events:f.events}),/re-propose.*incarnation.*fresh name/);
+  assert.throws(()=>snapshotSource({task:withNotes(f.home,{incarnation:oldIncarnation}),deployment:f.d,home,events:f.events}),/proposal incarnation does not match/);
   assert.deepEqual(fs.readdirSync(home),[]);
   assert.equal(fs.readFileSync(join(f.recovery,'home/notes/decision.md'),'utf8'),'Before hooks.');
+  const currentTask=withNotes(f.home,{incarnation:record.createdAt});
+  const summary=snapshotSource({task:currentTask,deployment:f.d,home,events:f.events});
+  const intended=fs.readFileSync(join(f.home,'notes/decision.md'));
+  assert.equal(summary.from,'live');assert.equal(summary.source.incarnation,record.createdAt);
+  assert.deepEqual(summary.evidence,[{note:'notes/decision.md',status:'copied',sha256:createHash('sha256').update(intended).digest('hex')}]);
+  assert.deepEqual(fs.readFileSync(join(home,'harvest-source/notes/decision.md')),intended);
+  assert.equal(fs.readFileSync(join(home,'harvest-source/proposal.md'),'utf8'),currentTask);
+  fs.rmSync(f.home,{recursive:true});fs.rmSync(f.recovery,{recursive:true});
+  assert.deepEqual(fs.readFileSync(join(home,'harvest-source/notes/decision.md')),intended);
 });
 
-for(const mode of ['truncated','unknown-incarnation','record-mismatch','empty-history']) test(`live snapshot refuses ${mode}, not only retired snapshots`,t=>{
+for(const explicit of [false,true]) for(const mode of ['truncated','unknown-incarnation','older-unknown-incarnation','record-mismatch','empty-history','current-mismatch','foreign-row','unreadable-row','bad-integrity']) test(`live snapshot refuses ${mode}, explicit=${explicit}`,t=>{
   const f=deployment(t),home=harvestHome(f);
   if(mode==='truncated') f.history.truncated=true;
   if(mode==='unknown-incarnation') f.history.events[0].incarnation=null;
+  if(mode==='older-unknown-incarnation') f.history.events.unshift({...f.history.events[0],incarnation:null});
   if(mode==='record-mismatch') f.history.events[0].incarnation='another-instance';
   if(mode==='empty-history') f.history.events=[];
-  assert.throws(()=>snapshotSource({task:withNotes(f.home),deployment:f.d,home,events:f.events}),e=>e.code==='E_SOURCE');
+  if(mode==='current-mismatch') f.history.incarnation='other';
+  if(mode==='foreign-row') f.history.events.push({...f.history.events[0],home:'/foreign'});
+  if(mode==='unreadable-row') f.history.integrity.unreadableRows=1;
+  if(mode==='bad-integrity') f.history.integrity.sources[0].status='unreadable';
+  const incarnation=JSON.parse(fs.readFileSync(join(f.home,'instance.json'))).createdAt;
+  assert.throws(()=>snapshotSource({task:withNotes(f.home,explicit?{incarnation}:{}),deployment:f.d,home,events:f.events}),e=>e.code==='E_SOURCE');
+  assert.deepEqual(fs.readdirSync(home),[]);
+});
+
+test('explicit incarnation is optional only as a whole field, never ignored or chosen from duplicate lines',()=>{
+  const legacy=proposal('/deployment/agents/source/instances/src');
+  assert.equal(proposalSource(legacy).incarnation,undefined);
+  const line=/^Source:.*$/m.exec(legacy)[0],incarnation='2026-10-14T00:00:00.000Z';
+  const explicit=`${line}, incarnation ${incarnation}`;
+  assert.equal(proposalSource(explicit.replaceAll('\n','\r\n')+'\r\n').incarnation,incarnation);
+  for(const suffix of [', incarnation',', incarnation ',`, incarnation ${incarnation}, incarnation ${incarnation}`,`, incarnation ${incarnation} extra`,`, createdAt ${incarnation}`,`, incarnation\n${incarnation}`]) {
+    assert.throws(()=>proposalSource(line+suffix),e=>e.code==='E_SOURCE',suffix);
+  }
+  assert.throws(()=>proposalSource(`${explicit}\n${line}\n`),/more than one `Source:` line/);
+});
+
+for(const retired of [false,true]) test(`explicit source matches a single-incarnation ${retired?'retired':'live'} record and mismatches refuse`,t=>{
+  const f=retired?retiredSource(t):deployment(t),home=harvestHome(f),incarnation=f.history.events[0].incarnation;
+  for(const wrong of ['wrong',incarnation.replace('.000Z','Z')]) {
+    assert.throws(()=>snapshotSource({task:proposal(f.home,{incarnation:wrong}),deployment:f.d,home,events:f.events}),/proposal incarnation does not match/);
+  }
+  assert.deepEqual(fs.readdirSync(home),[]);
+  const summary=snapshotSource({task:proposal(f.home,{incarnation}),deployment:f.d,home,events:f.events});
+  assert.equal(summary.source.incarnation,incarnation);
+  assert.equal(summary.from,retired?'recovery':'live');
+});
+
+test('explicit retired input does not broaden recovery to a reused name',t=>{
+  const f=retiredSource(t),home=harvestHome(f),incarnation=f.history.events[0].incarnation;
+  f.history.events.unshift({...f.history.events[0],kind:'spawned',incarnation:'old'});
+  assert.throws(()=>snapshotSource({task:proposal(f.home,{incarnation}),deployment:f.d,home,events:f.events}),/never choose a reused name/);
+  assert.deepEqual(fs.readdirSync(home),[]);
+});
+
+test('explicit live input cannot bypass opt-out or record changes during capture',t=>{
+  const f=deployment(t),home=harvestHome(f),incarnation=f.history.incarnation;
+  const task=proposal(f.home,{incarnation});
+  fs.writeFileSync(join(f.soul,'soul.yaml'),'name: source\nknowledge: { harvest: off }\n');
+  assert.throws(()=>snapshotSource({task,deployment:f.d,home,events:f.events}),e=>e.code==='E_OPTED_OUT');
+  assert.deepEqual(fs.readdirSync(home),[]);
+  fs.writeFileSync(join(f.soul,'soul.yaml'),'name: source\n');
+  const events=()=>{const p=join(f.home,'instance.json'),record=JSON.parse(fs.readFileSync(p));record.createdAt='replacement';fs.writeFileSync(p,JSON.stringify(record));return f.history;};
+  assert.throws(()=>snapshotSource({task,deployment:f.d,home,events}),/source records changed during capture/);
   assert.deepEqual(fs.readdirSync(home),[]);
 });
 
