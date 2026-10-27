@@ -161,7 +161,7 @@ test(`${json(join(root, 'package.json')).version} real OATS ${KERNEL}: legacy-ke
     const srcBefore = fs.readFileSync(join(src, 'instance.json'));
     const as = { instance: 'src', home: src };
 
-    // Why the procedure never passes --relative-to: 0.49 refuses it with unrelated (bin/oats.mjs), nothing spawned.
+    // Why the procedure never passes --relative-to: the kernel refuses it with unrelated (bin/oats.mjs), nothing spawned.
     const bad = refused(['spawn', 'oats.okf/knowledge-harvester', '--task-file', 'proposals/2026-10-07-retry-budget.md', '--relation', 'unrelated', '--relative-to', 'src', '--no-launch'], 'E_BAD_ARGS', { cwd: src, as });
     assert.match(bad.message, /--relation unrelated takes no --relative-to/);
     assert.deepEqual(harvesterHomes(), []);
@@ -193,11 +193,16 @@ test(`${json(join(root, 'package.json')).version} real OATS ${KERNEL}: legacy-ke
     const hHome = join(dep, 'agents', HARVESTER_DIR, 'instances', h.instance);
     assert.equal(real(h.home), real(hHome), 'the harvester lives in the deployment, under the package soul\'s agent dir');
     assert.ok(fs.readFileSync(join(hHome, 'TASK.md'), 'utf8').includes(proposal.trim()), 'TASK.md carries the proposal (the kernel copies --task-file)');
+    // The soul's background: true (awebai/oats#1579, the reason for the 0.69.2 floor): the spawn answers it and the home records it.
+    assert.equal(h.background, true, 'the harvester soul places new harvesters in the background');
+    assert.equal(h.backgroundFrom, 'soul');
+    assert.ok(fs.existsSync(join(hHome, '.oats-background.json')), 'the home records background');
 
     // Top-level: "unrelated" is normalized away before recording (lib/core.mjs), so no lineage field is written.
     const hRecord = json(join(hHome, 'instance.json'));
     for (const k of ['parentInstance', 'siblingInstance', 'relation', 'relativeTo']) assert.equal(hRecord[k], undefined, `${k}: ${JSON.stringify(hRecord[k])}`);
-    assert.equal(hRecord.spawnOrigin, 'operator', 'not an instance-origin (child) spawn: ambient OATS_INSTANCE is not parentage');
+    // spawnOrigin says who ran the spawn (an instance home, since #1372), not parentage: the lineage fields above stay absent.
+    assert.equal(hRecord.spawnOrigin, 'instance', 'spawned from the source home; still no lineage');
     assert.ok(!strings(hRecord).some(v => v === 'src' || v.includes(src)), 'nothing in the harvester record names the source');
     assert.equal(hRecord.capabilityMeta?.['oats.okf-harvest'], undefined, 'the source check reports no external-state meta; its home-local capture rolls back with spawn');
     assert.deepEqual(fs.readFileSync(join(src, 'instance.json')), srcBefore, 'the source record gained no child or lineage');

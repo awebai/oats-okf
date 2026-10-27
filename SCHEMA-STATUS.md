@@ -1,8 +1,9 @@
 # Schema and verification status
 
-oats.okf **5.4.0**, requiring **OATS >=0.69.2**, the first kernel that reads the
-harvester soul's `background:` key (source capture's public gone-home
-instance-event lookup needs only >=0.49.0). Version declarations are not
+oats.okf **5.4.0** requires OATS >=0.49.0. This checkout (unreleased) requires
+**OATS >=0.69.2**, the first kernel that reads the harvester soul's
+`background:` key; source capture's public gone-home instance-event lookup
+needs only >=0.49.0. Version declarations are not
 evidence of a published release.
 
 ## Schemas

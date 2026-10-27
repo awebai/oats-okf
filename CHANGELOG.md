@@ -15,8 +15,8 @@
 - **Harvesters are background instances** (awebai/oats#1579). New harvesters
   are listed under the Desktop's and the TUI's Background section, out of the
   main list; a harvester that waits on you still lights that section's
-  heading. A running harvester stays where it is. Nothing else about a
-  harvester changes.
+  heading. No existing harvester moves, running or stopped. Nothing else
+  about a harvester changes.
 - **A shorter always-loaded inject.** `injects/okf.md` is about 60% of its
   former size; the detail lives in the skills it names. It now loads
   `/okf-consultation` and `/okf-instance-knowledge` at task start **and after
