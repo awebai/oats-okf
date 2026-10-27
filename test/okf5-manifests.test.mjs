@@ -42,9 +42,11 @@ test('oats.okf declares exactly bindings-file, state-dir, git-timeout and consul
   assert.equal(cap('oats-okf-harvest').settings,undefined);
 });
 
-test('oats.okf hooks are exactly soul-scaffold and a required spawn with no inputs',()=>{
+test('oats.okf hooks are exactly soul-scaffold, a required spawn with no inputs and a non-required upgrade',()=>{
   const hooks=cap('oats-okf').hooks;
-  assert.deepEqual(Object.keys(hooks).sort(),['soul-scaffold','spawn']);
+  assert.deepEqual(Object.keys(hooks).sort(),['soul-scaffold','spawn','upgrade']);
+  // okf #106: never required (a plain command).
+  assert.equal(hooks.upgrade,'bin/oats-okf.mjs upgrade');
   assert.equal(hooks['soul-scaffold'],'bin/oats-okf.mjs soul-scaffold');
   assert.deepEqual(hooks.spawn,{command:'bin/oats-okf.mjs spawn',required:true});
 });
