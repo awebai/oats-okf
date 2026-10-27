@@ -26,7 +26,34 @@ jobs:
         run: |
           echo "npm test validates the manifests and runs the provider in-process and through its CLI with disposable Git/directory bases."
           echo "SKIPPED here: test/okf5-real-kernel.test.mjs (needs OATS_OKF_REAL_CLI); the real-kernel-049 job runs it on released OATS 0.49.0."
+          echo "SKIPPED here: test/okf5-kernel-upgrade.test.mjs (needs OATS_OKF_UPGRADE_CLI); the kernel-upgrade-0681 job runs it on released OATS 0.68.1."
           echo "NOT COVERED: OKF acquire/lock/restore/trust, a model-run harvester, real GitHub PRs."
+
+  kernel-upgrade-0681:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The test archives the released v4.2.2 and v5.3.0 payloads and main at 79befea from history.
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install the released OATS 0.68.1 kernel in a disposable prefix
+        run: |
+          npm install --prefix "$RUNNER_TEMP/okf-upgrade-kernel" --ignore-scripts --no-audit --no-fund --package-lock=false @awebai/oats@0.68.1
+          echo "OATS_OKF_UPGRADE_CLI=$RUNNER_TEMP/okf-upgrade-kernel/node_modules/@awebai/oats/bin/oats.mjs" >> "$GITHUB_ENV"
+      - name: Real oats instance upgrade of a 5.3.0 home and a 4.x home (test/okf5-kernel-upgrade.test.mjs)
+        shell: bash
+        run: |
+          set -o pipefail
+          node "$OATS_OKF_UPGRADE_CLI" --version
+          node --test --test-reporter=spec test/okf5-kernel-upgrade.test.mjs | tee "$RUNNER_TEMP/okf-kernel-upgrade.txt"
+          grep -E '^ℹ skipped 0$' "$RUNNER_TEMP/okf-kernel-upgrade.txt"
+      - name: Evidence boundary
+        run: |
+          echo 'Real released OATS 0.68.1 CLI; isolated file-Git workspace; okf v4.2.2, v5.3.0, main at 79befea and this checkout pinned by commit in turn.'
+          echo 'Homes are spawned with --no-launch and never started; no model, messaging, host timer or production deployment.'
 
   real-kernel-049:
     runs-on: ubuntu-latest

@@ -22,10 +22,11 @@ import * as fs from 'node:fs';
 import { dirname, join, isAbsolute, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { parseProvenance } from '../oats-package/capabilities/oats-okf-maintenance/lib/provenance.mjs';
 import { generateHarvesterName } from './fixtures/harvester-name.mjs';
+import { machine } from './fixtures/real-machine.mjs';
 
 const cli = process.env.OATS_OKF_REAL_CLI;
 const KERNEL = '0.49.0';
@@ -51,17 +52,7 @@ test(`${json(join(root, 'package.json')).version} real OATS ${KERNEL}: legacy-ke
   assert.doesNotMatch(base, /harvest/, 'the cleanup reader looks for the word harvest in oats-local.yaml; the fixture path must not carry it');
 
   // ---- an isolated machine: node and git only, harnesses that refuse to run ----
-  const bin = join(base, 'bin'), asked = join(base, 'model-start-attempted');
-  fs.mkdirSync(bin); fs.mkdirSync(join(base, 'user'));
-  fs.symlinkSync(process.execPath, join(bin, 'node'));
-  fs.symlinkSync(execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim(), join(bin, 'git'));
-  for (const name of ['pi', 'claude', 'codex']) { write(join(bin, name), `#!/bin/sh\necho ${name} >> '${asked}'\necho NO_MODELS_IN_FIXTURE >&2\nexit 98\n`); fs.chmodSync(join(bin, name), 0o755); }
-  const env = { HOME: join(base, 'user'), PATH: `${bin}:/usr/bin:/bin`, OATS_HOME_DIR: join(base, 'host'), GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', LANG: 'C.UTF-8' };
-  const git = (cwd, args) => execFileSync('git', ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', ...args], { cwd, env, encoding: 'utf8' }).trim();
-  const repo = (dir, bare) => {
-    git(dir, ['init', '-q', '-b', 'main']); git(dir, ['add', '-A']); git(dir, ['commit', '-qm', 'fixture']);
-    execFileSync('git', ['clone', '-q', '--bare', dir, bare], { env }); return git(dir, ['rev-parse', 'HEAD']);
-  };
+  const { env, git, repo, asked } = machine(base);
 
   // ---- the package under test, pinned by commit; a workspace with one source soul ----
   fs.cpSync(join(root, 'oats-package'), join(base, 'pkg/oats-package'), { recursive: true, verbatimSymlinks: true });
