@@ -14,8 +14,8 @@
   personal-data and names sentences are kept.
 - **Run your final checkpoint before you report your work done**, and say so
   in the report ("done, harvested: <harvester>", "done, harvest pending:
-  <proposal>" or "done, no harvest duty"): a finished instance is retired by
-  its parent (oats.core's `/oats-operate`).
+  <proposal>" or "done, no harvest duty"), so whoever coordinates you knows
+  whether a harvest still waits on you.
 
 ### Fixed
 
