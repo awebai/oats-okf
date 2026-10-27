@@ -24,8 +24,8 @@
   The vendored `schemas/capability-manifest.schema.json` gains the
   `hooks.upgrade` property from OATS v0.68.1, byte for byte. CI's
   `kernel-upgrade-0681` job runs the real `oats instance upgrade` on released
-  OATS 0.68.1: a v5.3.0 home is refused without the hook and adopted by this
-  release with its state byte-identical, and a v4.2.2 home is refused with
+  OATS 0.68.1: a v5.2.1 home cannot move to the hook-less v5.3.0, a v5.3.0
+  home is adopted by this release with its state byte-identical, and a v4.2.2 home is refused with
   the respawn remedy.
 
 ## 5.3.0 — 2026-10-23

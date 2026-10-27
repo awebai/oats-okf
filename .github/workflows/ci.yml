@@ -34,7 +34,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # The test archives the released v4.2.2 and v5.3.0 payloads and main at 79befea from history.
+          # The test archives the released v4.2.2, v5.2.1 and v5.3.0 payloads from history.
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
@@ -52,7 +52,7 @@ jobs:
           grep -E '^ℹ skipped 0$' "$RUNNER_TEMP/okf-kernel-upgrade.txt"
       - name: Evidence boundary
         run: |
-          echo 'Real released OATS 0.68.1 CLI; isolated file-Git workspace; okf v4.2.2, v5.3.0, main at 79befea and this checkout pinned by commit in turn.'
+          echo 'Real released OATS 0.68.1 CLI; isolated file-Git workspace; okf v4.2.2, v5.2.1, v5.3.0 and this checkout pinned by commit in turn.'
           echo 'Homes are spawned with --no-launch and never started; no model, messaging, host timer or production deployment.'
 
   real-kernel-049:

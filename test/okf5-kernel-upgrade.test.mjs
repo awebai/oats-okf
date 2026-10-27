@@ -4,9 +4,10 @@
 // CI job installs it and fails on any skip).
 //
 // One package repository holds four payloads, each pinned by commit in turn:
-// the released v4.2.2 and v5.3.0, main at 79befea (5.3 without the hook: the
-// negative control) and this checkout. A home spawned on 5.3.0 is refused by
-// 79befea and adopted by this checkout, its okf state byte-identical. A home
+// the released v4.2.2, v5.2.1 and v5.3.0, and this checkout. Negative control:
+// a home spawned on 5.2.1 cannot move to 5.3.0, which declares no upgrade hook.
+// A home spawned on 5.3.0 is adopted by this checkout, its okf state
+// byte-identical. A home
 // spawned on 4.2.2 with harvest off is refused by this checkout with the
 // respawn remedy; 4.2.2 records the same home state as 4.3.0 (the hook adds
 // none), so it stands for any 4.x home. No model (the harnesses refuse to run,
@@ -29,7 +30,7 @@ const json = file => JSON.parse(fs.readFileSync(file, 'utf8'));
 const okfState = home => Object.fromEntries(['okf-harvest-policy.json', 'STATE.md', 'log.md'].map(p => [p, fs.readFileSync(join(home, p), 'utf8')]).concat([['notes/', fs.readdirSync(join(home, 'notes')).sort()]]));
 const okfRow = plan => plan.modules.find(m => m.capability === 'oats.okf');
 
-test(`real OATS ${KERNEL} instance upgrade: a 5.3.0 home is refused without the hook and adopted by this checkout, its state unchanged; a 4.x home is refused with the respawn remedy`, { skip: !cli }, t => {
+test(`real OATS ${KERNEL} instance upgrade: a 5.2.1 home cannot move to the hook-less 5.3.0; a 5.3.0 home is adopted by this checkout, its state unchanged; a 4.x home is refused with the respawn remedy`, { skip: !cli }, t => {
   const base = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), 'okf5-kernel-upgrade-')));
   t.after(() => fs.rmSync(base, { recursive: true, force: true }));
   const { env, git, asked } = machine(base);
@@ -45,8 +46,8 @@ test(`real OATS ${KERNEL} instance upgrade: a 5.3.0 home is refused without the 
   const archived = rev => () => execFileSync('tar', ['-x', '-C', pkg], { input: execFileSync('git', ['archive', rev, 'oats-package'], { cwd: root }) });
   const commits = {
     v422: commit(archived('v4.2.2'), 'okf 4.2.2'),
+    v521: commit(archived('v5.2.1'), 'okf 5.2.1'),
     v530: commit(archived('v5.3.0'), 'okf 5.3.0'),
-    noHook: commit(archived('79befea'), 'okf main without the upgrade hook'),
     tree: commit(() => fs.cpSync(join(root, 'oats-package'), join(pkg, 'oats-package'), { recursive: true, verbatimSymlinks: true }), 'this checkout'),
   };
   execFileSync('git', ['clone', '-q', '--bare', pkg, join(base, 'pkg.git')], { env });
@@ -91,6 +92,10 @@ test(`real OATS ${KERNEL} instance upgrade: a 5.3.0 home is refused without the 
   assert.equal(instance('src-4x').capabilityMeta['oats.okf'].harvest, 'off');
   assert.equal(fs.existsSync(join(old, '.okf-instance.json')), true);
 
+  // ---- a 5.x home without the hook in reach: spawned on 5.2.1 ----
+  repin(commits.v521);
+  spawn('src-52');
+
   // ---- a 5.x home: spawned on 5.3.0 ----
   repin(commits.v530);
   const home = spawn('src-5x');
@@ -99,9 +104,8 @@ test(`real OATS ${KERNEL} instance upgrade: a 5.3.0 home is refused without the 
   const state = okfState(home);
   assert.deepEqual(JSON.parse(state['okf-harvest-policy.json']), { version: 1, harvest: 'on', reason: 'default' });
 
-  // ---- negative control: 5.3 without the hook cannot move it ----
-  repin(commits.noHook);
-  const refused = okfRow(plan('src-5x'));
+  // ---- negative control: 5.3.0 declares no upgrade hook, so the 5.2.1 home cannot move to it ----
+  const refused = okfRow(plan('src-52'));
   assert.equal(refused.provider.decision, 'refuse', JSON.stringify(refused)); assert.match(refused.provider.reason, /does not declare an upgrade hook/);
 
   // ---- this checkout adopts the 5.x home ----

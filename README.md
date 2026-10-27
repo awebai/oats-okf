@@ -911,9 +911,10 @@ the released **OATS 0.68.1** and runs it, failing if it skips. It does three
 things:
 
 - It spawns a home on v5.3.0.
-- The hook-less main at 79befea refuses to move that home, and this
-  checkout adopts it. The policy and working memory are byte-identical
-  afterwards.
+- A home spawned on v5.2.1 cannot move to the hook-less v5.3.0 (the
+  negative control).
+- This checkout adopts the v5.3.0 home. The policy and working memory are
+  byte-identical afterwards.
 - It refuses a home spawned on v4.2.2 with the respawn remedy.
 
 Not covered by tests: a real harvester judging a proposal, a real GitHub PR
