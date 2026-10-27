@@ -1,5 +1,36 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **`oats instance upgrade` can move a home that carries oats.okf** (#106).
+  OATS 0.68 refuses to move a module that records state or runs a spawn hook
+  unless it declares an `upgrade` hook, and oats.okf declared none, so every
+  such home was refused. oats.okf now declares a non-required `upgrade` hook:
+  - `plan` adopts a service home, a harvest-off home (no source, its
+    `.okf-instance.json` record), and a registered source whose marker,
+    frozen descriptor and status still load for the home. That includes
+    sources registered by okf 4.0 and 4.1, whose frozen `cron`/`tz` stay
+    inert.
+  - It refuses a source that does not load, a captured home or source, legacy
+    source watermarks and a home with no okf state, each with a reason and a
+    remedy.
+  - `apply` checks the home again and returns the meta as recorded. A
+    harvest-on meta written by okf <= 4.1 has its `schedule` replaced by
+    `checkpoint: "oats okf harvest"`, and the warning names that source's
+    scheduler job, which the operator removes with
+    `oats schedule remove okf-<id> --dir <deployment>`.
+  - Neither phase writes, calls the kernel or the host, captures, or reads the
+    harvest switch.
+
+  The vendored `schemas/capability-manifest.schema.json` gains the
+  `hooks.upgrade` property from OATS v0.68.1, byte for byte. CI's
+  `kernel-upgrade-0681` job runs the real `oats instance upgrade` on released
+  OATS 0.68.1: a home spawned on okf 4.0.5 with harvest off is refused by the
+  released 4.2.2 and adopted by this release, with its meta and harvest-off
+  record unchanged.
+
 ## 4.2.2 — 2026-10-26
 
 ### Fixed
