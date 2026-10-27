@@ -1,8 +1,8 @@
 # oats.okf 4 — external knowledge, consulted remotely, independent judgment
 
-The official OKF knowledge capability: **4.2.2**, requiring **OATS >=0.29.0**.
+The official OKF knowledge capability: **4.3.0**, requiring **OATS >=0.49.0**.
 
-## Unreleased — `oats instance upgrade` adopts a home (#106)
+## 4.3.0 — `oats instance upgrade` adopts a home (#106)
 
 **Breaking: requires OATS >=0.49.0** (was >=0.29.0). A kernel before 0.49.0
 refuses any hook event it does not know, so it would refuse this package's
