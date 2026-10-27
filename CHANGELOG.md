@@ -12,8 +12,10 @@
   checkpoint, the harvester naming and preview rule, the
   `E_INSTANCE_NAME_TAKEN` stop, the status and opt-out rules and the
   personal-data and names sentences are kept.
-- **Run your final checkpoint before you report your work done**: a finished
-  instance is retired by its parent after it (oats.core's `/oats-operate`).
+- **Run your final checkpoint before you report your work done**, and say so
+  in the report ("done, harvested: <harvester>", "done, harvest pending:
+  <proposal>" or "done, no harvest duty"): a finished instance is retired by
+  its parent (oats.core's `/oats-operate`).
 
 ### Fixed
 
