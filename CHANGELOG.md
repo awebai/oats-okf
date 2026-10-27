@@ -1,6 +1,13 @@
 # Changelog
 
-## Unreleased
+## 5.5.0 — 2026-10-27
+
+Requires OATS >=0.49.0, unchanged.
+
+**Upgrade:** a harvester on 5.4.0 or older refuses a `Source:` line with the
+new `, incarnation` suffix. So move the lock to 5.5.0 (`oats sync`) before
+instances on 5.5.0 write proposals: a harvester is spawned from the lock, and
+the source's own modules write the line.
 
 ### Changed
 
