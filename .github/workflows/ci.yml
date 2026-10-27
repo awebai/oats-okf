@@ -31,12 +31,13 @@ jobs:
       - name: Report default coverage limits (not a consumer probe)
         run: |
           echo "npm test covers the exported v2 payload, schema parity/mutations and disposable Git/directory custody."
-          echo "SKIPPED by default: public CLI scaffold, native capture/scheduler, real home-dispatch and external-repo probes (10 opt-in tests)."
-          echo "The separate external-repo-041 job runs the external-repo regression on released OATS 0.41.0."
+          echo "SKIPPED by default: public CLI scaffold, native capture/scheduler, real home-dispatch, external-repo and kernel-upgrade probes (11 opt-in tests)."
+          echo "The separate kernel-upgrade-0681 job runs the real oats instance upgrade on released OATS 0.68.1."
+          echo "The separate external-repo-049 job runs the external-repo regression on released OATS 0.49.0, the oldest supported kernel."
           echo "NOT COVERED: OKF acquire/lock/restore/trust, remote GitHub PRs or fresh real-model learning."
           echo "Use workflow_dispatch with an exact published consumer_version for the optional public CLI job; see SCHEMA-STATUS.md."
 
-  external-repo-041:
+  external-repo-049:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -46,9 +47,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Install the released OATS 0.41.0 kernel in a disposable prefix
+      - name: Install the released OATS 0.49.0 kernel in a disposable prefix
         run: |
-          npm install --prefix "$RUNNER_TEMP/okf-external-kernel" --ignore-scripts --no-audit --no-fund --package-lock=false @awebai/oats@0.41.0
+          npm install --prefix "$RUNNER_TEMP/okf-external-kernel" --ignore-scripts --no-audit --no-fund --package-lock=false @awebai/oats@0.49.0
           echo "OATS_OKF_EXTERNAL_CLI=$RUNNER_TEMP/okf-external-kernel/node_modules/@awebai/oats/bin/oats.mjs" >> "$GITHUB_ENV"
       - name: Released v4.1.1 negative control must reproduce the external-repo scope defect
         run: |
@@ -67,8 +68,35 @@ jobs:
           grep -E '^ℹ skipped 0$' "$RUNNER_TEMP/okf-external-result.txt"
       - name: Evidence boundary
         run: |
-          echo 'Real released 0.41.0 CLI; isolated file-Git workspace and external clone; provider payload from this exact checkout.'
+          echo 'Real released 0.49.0 CLI; isolated file-Git workspace and external clone; provider payload from this exact checkout.'
           echo 'The harvester is spawned for real with --no-launch; no model, host timer, scheduler job, messaging cleanup, GitHub publication or production deployment.'
+
+  kernel-upgrade-0681:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The test archives the released v4.0.5 and v4.2.2 payloads from history.
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install the released OATS 0.68.1 kernel in a disposable prefix
+        run: |
+          npm install --prefix "$RUNNER_TEMP/okf-upgrade-kernel" --ignore-scripts --no-audit --no-fund --package-lock=false @awebai/oats@0.68.1
+          echo "OATS_OKF_UPGRADE_CLI=$RUNNER_TEMP/okf-upgrade-kernel/node_modules/@awebai/oats/bin/oats.mjs" >> "$GITHUB_ENV"
+      # It must run: a skip fails this step.
+      - name: Real oats instance upgrade of a 4.0.5 harvest-off home (test/kernel-upgrade.test.mjs)
+        shell: bash
+        run: |
+          test -f "$OATS_OKF_UPGRADE_CLI"
+          node "$OATS_OKF_UPGRADE_CLI" --version
+          node --test --test-reporter=spec test/kernel-upgrade.test.mjs | tee "$RUNNER_TEMP/kernel-upgrade.log"
+          grep -q '^ℹ skipped 0$' "$RUNNER_TEMP/kernel-upgrade.log" || { echo 'the kernel upgrade test was skipped'; exit 1; }
+      - name: Report evidence boundaries
+        run: |
+          echo 'Real released 0.68.1 CLI; isolated file-Git workspace; okf v4.0.5, v4.2.2 and this checkout pinned by commit in turn.'
+          echo 'The home is spawned with --no-launch and never started; no model, host timer, scheduler job or production deployment.'
 
   public-consumer:
     if: github.event_name == 'workflow_dispatch' && inputs.consumer_version != ''

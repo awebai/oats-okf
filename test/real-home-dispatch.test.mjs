@@ -2,9 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { tmpdir } from 'node:os';
-import { spawnSync, execFileSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { kernelSkip, sandbox, write } from './helpers/real-kernel.mjs';
 // okf 4.2.0: the real kernel dispatches an instance home's commands and hooks
 // with the settings captured at its spawn. Switching the deployment's harvest
 // off must still stop that home's checkpoint and retirement capture.
@@ -17,23 +17,11 @@ import { fileURLToPath } from 'node:url';
 const cli = process.env.OATS_OKF_NATIVE_CLI || process.env.OATS_OKF_CONSUMER_CLI;
 // Verified against OATS 0.43.0 (v2 workspaces, spawn origins, --provider);
 // an older selected kernel skips it, saying so.
-const kernel = cli ? /(\d+)\.(\d+)\.(\d+)/.exec(spawnSync(process.execPath, [cli, '--version'], { encoding: 'utf8' }).stdout || '') : null;
-const skip = !cli ? true : !kernel || Number(kernel[1]) * 1e6 + Number(kernel[2]) * 1e3 + Number(kernel[3]) < 43000 ? `needs OATS >= 0.43.0 (selected: ${kernel?.[0] ?? 'unknown'})` : false;
+const skip = kernelSkip(cli, [0, 43, 0]);
 const root = fileURLToPath(new URL('../', import.meta.url));
-const write = (p, text) => { fs.mkdirSync(dirname(p), { recursive: true }); fs.writeFileSync(p, text); };
 
 function workspace(t) {
-  const base = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), 'okf-home-dispatch-')));
-  t.after(() => fs.rmSync(base, { recursive: true, force: true }));
-  const bin = join(base, 'bin');
-  fs.mkdirSync(bin); fs.mkdirSync(join(base, 'user'));
-  fs.symlinkSync(process.execPath, join(bin, 'node'));
-  const gitBin = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
-  fs.symlinkSync(gitBin, join(bin, 'git'));
-  for (const harness of ['pi', 'claude', 'codex']) { write(join(bin, harness), '#!/bin/sh\necho NO_REAL_MODEL_IN_THIS_TEST >&2\nexit 98\n'); fs.chmodSync(join(bin, harness), 0o755); }
-  const env = { HOME: join(base, 'user'), PATH: `${bin}:/usr/bin:/bin`, OATS_HOME_DIR: join(base, 'host'), GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', LANG: 'en_US.UTF-8' };
-  const git = (cwd, args) => execFileSync('git', ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', ...args], { cwd, env, encoding: 'utf8' }).trim();
-  const repo = (dir, bare) => { git(dir, ['init', '-q', '-b', 'main']); git(dir, ['add', '-A']); git(dir, ['commit', '-qm', 'fixture']); execFileSync('git', ['clone', '-q', '--bare', dir, bare], { env }); return git(dir, ['rev-parse', 'HEAD']); };
+  const { base, env, git, repo } = sandbox(t, 'okf-home-dispatch-');
   // The package under test, pinned by its commit.
   fs.cpSync(join(root, 'oats-package'), join(base, 'pkg/oats-package'), { recursive: true, verbatimSymlinks: true });
   const pkg = repo(join(base, 'pkg'), join(base, 'pkg.git'));

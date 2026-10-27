@@ -35,7 +35,11 @@ The suite exercises the v2 implementation, not legacy harvest-branch behavior:
   `oneOf` and `const`. Exported resources and their descendants must stay inside
   the distribution after realpath resolution; escapes, dangling links and
   directory cycles fail. Mutation tests verify declared operation/command
-  dispatch and skill closure against the enumerated payload.
+  dispatch and skill closure against the enumerated payload. The vendored
+  `schemas/capability-manifest.schema.json` is oats v0.27.1's
+  `docs/capability-manifest.schema.json` plus the `hooks.upgrade` property from
+  OATS v0.68.1 (13f8f133), byte for byte; `test/helper-input-pairing.test.mjs`
+  pins its hash.
 - **OKF configuration schemas:** `test/okf-schema-parity.test.mjs` compares the
   root and exported `okf-bindings`, `okf-soul` and `okf-base` schema files
   byte-for-byte, including the provider-owned portable declaration/effective-
@@ -100,12 +104,23 @@ Three tests skip by default, with explicit Node test skip output:
    public-consumer CI job runs this file alone, before its full suite, and
    fails if it is skipped (it needs the selected kernel at >= 0.43.0).
 5. The external-repo test (`test/external-repo-consumer.test.mjs`, okf 4.2.0,
-   #55) runs only in the default `external-repo-041` CI job, on released
-   OATS 0.41.0 (`OATS_OKF_EXTERNAL_CLI`): a source spawned on an external
+   #55) runs only in the default `external-repo-049` CI job, on released
+   OATS 0.49.0, the oldest supported kernel (`OATS_OKF_EXTERNAL_CLI`): a source spawned on an external
    `--repo`, its checkpoint to a real harvester spawn (`--no-launch`) and its
    retirement, in the deployment, with no scheduler job and no model. The job
    first requires the released v4.1.1 payload (`OATS_OKF_EXTERNAL_PAYLOAD`)
    to fail the same fixture on the kernel's scope refusal.
+6. The kernel upgrade test (`test/kernel-upgrade.test.mjs`, #106)
+   runs only in the default `kernel-upgrade-0681` CI job, on released
+   OATS 0.68.1 (`OATS_OKF_UPGRADE_CLI`). A disposable v2 workspace pins the
+   package at v4.0.5, spawns a harvest-off home with `--no-launch`, and repins
+   it at the released v4.2.2: `oats instance upgrade --plan` refuses that move,
+   since 4.2.2 has no upgrade hook. Repinned at this checkout, the plan adopts
+   it and the apply recomposes the home with its recorded meta and
+   harvest-off record unchanged. The job fails if the test is skipped.
+   `test/upgrade-hook.test.mjs`, in `npm test`, runs the hook itself on homes
+   made by the released v4.0.5 code, under a preload that refuses every write
+   and child process.
 
 Native tests use `OATS_OKF_NATIVE_CLI`, falling back to
 `OATS_OKF_CONSUMER_CLI`. All of them run with:

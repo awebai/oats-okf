@@ -3,7 +3,7 @@
   "command": "okf-harvest",
   "version": "4.2.2",
   "compatibility": {
-    "oats": ">=0.29.0"
+    "oats": ">=0.49.0"
   },
   "description": "The OKF knowledge harvester: judges one source instance's captured notes and session transcript by the OKF promotion doctrine, opens the labelled harvest PR with its provenance block, and retires once every destination is durably delivered (the maintainer reviews the PR without it).",
   "requires": [

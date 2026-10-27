@@ -2,6 +2,48 @@
 
 The official OKF knowledge capability: **4.2.2**, requiring **OATS >=0.29.0**.
 
+## Unreleased — `oats instance upgrade` adopts a home (#106)
+
+**Breaking: requires OATS >=0.49.0** (was >=0.29.0). A kernel before 0.49.0
+refuses any hook event it does not know, so it would refuse this package's
+`upgrade` hook, and with it the whole package. Below 0.49.0 the kernel refuses
+the release with its own compatibility message. Upgrade the kernel to 0.49.0
+or later, or stay on 4.2.2. The hook itself is used only by
+`oats instance upgrade` (OATS 0.68 and later).
+
+OATS 0.68's `oats instance upgrade` moves a stopped home's package modules
+in place. It refuses to move a module that records state or runs a spawn
+hook unless that module declares an `upgrade` hook, and until now oats.okf
+declared none, so every home carrying it was refused. oats.okf now declares
+a non-required `upgrade` hook (`bin/oats-okf.mjs upgrade`, in
+`lib/upgrade.mjs`).
+
+The hook decides from what the home holds, not from its recorded meta: a
+home spawned with harvest off registers a source if the deployment switches
+harvest on later.
+
+| The home holds | `plan` | `apply` |
+|---|---|---|
+| a service home (`instance.json` kind `capability`) | adopt | the meta as recorded |
+| a harvest-off record (`.okf-instance.json` with `harvest: off`) and no source | adopt | the meta as recorded; the record is untouched |
+| a registered source whose marker, frozen descriptor and status load for this home | adopt | the meta as recorded; a meta that okf <= 4.1 wrote with `schedule` gets `checkpoint: "oats okf harvest"` instead, with a warning naming the job to remove |
+| a registered source that does not load | refuse: the load error; remedy `oats okf inspect --home <home>`, repair, or respawn | fails the same way |
+| a captured home or source | refuse: no binding snapshot reaches the hook to verify it; remedy respawn | fails |
+| legacy source watermarks, or no okf state | refuse; remedy `oats okf migrate --source-home` or respawn | fails |
+
+Both phases only read: no write, no kernel or host call, no capture, and no
+read of the harvest switch. Every later checkpoint and retire still reads the
+deployment's switch itself. A source registered by okf <= 4.1 also left a
+scheduler job, `okf-<source id>`, in its deployment. It does nothing under
+4.2 (see [Upgrading from 4.1](#upgrading-from-41)), and the hook never
+removes it: the apply warning names
+`oats schedule remove okf-<id> --dir <deployment>`, the operator's step.
+After the move, the home runs 4.2's hooks, which no longer re-register that
+job when the home retires.
+
+An undo (`oats instance upgrade --undo`) back to a release without the hook
+is refused by the kernel; respawn instead.
+
 ## 4.2.2 — a retire waits out a held capture lock (#101)
 
 - A retire or checkpoint capture that meets the kernel's capture lock held by
@@ -1544,11 +1586,14 @@ OATS_OKF_NATIVE_CLI=/absolute/oats/bin/oats.mjs node --test --test-name-pattern=
 # okf 4.2.0: a real home's checkpoint and retire hook follow the deployment's switch,
 # not its spawn-time settings (a disposable file:// v2 workspace; no model):
 OATS_OKF_NATIVE_CLI=/absolute/oats/bin/oats.mjs node --test test/real-home-dispatch.test.mjs
-# okf 4.2.0 (#55): an external --repo source on released OATS 0.41.0 (CI's external-repo-041 job):
-OATS_OKF_EXTERNAL_CLI=/absolute/oats-0.41.0/bin/oats.mjs node --test test/external-repo-consumer.test.mjs
+# okf 4.2.0 (#55): an external --repo source on released OATS 0.49.0 (CI's external-repo-049 job):
+OATS_OKF_EXTERNAL_CLI=/absolute/oats-0.49.0/bin/oats.mjs node --test test/external-repo-consumer.test.mjs
 # Legacy alias readiness on published OATS 0.62.0, including the v4.2.0 negative
 # control and real checkpoint/worker scaffolding (requires the v4.2.0 Git tag):
 OATS_OKF_READINESS_CLI=/absolute/oats-0.62.0/bin/oats.mjs node --test test/readiness-consumer.test.mjs
+# okf #106: the real oats instance upgrade of a 4.0.5 harvest-off home on
+# released OATS 0.68.1 (CI's kernel-upgrade-0681 job; requires the v4.0.5 and v4.2.2 tags):
+OATS_OKF_UPGRADE_CLI=/absolute/oats-0.68.1/bin/oats.mjs node --test test/kernel-upgrade.test.mjs
 # Full standalone suite with both public-boundary probes (source OATS >=0.24.4):
 OATS_OKF_CONSUMER_CLI=/absolute/oats/bin/oats.mjs OATS_OKF_NATIVE_CLI=/absolute/oats/bin/oats.mjs npm test
 ```
