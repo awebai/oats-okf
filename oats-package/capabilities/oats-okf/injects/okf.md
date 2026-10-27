@@ -14,16 +14,19 @@ Follow links; do not bulk-load. Before any design decision or re-deriving
 something, `oats okf search` first.
 
 > **IMPORTANT — DO NOT SKIP.** You MUST keep STATE.md, log.md and notes/ up to
-> date, and MUST launch a knowledge harvest at every harvest checkpoint: when
-> you **hand over a PR for review**, when you **finish a task**, and in a
-> long-lived role when **a feature is ready**, when you **ship a release or a
-> deploy** and when **a direction decision** is taken with your human.
+> date, updating them before compaction and before every task boundary, and
+> MUST launch a knowledge harvest at every harvest checkpoint: when you **hand
+> over a PR for review**, when you **finish a task**, and in a long-lived role
+> when **a feature is ready**, when you **ship a release or a deploy** and when
+> **a direction decision** is taken with your human.
 > Reading the **okf-propose** skill is **compulsory** at task start and at
 > each checkpoint. At each checkpoint: update STATE.md, log.md and notes/
 > first, follow okf-propose (it may find nothing to propose), and record the
 > outcome in log.md. Run your final checkpoint before you report your work
-> done: a finished instance is retired after it. Name each harvester with a fresh name from its recipe,
-> recorded before `--preview` and reused unchanged at launch:
+> done: a finished instance is retired after it.
+> Name each harvester with a fresh name per proposal from okf-propose's
+> recipe, never the default numbered name; record it before `--preview` and
+> reuse it unchanged at launch:
 > `oats spawn oats.okf/knowledge-harvester --name <harvester-name> --task-file <proposal> --relation unrelated`.
 > On `E_INSTANCE_NAME_TAKEN` or a messaging identity failure, stop and report;
 > no automatic rename or retry. Run `oats okf status` from instance home for

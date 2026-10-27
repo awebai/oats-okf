@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Changed
+
+- **A shorter always-loaded inject.** `injects/okf.md` is about 60% of its
+  former size; the detail lives in the skills it names. It now loads
+  `/okf-consultation` and `/okf-instance-knowledge` at task start **and after
+  compaction**, and asks you to update STATE.md, log.md and notes/ before
+  compaction and every task boundary. The compulsory okf-propose block, every
+  checkpoint, the harvester naming and preview rule, the
+  `E_INSTANCE_NAME_TAKEN` stop, the status and opt-out rules and the
+  personal-data and names sentences are kept.
+- **Run your final checkpoint before you report your work done**: a finished
+  instance is retired by its parent after it (oats.core's `/oats-operate`).
+
 ### Fixed
 
 - **A live source with a reused name can harvest a current proposal** (#83).
