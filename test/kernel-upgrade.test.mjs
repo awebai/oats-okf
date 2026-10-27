@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { kernelSkip, sandbox, write } from './helpers/real-kernel.mjs';
-// okf 4.2.3 (#106): the real kernel's `oats instance upgrade` moves a home
+// okf #106: the real kernel's `oats instance upgrade` moves a home
 // spawned on okf 4.0.5 with harvest off. The released 4.2.2, which declares no
 // upgrade hook, is refused; this tree is adopted and the home keeps harvest off.
 // Opt-in: OATS_OKF_UPGRADE_CLI names a real kernel (OATS >= 0.68.1). It runs a
@@ -63,7 +63,7 @@ function workspace(t) {
 const readJSON = p => JSON.parse(fs.readFileSync(p, 'utf8'));
 const okfRow = plan => plan.modules.find(m => m.capability === 'oats.okf');
 
-test('4.2.3 real kernel upgrade: a home spawned on okf 4.0.5 with harvest off is refused by 4.2.2 and adopted by this tree, keeping harvest off', { skip }, t => {
+test('real kernel upgrade (#106): a home spawned on okf 4.0.5 with harvest off is refused by 4.2.2 and adopted by this tree, keeping harvest off', { skip }, t => {
   const w = workspace(t), name = 'src-a';
   const spawned = w.oats(['spawn', 'source', '--name', name, '--no-launch']);
   assert.equal(spawned.ok, true, JSON.stringify(spawned));

@@ -56,7 +56,7 @@ All settings use one absolute bindings-file. oats.okf 4.2 has no harvest schedul
 const RETIRE_BUDGET_MS=110000,CAPTURE_BUDGET_MS=85000;
 const args=process.argv.slice(2);
 if(args.includes('--help') || args.includes('-h')) {process.stdout.write(HELP);}
-// okf 4.2.3 (#106): the upgrade hook reads only the home and its recorded
+// okf #106: the upgrade hook reads only the home and its recorded
 // meta, before any invocation, binding or settings handling.
 else if((process.env.OATS_EVENT || args[0])==='upgrade') {
   const phase=process.env.OATS_UPGRADE_PHASE,home=resolve(process.env.OATS_INSTANCE_HOME || process.env.OATS_HOME || process.cwd());

@@ -18,7 +18,7 @@ const PRODUCER=Object.freeze({
   base:'be2460c52bf5403d8edcc7058ffe8e0dc58d0952',
   patchSha256:'a29db161dc87a90360ec2ecde1629b6b294835368ce8363c1eac7587f81f78ac',
 });
-// 4.2.3: oats v0.27.1 docs/capability-manifest.schema.json plus the hooks.upgrade
+// #106: oats v0.27.1 docs/capability-manifest.schema.json plus the hooks.upgrade
 // property from OATS v0.68.1 (13f8f133), byte for byte.
 const VENDORED_SCHEMA_SHA='ada5b3bbb61e6543338f278251902dfcd87fdf2931f9895c15046f7f6df636b9';
 // The accepted BE+P1 producer tree's schema: byte-identical to oats v0.27.1 docs/capability-manifest.schema.json.

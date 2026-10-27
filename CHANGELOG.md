@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Breaking
+
+- **Requires OATS >=0.49.0** (was >=0.29.0), the same floor as 5.3. Kernels
+  before 0.49.0 refuse any hook event they do not know, and so would refuse
+  the package for its `upgrade` hook (below); 0.49.0 (#800) is the first that
+  skips an unknown hook that is not required. Below 0.49.0 the kernel refuses
+  this release with its own compatibility message. Upgrade the kernel to
+  0.49.0 or later, or stay on 4.2.2. The `external-repo` CI job now runs on
+  released OATS 0.49.0, the oldest supported kernel.
+
 ### Fixed
 
 - **`oats instance upgrade` can move a home that carries oats.okf** (#106).

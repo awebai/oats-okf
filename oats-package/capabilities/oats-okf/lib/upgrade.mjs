@@ -1,4 +1,4 @@
-// The upgrade hook (okf 4.2.3, #106). OATS 0.68's `oats instance upgrade`
+// The upgrade hook (#106). OATS 0.68's `oats instance upgrade`
 // moves a stopped home's oats.okf module to this version only when this hook
 // adopts the home: `plan` answers {adopt:true} or {adopt:false,reason,remedy},
 // `apply` answers {meta, warning?}. Both phases only read the home and its

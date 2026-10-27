@@ -6,7 +6,7 @@ import { join, dirname } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { inventory, noEffectsPreload } from './helpers/no-effects.mjs';
-// okf 4.2.3 (#106): the upgrade hook OATS 0.68's `oats instance upgrade` runs
+// okf #106: the upgrade hook OATS 0.68's `oats instance upgrade` runs
 // when a stopped home's oats.okf module moves. The homes here are made by the
 // released v4.0.5 code itself (archived from history), so they carry exactly
 // what that release recorded; then this tree's hook plans and applies the move
@@ -79,7 +79,7 @@ const marker = f => join(f.home, '.okf-source.json');
 const record = f => join(f.home, '.okf-instance.json');
 const respawn = /^respawn the instance: oats retire source-one, then oats spawn/;
 
-test('4.2.3 upgrade: a 4.0.5 harvest-off home plans adopt and apply keeps its meta and its home exactly, with no effects', t => {
+test('upgrade hook: a 4.0.5 harvest-off home plans adopt and apply keeps its meta and its home exactly, with no effects', t => {
   const f = fixture(t), v405 = released('v4.0.5');
   f.init(v405);
   const meta = f.spawn(v405, 'off');
@@ -96,7 +96,7 @@ test('4.2.3 upgrade: a 4.0.5 harvest-off home plans adopt and apply keeps its me
   assert.equal(inspect.status, 0, inspect.stdout + inspect.stderr); assert.equal(inspect.out.result.harvest.status, 'off');
 });
 
-test('4.2.3 upgrade: a 4.0.5 registered source plans adopt; apply records checkpoint for its schedule and names the job the operator removes', t => {
+test('upgrade hook: a 4.0.5 registered source plans adopt; apply records checkpoint for its schedule and names the job the operator removes', t => {
   const f = fixture(t), v405 = released('v4.0.5');
   f.init(v405);
   const meta = f.spawn(v405, 'on');
@@ -115,7 +115,7 @@ test('4.2.3 upgrade: a 4.0.5 registered source plans adopt; apply records checkp
   assert.deepEqual(f.upgrade('apply', apply.out.meta).out, { meta: apply.out.meta });
 });
 
-test('4.2.3 upgrade: a 4.2 registered source keeps its meta', t => {
+test('upgrade hook: a 4.2 registered source keeps its meta', t => {
   const f = fixture(t);
   f.init(CLI);
   const meta = f.spawn(CLI, 'on');
@@ -125,7 +125,7 @@ test('4.2.3 upgrade: a 4.2 registered source keeps its meta', t => {
   assert.equal(apply.status, 0, apply.stdout + apply.stderr); assert.deepEqual(apply.out, { meta });
 });
 
-test('4.2.3 upgrade: a registered source whose custody no longer loads is refused, plan and apply', t => {
+test('upgrade hook: a registered source whose custody no longer loads is refused, plan and apply', t => {
   const f = fixture(t), v405 = released('v4.0.5');
   f.init(v405);
   const meta = f.spawn(v405, 'on'), file = readJSON(marker(f)).source;
@@ -146,7 +146,7 @@ test('4.2.3 upgrade: a registered source whose custody no longer loads is refuse
   assert.deepEqual(f.upgrade('plan', meta).out, { adopt: true }, 'repaired custody adopts again');
 });
 
-test('4.2.3 upgrade: a captured home is refused: the hook has no binding snapshot to verify it against', t => {
+test('upgrade hook: a captured home is refused: the hook has no binding snapshot to verify it against', t => {
   const f = fixture(t), v405 = released('v4.0.5');
   f.init(v405);
   const meta = f.spawn(v405, 'off');
@@ -158,7 +158,7 @@ test('4.2.3 upgrade: a captured home is refused: the hook has no binding snapsho
   assert.equal(f.upgrade('apply', meta).status, 1);
 });
 
-test('4.2.3 upgrade: a service home adopts with its meta unchanged', t => {
+test('upgrade hook: a service home adopts with its meta unchanged', t => {
   const f = fixture(t), v405 = released('v4.0.5');
   save(join(f.home, 'instance.json'), { ...readJSON(join(f.home, 'instance.json')), kind: 'capability' });
   const meta = f.spawn(v405, 'on');
@@ -167,7 +167,7 @@ test('4.2.3 upgrade: a service home adopts with its meta unchanged', t => {
   assert.deepEqual(f.upgrade('apply', meta).out, { meta });
 });
 
-test('4.2.3 upgrade: a home with neither a registered source nor a harvest-off record is refused, naming what it holds', t => {
+test('upgrade hook: a home with neither a registered source nor a harvest-off record is refused, naming what it holds', t => {
   const f = fixture(t);
   const none = f.upgrade('plan', {});
   assert.equal(none.status, 0, none.stdout + none.stderr); assert.equal(none.out.adopt, false);
@@ -180,7 +180,7 @@ test('4.2.3 upgrade: a home with neither a registered source nor a harvest-off r
   assert.equal(f.upgrade('plan', {}).out.adopt, false, 'a record that does not say harvest off is not a harvest-off home');
 });
 
-test('4.2.3 upgrade: malformed OATS_META is refused without echoing it; an unknown phase fails', t => {
+test('upgrade hook: malformed OATS_META is refused without echoing it; an unknown phase fails', t => {
   const f = fixture(t), v405 = released('v4.0.5');
   f.init(v405); f.spawn(v405, 'off');
   for (const meta of ['{secret', '[]', 'null', '"secret"']) {
