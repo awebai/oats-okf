@@ -18,14 +18,18 @@ const PRODUCER=Object.freeze({
   base:'be2460c52bf5403d8edcc7058ffe8e0dc58d0952',
   patchSha256:'a29db161dc87a90360ec2ecde1629b6b294835368ce8363c1eac7587f81f78ac',
 });
-const SCHEMA_SHA='8f0f14799de6abdcfd19486a1c266594dd162c93ab55b3450ff8b4763e0b67f5'; // 3.0.0: byte-identical to oats v0.27.1 docs/capability-manifest.schema.json (was a43b4807… for 2.1.3)
+// 4.2.3: oats v0.27.1 docs/capability-manifest.schema.json plus the hooks.upgrade
+// property from OATS v0.68.1 (13f8f133), byte for byte.
+const VENDORED_SCHEMA_SHA='ada5b3bbb61e6543338f278251902dfcd87fdf2931f9895c15046f7f6df636b9';
+// The accepted BE+P1 producer tree's schema: byte-identical to oats v0.27.1 docs/capability-manifest.schema.json.
+const SCHEMA_SHA='8f0f14799de6abdcfd19486a1c266594dd162c93ab55b3450ff8b4763e0b67f5';
 const framework=process.env.OATS_HELPER_INPUT_FRAMEWORK_ROOT;
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
 const json=file=>JSON.parse(fs.readFileSync(file,'utf8'));
 function put(file,value) {fs.mkdirSync(dirname(file),{recursive:true});fs.writeFileSync(file,typeof value==='string'?value:JSON.stringify(value));}
 
-test('c77 vendored manifest schema retains accepted BE+P1 byte identity',()=>{
-  assert.equal(sha(fs.readFileSync(join(ROOT,'schemas/capability-manifest.schema.json'))),SCHEMA_SHA);
+test('vendored manifest schema is v0.27.1 plus the OATS v0.68.1 upgrade hook, byte for byte',()=>{
+  assert.equal(sha(fs.readFileSync(join(ROOT,'schemas/capability-manifest.schema.json'))),VENDORED_SCHEMA_SHA);
 });
 
 async function producer(t) {

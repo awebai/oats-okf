@@ -10,6 +10,7 @@ import { runSource, complete, completeInBackground, retry, readRun, requireQuali
 import { initBase, migrate, deliverMigration, cutoverMigration, migrateSource, forgetMigration } from '../lib/migration.mjs';
 import { inspect, inspectConsultOnly } from '../lib/inspection.mjs';
 import { harvestOnce } from '../lib/once.mjs';
+import { upgradePlan, upgradeApply } from '../lib/upgrade.mjs';
 import { loadInvocationKnowledgeBinding } from '../lib/binding-wire.mjs';
 import { loadCapturedOkfInvocation, loadOkfSourceReceiptInput, assertOkfInvocationAction, requireOkfAdmittedAction, assertOkfSourceContext, assertOkfRegisteredSourceReplay } from '../lib/invocation-context.mjs';
 const HELP=`oats okf inspect [--home PATH | --source FILE] [--json]
@@ -55,6 +56,18 @@ All settings use one absolute bindings-file. oats.okf 4.2 has no harvest schedul
 const RETIRE_BUDGET_MS=110000,CAPTURE_BUDGET_MS=85000;
 const args=process.argv.slice(2);
 if(args.includes('--help') || args.includes('-h')) {process.stdout.write(HELP);}
+// okf 4.2.3 (#106): the upgrade hook reads only the home and its recorded
+// meta, before any invocation, binding or settings handling.
+else if((process.env.OATS_EVENT || args[0])==='upgrade') {
+  const phase=process.env.OATS_UPGRADE_PHASE,home=resolve(process.env.OATS_INSTANCE_HOME || process.env.OATS_HOME || process.cwd());
+  let answer;
+  try {
+    if(phase==='plan') answer=upgradePlan(home);
+    else if(phase==='apply') answer=upgradeApply(home);
+    else fail('E_USAGE','OATS_UPGRADE_PHASE must be plan or apply');
+  } catch(e) {answer={warning:`oats-okf ${e.code || 'E_OKF'}: ${redactUrls(e.message)}`};process.exitCode=1;}
+  process.stdout.write(JSON.stringify(answer)+'\n');
+}
 else {
   const event=process.env.OATS_EVENT || args[0];
   const hook=['spawn','retire','soul-scaffold'].includes(event);

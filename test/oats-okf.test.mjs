@@ -187,6 +187,8 @@ test('c77 OKF declares only own helper omission and unchanged lifecycle input op
   assert.equal(m.inject,'injects/okf.md','primary contribution is unchanged');
   assert.deepEqual(m.hooks.spawn,{command:'bin/oats-okf.mjs spawn',required:true,inputs:{sourceReceipt:{version:1}}});
   assert.deepEqual(m.hooks.retire,{command:'bin/oats-okf.mjs retire',inputs:{sourceReceipt:{version:1}}});
+  // okf 4.2.3 (#106): the upgrade hook is never required (a plain command).
+  assert.equal(m.hooks.upgrade,'bin/oats-okf.mjs upgrade');
   assert.equal(Object.hasOwn(m.hooks.retire,'required'),false,'legacy optional retire semantics are unchanged');
   assert.equal(m.hooks['soul-scaffold'],'bin/oats-okf.mjs soul-scaffold','no source receipt opt-in for stateless soul guidance');
 });
