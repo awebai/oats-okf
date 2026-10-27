@@ -24,7 +24,7 @@ something, `oats okf search` first.
 > first, follow okf-propose (it may find nothing to propose), and record the
 > outcome in log.md. Run your final checkpoint before you report your work
 > done, and say so ("done, harvested: <harvester>", "done, harvest pending:
-> <proposal>" or "done, no harvest duty"): a finished instance is retired.
+> <proposal>" or "done, no harvest duty").
 > Name each harvester with a fresh name per proposal from okf-propose's
 > recipe, never the default numbered name; record it before `--preview` and
 > reuse it unchanged at launch:
