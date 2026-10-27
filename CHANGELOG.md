@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **`oats instance upgrade` can move a 5.x home** (#106). OATS 0.68 refuses
+  to move a module that runs a spawn hook unless it declares an `upgrade`
+  hook, and oats.okf declared none, so every home carrying it was refused.
+  oats.okf now declares a non-required `upgrade` hook:
+  - `plan` adopts a service home, a home with a valid spawn policy, and a
+    5.0/5.1 home with none, which stays unknown (respawn it to set the
+    policy).
+  - It refuses an invalid policy, and any home spawned under 4.x, with the
+    remedy `oats retire <instance>` (its own 4.x hooks take any final
+    capture), then `oats spawn`. A 4.x home cannot become a 5.x home in
+    place: only a spawn writes the policy, and 5.x never processes a 4.x
+    source.
+  - `apply` checks the home again and returns the recorded meta (`{}`).
+  - Neither phase writes or calls the kernel or the host. The hook answers
+    before the legacy-settings check, so a 4.x home gets its remedy, not
+    `E_REMOVED`.
+
+  The vendored `schemas/capability-manifest.schema.json` gains the
+  `hooks.upgrade` property from OATS v0.68.1, byte for byte. CI's
+  `kernel-upgrade-0681` job runs the real `oats instance upgrade` on released
+  OATS 0.68.1: a v5.2.1 home cannot move to the hook-less v5.3.0, a v5.3.0
+  home is adopted by this release with its state byte-identical, and a v4.2.2 home is refused with
+  the respawn remedy.
+
 ## 5.3.0 — 2026-10-23
 
 ### Changed

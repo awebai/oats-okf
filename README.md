@@ -26,7 +26,7 @@ versions is in [CHANGELOG.md](CHANGELOG.md).
 
 | Capability | For | Skills | Commands |
 |---|---|---|---|
-| `oats.okf` (knowledge slot) | every working soul with OKF knowledge | `okf-consultation`, `okf-instance-knowledge`, `okf-propose`, `knowledge-theory` | consult (`bases index cat ls links search`), `status`, `inspect`, `init`, `migrate`, `unlock`, `setup --remove-legacy-settings`; the spawn and soul-scaffold hooks |
+| `oats.okf` (knowledge slot) | every working soul with OKF knowledge | `okf-consultation`, `okf-instance-knowledge`, `okf-propose`, `knowledge-theory` | consult (`bases index cat ls links search`), `status`, `inspect`, `init`, `migrate`, `unlock`, `setup --remove-legacy-settings`; the spawn, soul-scaffold and upgrade hooks |
 | `oats.okf-harvest` | the harvester soul | `knowledge-harvest`, `knowledge-theory`, `okf-authoring` | none (its `complete` and `harvest-status` answer `E_REMOVED`) |
 | `oats.okf-maintenance` | the maintainer soul | `knowledge-review`, `knowledge-theory`, `okf-authoring`, `okf-trigger-setup` | `okf-maintenance review-context`, `okf-maintenance notify-harvester` |
 
@@ -707,6 +707,36 @@ in 3.0) keep their earlier `E_REMOVED` answers. The `harvest` operation stays
 declared in the manifest so an old caller gets that answer rather than an
 unknown operation.
 
+## Upgrading a home in place: `oats instance upgrade`
+
+OATS 0.68's `oats instance upgrade` moves a stopped home's package modules in
+place. It refuses to move a module that runs a spawn hook unless that module
+declares an `upgrade` hook. oats.okf declares a non-required one
+(`bin/oats-okf.mjs upgrade`, in `lib/upgrade.mjs`), so a 5.x home can move
+to a later 5.x without a respawn. The hook decides from what the home holds:
+
+| The home holds | `plan` | `apply` |
+|---|---|---|
+| a service home (`instance.json` kind `capability`) | adopt | the meta as recorded |
+| a valid spawn policy (`okf-harvest-policy.json`) | adopt; the policy and working memory are untouched | the meta as recorded (`{}`: 5.x records none) |
+| no spawn policy and no 4.x state | adopt | the meta as recorded |
+| a spawn policy that is invalid | refuse, as `oats okf status` does; remedy respawn | fails the same way |
+| 4.x state (`.okf-source.json`, `.okf-instance.json`, `.okf-harvest-record*.json`, or a recorded 4.x meta) | refuse; remedy `oats retire <instance>`, then `oats spawn` | fails the same way |
+
+A 5.0/5.1 home without a harvest policy adopts and stays unknown; respawn it
+to set the policy.
+
+A home spawned under 4.x cannot become a 5.x home in place. Only a spawn
+writes the 5.x policy, 5.x never processes a 4.x source, and 5.x has no
+retire hook to take a registered source's final capture. A refused home keeps
+its 4.x modules, so `oats retire` runs its own 4.x hooks, and any final
+capture is taken. Then `oats spawn` gives a 5.x home (see
+[Upgrading to 5.0](#upgrading-to-50)).
+
+Both phases only read the home: no write, no kernel or host call. The hook
+answers before the provider's settings check, so a 4.x home's recorded
+harvest keys get its refusal and remedy, not `E_REMOVED`.
+
 ## Upgrading to 5.0
 
 Pinning 5.0 changes the package a deployment resolves; it does not rewrite
@@ -872,6 +902,20 @@ surfaces, and the source's retirement. A second harvester is spawned only
 **after** retirement, captures through the real public events lookup, and
 keeps its input after that disposable recovery is removed. Instances are spawned with
 `--no-launch`: no model, messaging or GitHub PR is involved.
+
+`okf5-upgrade-hook` runs the upgrade hook (above) on homes made by the
+released v5.3.0, v5.1.0 and v4.2.2 code, under a preload that refuses every
+write and child process. `okf5-kernel-upgrade` runs only when
+`OATS_OKF_UPGRADE_CLI` names a kernel. CI's `kernel-upgrade-0681` job installs
+the released **OATS 0.68.1** and runs it, failing if it skips. It does three
+things:
+
+- It spawns a home on v5.3.0.
+- A home spawned on v5.2.1 cannot move to the hook-less v5.3.0 (the
+  negative control).
+- This checkout adopts the v5.3.0 home. The policy and working memory are
+  byte-identical afterwards.
+- It refuses a home spawned on v4.2.2 with the respawn remedy.
 
 Not covered by tests: a real harvester judging a proposal, a real GitHub PR
 and the maintainer's review on GitHub. [SCHEMA-STATUS.md](SCHEMA-STATUS.md)

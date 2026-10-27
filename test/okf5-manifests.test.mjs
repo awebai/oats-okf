@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 // oats.okf 5.3.0 package shape: versions, kernel floor, the slot's settings and
 // hooks, the shipped skills (shared copies identical) and the harvester soul.
@@ -42,9 +43,16 @@ test('oats.okf declares exactly bindings-file, state-dir, git-timeout and consul
   assert.equal(cap('oats-okf-harvest').settings,undefined);
 });
 
-test('oats.okf hooks are exactly soul-scaffold and a required spawn with no inputs',()=>{
+test('the vendored manifest schema is oats v0.27.1 plus the OATS v0.68.1 upgrade hook, byte for byte',()=>{
+  const sha=createHash('sha256').update(fs.readFileSync(join(ROOT,'schemas/capability-manifest.schema.json'))).digest('hex');
+  assert.equal(sha,'ada5b3bbb61e6543338f278251902dfcd87fdf2931f9895c15046f7f6df636b9');
+});
+
+test('oats.okf hooks are exactly soul-scaffold, a required spawn with no inputs and a non-required upgrade',()=>{
   const hooks=cap('oats-okf').hooks;
-  assert.deepEqual(Object.keys(hooks).sort(),['soul-scaffold','spawn']);
+  assert.deepEqual(Object.keys(hooks).sort(),['soul-scaffold','spawn','upgrade']);
+  // okf #106: never required (a plain command).
+  assert.equal(hooks.upgrade,'bin/oats-okf.mjs upgrade');
   assert.equal(hooks['soul-scaffold'],'bin/oats-okf.mjs soul-scaffold');
   assert.deepEqual(hooks.spawn,{command:'bin/oats-okf.mjs spawn',required:true});
 });

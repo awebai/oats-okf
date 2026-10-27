@@ -43,6 +43,18 @@ consultation of Git bases through the host cache, the hooks, `inspect`,
 `init` and `migrate`, the removed surfaces, the legacy-settings guard and
 cleanup, the provenance parser for versions 1 and 2, and source capture
 (including legacy note forms, full delimited filenames and refusal paths).
+The vendored `schemas/capability-manifest.schema.json` is oats v0.27.1's
+`docs/capability-manifest.schema.json` plus the `hooks.upgrade` property from
+OATS v0.68.1 (13f8f133), byte for byte; `test/okf5-manifests.test.mjs` pins
+its hash. `test/okf5-upgrade-hook.test.mjs` runs the upgrade hook on homes
+made by released v5.3.0, v5.1.0 and v4.2.2 code, under a preload that refuses
+every write and child process.
+
+CI's `kernel-upgrade-0681` job installs the released **OATS 0.68.1** and runs
+`test/okf5-kernel-upgrade.test.mjs` through it. A v5.2.1 home cannot move to the
+hook-less v5.3.0. A v5.3.0 home is adopted by this checkout, with its spawn
+policy and working memory byte-identical afterwards. A v4.2.2 home is refused with
+the respawn remedy.
 
 CI's `real-kernel-049` job installs the released **OATS 0.49.0** in a
 disposable prefix and runs `test/okf5-real-kernel.test.mjs` through it: the
