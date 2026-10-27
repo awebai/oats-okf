@@ -1,6 +1,6 @@
 # Schema and verification status
 
-oats.okf **5.3.0**, requiring **OATS >=0.49.0** for the public gone-home
+oats.okf **5.4.0**, requiring **OATS >=0.49.0** for the public gone-home
 instance-event lookup used by source capture. Version declarations are not
 evidence of a published release.
 
