@@ -2,8 +2,21 @@
 
 ## Unreleased
 
+### Upgrade
+
+- **Requires OATS >=0.69.2** (was >=0.49.0). The `knowledge-harvester` soul
+  now says `background: true`, and a kernel before 0.69.2 refuses that key.
+  Upgrade OATS to 0.69.2 first, then this package. CI now qualifies it on the
+  released OATS 0.69.2 (the `real-kernel-0692` and `kernel-upgrade-0692` jobs,
+  formerly on 0.49.0 and 0.68.1).
+
 ### Changed
 
+- **Harvesters are background instances** (awebai/oats#1579). New harvesters
+  are listed under the Desktop's and the TUI's Background section, out of the
+  main list; a harvester that waits on you still lights that section's
+  heading. A running harvester stays where it is. Nothing else about a
+  harvester changes.
 - **A shorter always-loaded inject.** `injects/okf.md` is about 60% of its
   former size; the detail lives in the skills it names. It now loads
   `/okf-consultation` and `/okf-instance-knowledge` at task start **and after

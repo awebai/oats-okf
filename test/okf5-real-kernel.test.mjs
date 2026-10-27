@@ -1,6 +1,6 @@
-// This checkout's oats.okf on the REAL released kernel (@awebai/oats 0.49.0). CI-only:
+// This checkout's oats.okf on the REAL released kernel (@awebai/oats 0.69.2). CI-only:
 // it runs only when OATS_OKF_REAL_CLI names that kernel's bin/oats.mjs (the
-// real-kernel-049 CI job installs it and fails on any skip).
+// real-kernel-0692 CI job installs it and fails on any skip).
 //
 // Evidence boundary. What is real: the released kernel's sync, operator and
 // in-home command dispatch, spawn (soul resolution, module materialization,
@@ -29,7 +29,7 @@ import { generateHarvesterName } from './fixtures/harvester-name.mjs';
 import { machine } from './fixtures/real-machine.mjs';
 
 const cli = process.env.OATS_OKF_REAL_CLI;
-const KERNEL = '0.49.0';
+const KERNEL = '0.69.2';
 const root = fileURLToPath(new URL('../', import.meta.url));
 const write = (file, text) => { fs.mkdirSync(dirname(file), { recursive: true }); fs.writeFileSync(file, text); };
 const json = file => JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -93,7 +93,7 @@ test(`${json(join(root, 'package.json')).version} real OATS ${KERNEL}: legacy-ke
   // The kernel this file qualifies, exactly (bin/oats.mjs versionCmd: top-level `version`).
   const version = run(['version']);
   assert.equal(version.status, 0, version.text);
-  assert.equal(version.out?.version, KERNEL, 'this test qualifies the released 0.49.0 kernel, not another one');
+  assert.equal(version.out?.version, KERNEL, 'this test qualifies the released 0.69.2 kernel, not another one');
   ok(['sync']);
 
   const state = {};
