@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 // oats.okf 5.3.0 package shape: versions, kernel floor, the slot's settings and
 // hooks, the shipped skills (shared copies identical) and the harvester soul.
@@ -40,6 +41,11 @@ test('every manifest is version 5.3.0 with the >=0.49.0 kernel floor',()=>{
 test('oats.okf declares exactly bindings-file, state-dir, git-timeout and consult-max-age',()=>{
   assert.deepEqual(Object.keys(cap('oats-okf').settings).sort(),['bindings-file','consult-max-age','git-timeout','state-dir']);
   assert.equal(cap('oats-okf-harvest').settings,undefined);
+});
+
+test('the vendored manifest schema is oats v0.27.1 plus the OATS v0.68.1 upgrade hook, byte for byte',()=>{
+  const sha=createHash('sha256').update(fs.readFileSync(join(ROOT,'schemas/capability-manifest.schema.json'))).digest('hex');
+  assert.equal(sha,'ada5b3bbb61e6543338f278251902dfcd87fdf2931f9895c15046f7f6df636b9');
 });
 
 test('oats.okf hooks are exactly soul-scaffold, a required spawn with no inputs and a non-required upgrade',()=>{
