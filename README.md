@@ -1,8 +1,8 @@
 # oats.okf 5 — external knowledge, consulted remotely, proposed at checkpoints
 
 The official OKF (Open Knowledge Format) knowledge package for OATS:
-**5.5.0**, requiring **OATS >=0.49.0**. CI runs it against the released
-OATS 0.49.0 kernel (see [Tests and CI](#tests-and-ci)).
+**5.5.0** (requires OATS >=0.49.0); this checkout, unreleased, requires
+**OATS >=0.69.2**. CI runs it against the released OATS 0.69.2 kernel (see [Tests and CI](#tests-and-ci)).
 
 A working soul's knowledge lives outside the soul, in OKF bases: Git
 repositories (or plain directories) of Markdown concepts grouped in nodes,
@@ -32,7 +32,10 @@ versions is in [CHANGELOG.md](CHANGELOG.md).
 
 - Two package souls: `oats.okf/knowledge-harvester` and
   `oats.okf/knowledge-maintainer` (`work: directory`, `knowledge: none`, each
-  with its own capability `from: here`).
+  with its own capability `from: here`). In this unreleased checkout, both
+  souls default to `background: true`: new instances appear in the Desktop's
+  and the TUI's Background section. Existing instances do not move; harvest
+  and review behavior is unchanged.
 - One trigger template: `oats.okf:harvest-review`
   (`triggers/harvest-review.json`).
 - `knowledge-theory` (the promotion doctrine) ships as identical copies in all
@@ -908,21 +911,24 @@ directories and the package's CLI:
   `notify-harvester`.
 
 `okf5-real-kernel` runs only when `OATS_OKF_REAL_CLI` names a kernel; CI's
-`real-kernel-049` job installs the released **OATS 0.49.0** in a disposable
+`real-kernel-0692` job installs the released **OATS 0.69.2** in a disposable
 prefix and runs it, failing if it skips. In an isolated file-Git workspace
 with this package pinned from the checkout, it runs the legacy-key cleanup,
 a real working-soul spawn, its checkpoint proposal spawning a top-level
 harvester, the harvester reading the source's records, the removed
 surfaces, and the source's retirement. A second harvester is spawned only
 **after** retirement, captures through the real public events lookup, and
-keeps its input after that disposable recovery is removed. Instances are spawned with
-`--no-launch`: no model, messaging or GitHub PR is involved.
+keeps its input after that disposable recovery is removed. It also spawns a
+knowledge maintainer and checks both souls' defaults: the spawn answers
+`background: true`, `backgroundFrom: 'soul'`, and each home holds
+`.oats-background.json`. Instances are spawned with `--no-launch`: no model,
+messaging or GitHub PR is involved.
 
 `okf5-upgrade-hook` runs the upgrade hook (above) on homes made by the
 released v5.3.0, v5.1.0 and v4.2.2 code, under a preload that refuses every
 write and child process. `okf5-kernel-upgrade` runs only when
-`OATS_OKF_UPGRADE_CLI` names a kernel. CI's `kernel-upgrade-0681` job installs
-the released **OATS 0.68.1** and runs it, failing if it skips. It does three
+`OATS_OKF_UPGRADE_CLI` names a kernel. CI's `kernel-upgrade-0692` job installs
+the released **OATS 0.69.2** and runs it, failing if it skips. It does three
 things:
 
 - It spawns a home on v5.3.0.

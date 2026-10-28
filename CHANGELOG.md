@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased
+
+### Upgrade
+
+- **Requires OATS >=0.69.2** (was >=0.49.0). The `knowledge-harvester` and
+  `knowledge-maintainer` souls now say `background: true`, and a kernel
+  before 0.69.2 refuses that key. On such a kernel `oats sync` still locks
+  this release but reports the key as a problem, and both souls are dropped:
+  spawning a harvester or maintainer refuses with `E_SOUL_UNKNOWN`. The floor
+  makes new spawns of every soul composing oats.okf (normally every working
+  soul), deployment-level `oats okf … --soul` commands and `oats instance
+  upgrade` refuse too, with `E_CAPABILITY_INCOMPATIBLE` naming the re-pin, so
+  an early lock fails at the next such spawn. Homes that already exist keep
+  running.
+  Upgrade OATS to 0.69.2 first, then this package. CI now qualifies it on the
+  released OATS 0.69.2 (the `real-kernel-0692` and `kernel-upgrade-0692` jobs,
+  formerly on 0.49.0 and 0.68.1).
+
+### Changed
+
+- **Knowledge harvesters and maintainers are background instances**
+  (awebai/oats#1579). New instances of both souls are listed under the
+  Desktop's and the TUI's Background section, out of the main list; one that
+  waits on you still lights that section's heading. No existing harvester or
+  maintainer moves, running or stopped. Only presentation changes, not their
+  harvest or review behavior. The `harvest-review` trigger template is
+  unchanged: a trigger spawn takes the soul's default.
+
 ## 5.5.0 — 2026-10-27
 
 Requires OATS >=0.49.0, unchanged.

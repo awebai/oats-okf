@@ -3,5 +3,6 @@ name: knowledge-maintainer
 description: Reviews one OKF harvest PR on a knowledge-base repository, situates it in the base, judges it by the promotion doctrine, amends and merges or closes it, and notifies the harvester.
 work: directory
 knowledge: none
+background: true   # listed under the clients' Background section (OATS >=0.69.2, the package floor)
 capabilities:
   oats.okf-maintenance: { from: here }

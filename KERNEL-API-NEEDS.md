@@ -1,7 +1,7 @@
 # Kernel surfaces oats.okf 5.2 relies on
 
-oats.okf 5.5.0 declares **OATS >=0.49.0** for the public gone-home
-instance-event lookup and is tested in CI against released **OATS 0.49.0**. It needs no private
+oats.okf 5.5.0 declares OATS >=0.49.0. This checkout (unreleased) declares **OATS >=0.69.2** (the soul key
+`background:`; the public gone-home instance-event lookup needs >=0.49.0) and is tested in CI against released **OATS 0.69.2**. It needs no private
 kernel API and no knowledge-specific kernel behaviour. The capability, not
 the kernel, owns OKF validation, consultation, the host cache, provisioning
 and migration.

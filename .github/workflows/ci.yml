@@ -25,11 +25,11 @@ jobs:
       - name: Report default coverage limits
         run: |
           echo "npm test validates the manifests and runs the provider in-process and through its CLI with disposable Git/directory bases."
-          echo "SKIPPED here: test/okf5-real-kernel.test.mjs (needs OATS_OKF_REAL_CLI); the real-kernel-049 job runs it on released OATS 0.49.0."
-          echo "SKIPPED here: test/okf5-kernel-upgrade.test.mjs (needs OATS_OKF_UPGRADE_CLI); the kernel-upgrade-0681 job runs it on released OATS 0.68.1."
+          echo "SKIPPED here: test/okf5-real-kernel.test.mjs (needs OATS_OKF_REAL_CLI); the real-kernel-0692 job runs it on released OATS 0.69.2."
+          echo "SKIPPED here: test/okf5-kernel-upgrade.test.mjs (needs OATS_OKF_UPGRADE_CLI); the kernel-upgrade-0692 job runs it on released OATS 0.69.2."
           echo "NOT COVERED: OKF acquire/lock/restore/trust, a model-run harvester, real GitHub PRs."
 
-  kernel-upgrade-0681:
+  kernel-upgrade-0692:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -39,9 +39,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Install the released OATS 0.68.1 kernel in a disposable prefix
+      - name: Install the released OATS 0.69.2 kernel in a disposable prefix
         run: |
-          npm install --prefix "$RUNNER_TEMP/okf-upgrade-kernel" --ignore-scripts --no-audit --no-fund --package-lock=false @awebai/oats@0.68.1
+          npm install --prefix "$RUNNER_TEMP/okf-upgrade-kernel" --ignore-scripts --no-audit --no-fund --package-lock=false @awebai/oats@0.69.2
           echo "OATS_OKF_UPGRADE_CLI=$RUNNER_TEMP/okf-upgrade-kernel/node_modules/@awebai/oats/bin/oats.mjs" >> "$GITHUB_ENV"
       - name: Real oats instance upgrade of a 5.3.0 home and a 4.x home (test/okf5-kernel-upgrade.test.mjs)
         shell: bash
@@ -52,21 +52,21 @@ jobs:
           grep -E '^ℹ skipped 0$' "$RUNNER_TEMP/okf-kernel-upgrade.txt"
       - name: Evidence boundary
         run: |
-          echo 'Real released OATS 0.68.1 CLI; isolated file-Git workspace; okf v4.2.2, v5.2.1, v5.3.0 and this checkout pinned by commit in turn.'
+          echo 'Real released OATS 0.69.2 CLI; isolated file-Git workspace; okf v4.2.2, v5.2.1, v5.3.0 and this checkout pinned by commit in turn.'
           echo 'Homes are spawned with --no-launch and never started; no model, messaging, host timer or production deployment.'
 
-  real-kernel-049:
+  real-kernel-0692:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Install the released OATS 0.49.0 kernel in a disposable prefix
+      - name: Install the released OATS 0.69.2 kernel in a disposable prefix
         run: |
-          npm install --prefix "$RUNNER_TEMP/okf-real-kernel" --ignore-scripts --no-audit --no-fund --package-lock=false @awebai/oats@0.49.0
+          npm install --prefix "$RUNNER_TEMP/okf-real-kernel" --ignore-scripts --no-audit --no-fund --package-lock=false @awebai/oats@0.69.2
           echo "OATS_OKF_REAL_CLI=$RUNNER_TEMP/okf-real-kernel/node_modules/@awebai/oats/bin/oats.mjs" >> "$GITHUB_ENV"
-      - name: Real kernel - source spawn, live capture, retirement, retired capture, recovery disposal and refusals
+      - name: Real kernel - source spawn, capture, retirement, refusals and both package souls' background defaults
         shell: bash
         run: |
           set -o pipefail
@@ -75,5 +75,5 @@ jobs:
           grep -E '^ℹ skipped 0$' "$RUNNER_TEMP/okf-real-kernel.txt"
       - name: Evidence boundary
         run: |
-          echo 'Real released OATS 0.49.0 CLI; isolated file-Git workspace, package pinned from this exact checkout, a real on-disk Git knowledge base.'
-          echo 'Source and harvesters are spawned for real with --no-launch; no model, messaging, GitHub PR, host timer or production deployment.'
+          echo 'Real released OATS 0.69.2 CLI; isolated file-Git workspace, package pinned from this exact checkout, a real on-disk Git knowledge base.'
+          echo 'Source, harvesters and maintainer are spawned for real with --no-launch; no model, messaging, GitHub PR, host timer or production deployment.'

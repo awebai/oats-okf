@@ -1,8 +1,10 @@
 # Schema and verification status
 
-oats.okf **5.5.0**, requiring **OATS >=0.49.0** for the public gone-home
-instance-event lookup used by source capture. Version declarations are not
-evidence of a published release.
+oats.okf **5.5.0** requires OATS >=0.49.0. This checkout (unreleased) requires
+**OATS >=0.69.2**, the first kernel that reads the `background:` key used by
+both the `knowledge-harvester` and `knowledge-maintainer` souls; source
+capture's public gone-home instance-event lookup needs only >=0.49.0.
+Version declarations are not evidence of a published release.
 
 ## Schemas
 
@@ -50,19 +52,22 @@ its hash. `test/okf5-upgrade-hook.test.mjs` runs the upgrade hook on homes
 made by released v5.3.0, v5.1.0 and v4.2.2 code, under a preload that refuses
 every write and child process.
 
-CI's `kernel-upgrade-0681` job installs the released **OATS 0.68.1** and runs
+CI's `kernel-upgrade-0692` job installs the released **OATS 0.69.2** and runs
 `test/okf5-kernel-upgrade.test.mjs` through it. A v5.2.1 home cannot move to the
 hook-less v5.3.0. A v5.3.0 home is adopted by this checkout, with its spawn
 policy and working memory byte-identical afterwards. A v4.2.2 home is refused with
 the respawn remedy.
 
-CI's `real-kernel-049` job installs the released **OATS 0.49.0** in a
+CI's `real-kernel-0692` job installs the released **OATS 0.69.2** in a
 disposable prefix and runs `test/okf5-real-kernel.test.mjs` through it: the
 legacy-key cleanup, a real spawn, a checkpoint proposal spawning a top-level
 harvester, and the removed surfaces. After the source retires, a new harvester
 captures from its event-named recovery and retains the input after recovery
 disposal; reusing the source address for a new live incarnation then refuses
-the old proposal. All spawns use `--no-launch` (no model, messaging or GitHub).
+the old proposal. A knowledge-maintainer spawn is also checked; both souls
+answer `background: true`, `backgroundFrom: 'soul'`, with
+`.oats-background.json` recorded in each home. All spawns use `--no-launch`
+(no model, messaging or GitHub).
 
 The schemas themselves are not exercised by the suite: no test validates
 documents or the `examples/portable-binding/` data against them, or checks

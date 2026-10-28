@@ -1,6 +1,6 @@
 // okf #106: this checkout's upgrade hook through the REAL released kernel's
-// `oats instance upgrade` (@awebai/oats 0.68.1). CI-only: it runs only when
-// OATS_OKF_UPGRADE_CLI names that kernel's bin/oats.mjs (the kernel-upgrade-0681
+// `oats instance upgrade` (@awebai/oats 0.69.2). CI-only: it runs only when
+// OATS_OKF_UPGRADE_CLI names that kernel's bin/oats.mjs (the kernel-upgrade-0692
 // CI job installs it and fails on any skip).
 //
 // One package repository holds four payloads, each pinned by commit in turn:
@@ -22,7 +22,7 @@ import { fileURLToPath } from 'node:url';
 import { machine } from './fixtures/real-machine.mjs';
 
 const cli = process.env.OATS_OKF_UPGRADE_CLI;
-const KERNEL = '0.68.1';
+const KERNEL = '0.69.2';
 const root = fileURLToPath(new URL('../', import.meta.url));
 const write = (file, text) => { fs.mkdirSync(dirname(file), { recursive: true }); fs.writeFileSync(file, text); };
 const json = file => JSON.parse(fs.readFileSync(file, 'utf8'));
