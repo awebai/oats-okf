@@ -1,7 +1,7 @@
 # oats.okf 5 — external knowledge, consulted remotely, proposed at checkpoints
 
 The official OKF (Open Knowledge Format) knowledge package for OATS:
-**5.4.0** (requires OATS >=0.49.0); this checkout, unreleased, requires
+**5.5.0** (requires OATS >=0.49.0); this checkout, unreleased, requires
 **OATS >=0.69.2**. CI runs it against the released OATS 0.69.2 kernel (see [Tests and CI](#tests-and-ci)).
 
 A working soul's knowledge lives outside the soul, in OKF bases: Git
@@ -45,7 +45,7 @@ capability's `schemas/`, with copies in the repository's `schemas/`.
 
 ## Configuration
 
-A workspace declares the package (`packages: { oats.okf: v5.4.0 }`) and
+A workspace declares the package (`packages: { oats.okf: v5.5.0 }`) and
 selects it as the knowledge capability (`defaults: { knowledge: { oats.okf:
 { from: package } } }`, or per soul). Each deployment points it at its
 bindings file in its own `oats-local.yaml`:

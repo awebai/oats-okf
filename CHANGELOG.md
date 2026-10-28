@@ -17,6 +17,18 @@
   main list; a harvester that waits on you still lights that section's
   heading. No existing harvester moves, running or stopped. Nothing else
   about a harvester changes.
+
+## 5.5.0 — 2026-10-27
+
+Requires OATS >=0.49.0, unchanged.
+
+**Upgrade:** a harvester on 5.4.0 or older refuses a `Source:` line with the
+new `, incarnation` suffix. So move the lock to 5.5.0 (`oats sync`) before
+instances on 5.5.0 write proposals: a harvester is spawned from the lock, and
+the source's own modules write the line.
+
+### Changed
+
 - **A shorter always-loaded inject.** `injects/okf.md` is about 60% of its
   former size; the detail lives in the skills it names. It now loads
   `/okf-consultation` and `/okf-instance-knowledge` at task start **and after
