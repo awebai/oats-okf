@@ -6,7 +6,11 @@
 
 - **Requires OATS >=0.69.2** (was >=0.49.0). The `knowledge-harvester` and
   `knowledge-maintainer` souls now say `background: true`, and a kernel
-  before 0.69.2 refuses that key.
+  before 0.69.2 refuses that key: it drops both souls from discovery, so no
+  harvester or maintainer could be spawned. The floor makes that kernel
+  refuse every spawn that composes oats.okf (`E_CAPABILITY_INCOMPATIBLE`,
+  naming the re-pin) instead of losing harvests silently; it does not stop
+  `oats sync` from locking this release.
   Upgrade OATS to 0.69.2 first, then this package. CI now qualifies it on the
   released OATS 0.69.2 (the `real-kernel-0692` and `kernel-upgrade-0692` jobs,
   formerly on 0.49.0 and 0.68.1).
@@ -18,7 +22,8 @@
   Desktop's and the TUI's Background section, out of the main list; one that
   waits on you still lights that section's heading. No existing harvester or
   maintainer moves, running or stopped. Only presentation changes, not their
-  harvest or review behavior.
+  harvest or review behavior. The `harvest-review` trigger template is
+  unchanged: a trigger spawn takes the soul's default.
 
 ## 5.5.0 — 2026-10-27
 
