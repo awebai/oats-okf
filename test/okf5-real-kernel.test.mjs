@@ -134,6 +134,9 @@ test(`${json(join(root, 'package.json')).version} real OATS ${KERNEL}: legacy-ke
     const spawned = ok(['spawn', 'source', '--name', 'src', '--no-launch']).result;
     assert.equal(spawned.launched, false);
     const src = spawned.home;
+    // Only the package's service souls are background: a working soul composing oats.okf is not.
+    assert.equal(spawned.background, false);
+    assert.equal(fs.existsSync(join(src, '.oats-background.json')), false);
     assert.equal(real(src), real(join(dep, 'agents/source/instances/src')));
     for (const p of ['STATE.md', 'log.md']) assert.ok(fs.statSync(join(src, p)).isFile(), `${p} seeded by the spawn hook`);
     assert.ok(fs.statSync(join(src, 'notes')).isDirectory());
