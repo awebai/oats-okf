@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-// oats.okf 5.5.0 package shape: versions, kernel floor, the slot's settings and
+// oats.okf 5.6.0 package shape: versions, kernel floor, the slot's settings and
 // hooks, the shipped skills (shared copies identical) and both package souls.
 const ROOT=fileURLToPath(new URL('../',import.meta.url));
 const PKG=join(ROOT,'oats-package');
@@ -27,13 +27,13 @@ test('validate-manifests passes',()=>{
   assert.equal(r.status,0,r.stdout+r.stderr);
 });
 
-test('every manifest is version 5.5.0 with the >=0.69.2 kernel floor',()=>{
-  assert.equal(readJson(join(ROOT,'package.json')).version,'5.5.0');
+test('every manifest is version 5.6.0 with the >=0.69.2 kernel floor',()=>{
+  assert.equal(readJson(join(ROOT,'package.json')).version,'5.6.0');
   const pkg=readJson(join(PKG,'oats-package.json'));
-  assert.equal(pkg.version,'5.5.0');
+  assert.equal(pkg.version,'5.6.0');
   assert.deepEqual(pkg.compatibility,{oats:'>=0.69.2'});
   for(const name of CAPS) {
-    assert.equal(cap(name).version,'5.5.0',name);
+    assert.equal(cap(name).version,'5.6.0',name);
     assert.deepEqual(cap(name).compatibility,{oats:'>=0.69.2'},name);
   }
 });

@@ -1,7 +1,6 @@
 # Schema and verification status
 
-oats.okf **5.5.0** requires OATS >=0.49.0. This checkout (unreleased) requires
-**OATS >=0.69.2**, the first kernel that reads the `background:` key used by
+oats.okf **5.6.0** requires **OATS >=0.69.2**, the first kernel that reads the `background:` key used by
 both the `knowledge-harvester` and `knowledge-maintainer` souls; source
 capture's public gone-home instance-event lookup needs only >=0.49.0.
 Version declarations are not evidence of a published release.
