@@ -14,7 +14,7 @@
 // none, oats.core off), no network, host timer or production setting. HOME,
 // OATS_HOME_DIR and every repository live in one temporary directory.
 //
-// One fixture, ordered steps (a)-(e): each subtest is one concern and builds
+// One fixture, ordered steps (a)-(g): each subtest is one concern and builds
 // on the state the previous one left, as a deployment would live through it.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -46,7 +46,7 @@ const strings = (v, out = []) => { if (typeof v === 'string') out.push(v); else 
 const HARVESTER_DIR = 'oats-okf--knowledge-harvester'; // packageSoulAgentName('oats.okf', 'knowledge-harvester')
 const SPAWN_LINE = 'oats spawn oats.okf/knowledge-harvester --name <harvester-name> --task-file <proposal> --relation unrelated';
 
-test(`${json(join(root, 'package.json')).version} real OATS ${KERNEL}: legacy-key cleanup, a source spawn, its checkpoint proposal spawning a top-level harvester, the harvester's source records, removed surfaces, and the source retired`, { skip: !cli }, async t => {
+test(`${json(join(root, 'package.json')).version} real OATS ${KERNEL}: legacy-key cleanup, a source spawn, its checkpoint proposal spawning a top-level harvester, the harvester's source records, removed surfaces, the source retired, and both package souls' background defaults`, { skip: !cli }, async t => {
   const base = real(fs.mkdtempSync(join(tmpdir(), 'okf5-real-kernel-')));
   t.after(() => fs.rmSync(base, { recursive: true, force: true }));
   assert.doesNotMatch(base, /harvest/, 'the cleanup reader looks for the word harvest in oats-local.yaml; the fixture path must not carry it');
@@ -402,5 +402,14 @@ test(`${json(join(root, 'package.json')).version} real OATS ${KERNEL}: legacy-ke
     assert.match(r.text, /E_OPTED_OUT/, r.text);
     assert.deepEqual(harvesterHomes(), before, 'no harvester exists for an opted-out source');
     assert.equal(fs.existsSync(asked), false);
+  });
+
+  await t.test('g) a knowledge maintainer defaults to background from its soul, just like the harvester', () => {
+    const m = ok(['spawn', 'oats.okf/knowledge-maintainer', '--name', 'reviewer', '--no-launch']).result;
+    assert.equal(m.launched, false);
+    assert.equal(m.background, true, 'the maintainer soul places new maintainers in the background');
+    assert.equal(m.backgroundFrom, 'soul');
+    assert.ok(fs.existsSync(join(m.home, '.oats-background.json')), 'the maintainer home records background');
+    assert.equal(fs.existsSync(asked), false, 'no harness was asked to start a model');
   });
 });

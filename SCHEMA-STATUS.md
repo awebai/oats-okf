@@ -1,10 +1,10 @@
 # Schema and verification status
 
 oats.okf **5.5.0** requires OATS >=0.49.0. This checkout (unreleased) requires
-**OATS >=0.69.2**, the first kernel that reads the harvester soul's
-`background:` key; source capture's public gone-home instance-event lookup
-needs only >=0.49.0. Version declarations are not
-evidence of a published release.
+**OATS >=0.69.2**, the first kernel that reads the `background:` key used by
+both the `knowledge-harvester` and `knowledge-maintainer` souls; source
+capture's public gone-home instance-event lookup needs only >=0.49.0.
+Version declarations are not evidence of a published release.
 
 ## Schemas
 
@@ -64,7 +64,10 @@ legacy-key cleanup, a real spawn, a checkpoint proposal spawning a top-level
 harvester, and the removed surfaces. After the source retires, a new harvester
 captures from its event-named recovery and retains the input after recovery
 disposal; reusing the source address for a new live incarnation then refuses
-the old proposal. All spawns use `--no-launch` (no model, messaging or GitHub).
+the old proposal. A knowledge-maintainer spawn is also checked; both souls
+answer `background: true`, `backgroundFrom: 'soul'`, with
+`.oats-background.json` recorded in each home. All spawns use `--no-launch`
+(no model, messaging or GitHub).
 
 The schemas themselves are not exercised by the suite: no test validates
 documents or the `examples/portable-binding/` data against them, or checks

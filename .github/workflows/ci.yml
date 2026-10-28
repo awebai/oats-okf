@@ -66,7 +66,7 @@ jobs:
         run: |
           npm install --prefix "$RUNNER_TEMP/okf-real-kernel" --ignore-scripts --no-audit --no-fund --package-lock=false @awebai/oats@0.69.2
           echo "OATS_OKF_REAL_CLI=$RUNNER_TEMP/okf-real-kernel/node_modules/@awebai/oats/bin/oats.mjs" >> "$GITHUB_ENV"
-      - name: Real kernel - source spawn, live capture, retirement, retired capture, recovery disposal and refusals
+      - name: Real kernel - source spawn, capture, retirement, refusals and both package souls' background defaults
         shell: bash
         run: |
           set -o pipefail
@@ -76,4 +76,4 @@ jobs:
       - name: Evidence boundary
         run: |
           echo 'Real released OATS 0.69.2 CLI; isolated file-Git workspace, package pinned from this exact checkout, a real on-disk Git knowledge base.'
-          echo 'Source and harvesters are spawned for real with --no-launch; no model, messaging, GitHub PR, host timer or production deployment.'
+          echo 'Source, harvesters and maintainer are spawned for real with --no-launch; no model, messaging, GitHub PR, host timer or production deployment.'

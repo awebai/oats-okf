@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 // oats.okf 5.5.0 package shape: versions, kernel floor, the slot's settings and
-// hooks, the shipped skills (shared copies identical) and the harvester soul.
+// hooks, the shipped skills (shared copies identical) and both package souls.
 const ROOT=fileURLToPath(new URL('../',import.meta.url));
 const PKG=join(ROOT,'oats-package');
 const CAPS=['oats-okf','oats-okf-harvest','oats-okf-maintenance'];
@@ -74,11 +74,14 @@ test('the two okf-authoring copies are byte-identical',()=>{
   assert.deepEqual(b,a);
 });
 
-test('the knowledge-harvester soul keeps no knowledge',()=>{
-  const soul=fs.readFileSync(join(PKG,'souls','knowledge-harvester','soul.yaml'),'utf8');
-  assert.match(soul,/^knowledge: none$/m);
-  assert.match(soul,/^ {2}oats\.okf-harvest: \{ from: here \}$/m);
-});
+for (const [name, capability] of [['knowledge-harvester', 'oats.okf-harvest'], ['knowledge-maintainer', 'oats.okf-maintenance']]) {
+  test(`the ${name} soul keeps no knowledge and defaults to background`,()=>{
+    const soul=fs.readFileSync(join(PKG,'souls',name,'soul.yaml'),'utf8');
+    assert.match(soul,/^knowledge: none$/m);
+    assert.match(soul,/^background: true(?:\s+#.*)?$/m);
+    assert.ok(soul.includes(`  ${capability}: { from: here }`));
+  });
+}
 
 // oats.okf 5.0.2 (#64): personal data is excluded by ONE sentence, the same
 // wherever an agent is told what to leave out. An instruction, never a check.

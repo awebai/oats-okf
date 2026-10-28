@@ -32,7 +32,10 @@ versions is in [CHANGELOG.md](CHANGELOG.md).
 
 - Two package souls: `oats.okf/knowledge-harvester` and
   `oats.okf/knowledge-maintainer` (`work: directory`, `knowledge: none`, each
-  with its own capability `from: here`).
+  with its own capability `from: here`). In this unreleased checkout, both
+  souls default to `background: true`: new instances appear in the Desktop's
+  and the TUI's Background section. Existing instances do not move; harvest
+  and review behavior is unchanged.
 - One trigger template: `oats.okf:harvest-review`
   (`triggers/harvest-review.json`).
 - `knowledge-theory` (the promotion doctrine) ships as identical copies in all
@@ -915,8 +918,11 @@ a real working-soul spawn, its checkpoint proposal spawning a top-level
 harvester, the harvester reading the source's records, the removed
 surfaces, and the source's retirement. A second harvester is spawned only
 **after** retirement, captures through the real public events lookup, and
-keeps its input after that disposable recovery is removed. Instances are spawned with
-`--no-launch`: no model, messaging or GitHub PR is involved.
+keeps its input after that disposable recovery is removed. It also spawns a
+knowledge maintainer and checks both souls' defaults: the spawn answers
+`background: true`, `backgroundFrom: 'soul'`, and each home holds
+`.oats-background.json`. Instances are spawned with `--no-launch`: no model,
+messaging or GitHub PR is involved.
 
 `okf5-upgrade-hook` runs the upgrade hook (above) on homes made by the
 released v5.3.0, v5.1.0 and v4.2.2 code, under a preload that refuses every

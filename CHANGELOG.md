@@ -4,19 +4,21 @@
 
 ### Upgrade
 
-- **Requires OATS >=0.69.2** (was >=0.49.0). The `knowledge-harvester` soul
-  now says `background: true`, and a kernel before 0.69.2 refuses that key.
+- **Requires OATS >=0.69.2** (was >=0.49.0). The `knowledge-harvester` and
+  `knowledge-maintainer` souls now say `background: true`, and a kernel
+  before 0.69.2 refuses that key.
   Upgrade OATS to 0.69.2 first, then this package. CI now qualifies it on the
   released OATS 0.69.2 (the `real-kernel-0692` and `kernel-upgrade-0692` jobs,
   formerly on 0.49.0 and 0.68.1).
 
 ### Changed
 
-- **Harvesters are background instances** (awebai/oats#1579). New harvesters
-  are listed under the Desktop's and the TUI's Background section, out of the
-  main list; a harvester that waits on you still lights that section's
-  heading. No existing harvester moves, running or stopped. Nothing else
-  about a harvester changes.
+- **Knowledge harvesters and maintainers are background instances**
+  (awebai/oats#1579). New instances of both souls are listed under the
+  Desktop's and the TUI's Background section, out of the main list; one that
+  waits on you still lights that section's heading. No existing harvester or
+  maintainer moves, running or stopped. Only presentation changes, not their
+  harvest or review behavior.
 
 ## 5.5.0 — 2026-10-27
 
