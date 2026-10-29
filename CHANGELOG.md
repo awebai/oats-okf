@@ -1,5 +1,52 @@
 # Changelog
 
+## 5.7.0 — unreleased
+
+Requires OATS >=0.69.2, unchanged. awebai/oats-okf#118.
+
+### Upgrade
+
+- **Re-review each parked PR.** A harvest PR an older maintainer labelled
+  `okf-needs-human` stays parked until it gets a new event. After the lock
+  moves to 5.7.0, remove the label and close and reopen each such PR
+  (`gh pr edit <number> --repo <repo> --remove-label okf-needs-human`, then
+  `gh pr close` and `gh pr reopen`): the `harvest-review` trigger spawns a
+  maintainer that reviews it under the new rule. Its old `needs-human` verdict
+  does not count as a review. A label left in place is inert, but the PR is
+  not reviewed until it is reopened.
+
+### Changed
+
+- **The knowledge maintainer never parks a harvest PR.** A PR that would
+  supersede, contradict or rewrite a human-accepted decision is settled at
+  review:
+  - it cites no acceptance (who accepted the change, when and where):
+    closed. An agent alone does not overturn a human's decision.
+  - the cited record is on GitHub (an issue or PR comment, or a commit): the
+    maintainer confirms that the named human's own account says the cited
+    thing there. Confirmed, it merges (or amends and merges) as an explicit
+    supersession and records the acceptance as **verified at <link>**;
+    otherwise it closes the PR with the reason.
+  - the cited record is somewhere the maintainer cannot read (mail, a
+    session, a call): it is trusted without a check, on the source's report.
+    The maintainer merges (or amends and merges) as an explicit supersession
+    and records the acceptance as **source-reported** (who, when, where).
+
+  An explicit supersession names the old concept in the new one, marks the
+  old one superseded with a link to the new, and names it in the node log;
+  the maintainer adds what is missing. knowledge-theory (all three copies),
+  knowledge-review, the maintainer inject and soul, okf-trigger-setup and the
+  README say the same. `checks.supersession` in the verdict reports
+  `verified`, `source-reported`, `fail` (closed for it) or, when no
+  human-accepted concept is touched, `pass` (or `amended`).
+
+### Removed
+
+- **`okf-needs-human` and the `needs-human` verdict.** The maintainer no
+  longer adds the label or messages a human, and okf-trigger-setup no longer
+  pre-creates it. `review-context` drops its `blocked` field and its
+  `BLOCKED:` text line; `settled` now means only that the PR is not open.
+
 ## 5.6.0 — 2026-10-28
 
 ### Upgrade

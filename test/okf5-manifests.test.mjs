@@ -147,6 +147,25 @@ test('the harvester and the reviewer apply it to what is published, provenance n
     'Your review comes after the push: amending or closing keeps personal data out of the accepted base, not out of the pushed branch or the pull request.']) assert.ok(review.includes(s),s);
 });
 
+// oats.okf 5.7.0 (awebai/oats-okf#118): a supersession of a human-accepted
+// decision is settled at review, never parked for a human.
+test('every place that teaches a human-accepted supersession settles it at review and parks nothing',()=>{
+  const theory=prose(CAPDIR+'oats-okf/skills/knowledge-theory/SKILL.md'),review=prose(CAPDIR+'oats-okf-maintenance/skills/knowledge-review/SKILL.md');
+  for(const [name,text] of [['knowledge-theory',theory],['knowledge-review',review]]) {
+    for(const s of ['verified at <link>','source-reported (who, when, where)','is trusted without a check','an agent alone does not overturn a human\'s decision','the new concept names the old one, the old concept says it is superseded and links the new one, and the node log names the supersession'])
+      assert.ok(text.toLowerCase().includes(s.toLowerCase()),`${name}: ${s}`);
+  }
+  assert.match(review,/The author login must be the account the citation names\./);
+  assert.ok(review.includes('right before merging: stop if settled gh pr merge'),'the merge pre-check stops only if settled');
+  assert.doesNotMatch(review,/"verdict": "needs-human"|--add-label okf-needs-human|stop if blocked/);
+  // The label survives only as the note that an old one stops nothing.
+  const mentions=[];
+  (function walk(dir){for(const e of fs.readdirSync(join(ROOT,dir),{withFileTypes:true})) {const p=`${dir}/${e.name}`;if(e.isDirectory()) walk(p);else if(fs.readFileSync(join(ROOT,p),'utf8').includes('okf-needs-human')) mentions.push(p);}})('oats-package');
+  assert.deepEqual(mentions.sort(),[CAPDIR+'oats-okf-maintenance/skills/knowledge-review/SKILL.md',CAPDIR+'oats-okf-maintenance/skills/okf-trigger-setup/SKILL.md']);
+  for(const p of [CAPDIR+'oats-okf-maintenance/injects/maintainer.md','oats-package/souls/knowledge-maintainer/AGENTS.md']) assert.match(prose(p),/without citing the human's acceptance is closed; check a citation on GitHub before you merge; never park a PR\./,p);
+  assert.doesNotMatch(prose('README.md'),/hard stop/);
+});
+
 test('the README says what is an instruction and what is enforced, with the opt-out\'s two limits',()=>{
   const readme=prose('README.md');
   for(const s of ['Personal data is excluded by instruction. Nothing guarantees it stays out.','It narrows their judgement and guarantees nothing.',

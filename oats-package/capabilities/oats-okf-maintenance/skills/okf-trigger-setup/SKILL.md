@@ -149,10 +149,12 @@ their place.
 ## 7. Labels
 
 Harvest PRs carry `okf-harvest` (the harvester creates the label if the
-repository lacks it). The maintainer adds `okf-needs-human` when a PR
-would supersede a human-accepted decision. To pre-create both:
+repository lacks it). To pre-create it:
 
 ```sh
 gh label create okf-harvest --repo <owner>/<repo> --force --color 0E8A16 --description "OKF harvest PR (oats.okf)"
-gh label create okf-needs-human --repo <owner>/<repo> --force --color D93F0B --description "OKF: needs a human decision"
 ```
+
+A label `okf-needs-human` left from an older release no longer stops
+anything, and a PR carrying it is re-reviewed by removing the label and
+closing and reopening the PR.

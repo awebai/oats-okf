@@ -161,9 +161,28 @@ inbox queue.
 A decision with explicit who/when acceptance evidence from a human passes the
 promotion bar by construction: preserve the decision and its rationale, record
 the acceptance and any supersession, and do not re-judge the human. Exclusions
-still apply. **Superseding a human-accepted decision is never done silently**:
-a change that would supersede one needs a human (the maintainer labels the PR
-`okf-needs-human` and does not merge it).
+still apply.
+
+**Superseding a human-accepted decision needs that human's acceptance,
+cited.** A change that would supersede, contradict or rewrite one:
+
+- **The source cites the acceptance before it proposes the change:** who
+  accepted it, when, and where the record is (an issue or PR comment, a
+  commit, mail, a session, a call).
+- **The reviewer checks a citation it can read.** A record on GitHub must show
+  the named human's own account saying the cited thing; the acceptance is then
+  recorded as **verified at <link>**. A record the reviewer cannot read (mail,
+  a session, a call) is trusted without a check: the reviewer relies on the
+  source's report and records the acceptance as **source-reported** (who,
+  when, where), never as the human's own words.
+- **A change citing no acceptance is closed**, and so is one whose GitHub
+  record does not confirm it: an agent alone does not overturn a human's
+  decision. A change is never parked to wait for a human or for the
+  harvester.
+
+An accepted change is an explicit supersession: the new concept names the old
+one, the old concept says it is superseded and links the new one, and the node
+log names the supersession. The reviewer may add these itself.
 
 ## Slow state, findings and procedures
 
