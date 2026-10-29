@@ -4,6 +4,7 @@ import * as fs from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 // oats.okf 5.0.0: harvest PRs carry a version 2 provenance block (no run or
 // input ids); 4.x version 1 PRs stay reviewable. PR metadata is data, never run.
 const {parseProvenance}=await import(new URL('../oats-package/capabilities/oats-okf-maintenance/lib/provenance.mjs',import.meta.url));
@@ -60,6 +61,24 @@ test('review-context for a v2 PR returns its evidence and a reading line naming 
   assert.ok(r.reading.includes(`the claims and their evidence are in the PR body; the harvester relied on: notes/decisions/a.md (sha256 ${HEX.slice(0,12)}), notes/b.md (not read)`),r.reading.join('\n'));
   const old=reviewContext({pr:URL_},{},{view:view(pr(block(V1)))});
   assert.equal(old.provenance.valid,true);assert.equal(old.evidence,null);assert.ok(!old.reading.some(l=>/relied on/.test(l)));
+});
+
+// oats.okf 5.7.0 (awebai/oats-okf#118): okf-needs-human no longer parks a PR.
+// review-context has no blocked field, and settled means only "not open".
+const CLI=fileURLToPath(new URL('../oats-package/capabilities/oats-okf-maintenance/bin/okf-maintenance.mjs',import.meta.url));
+test('review-context: an okf-needs-human label blocks nothing; settled means the PR is not open',t=>{
+  const labelled=pr(block(V2),{labels:[{name:'okf-harvest'},{name:'okf-needs-human'}]});
+  const r=reviewContext({pr:URL_},{},{view:view(labelled)});
+  assert.equal(Object.hasOwn(r,'blocked'),false);assert.equal(r.settled,false);
+  assert.deepEqual(r.pr.labels,['okf-harvest','okf-needs-human']);
+  for(const state of ['MERGED','CLOSED']) assert.equal(reviewContext({pr:URL_},{},{view:view({...labelled,state})}).settled,true,state);
+  assert.equal(reviewContext({pr:URL_},{},{view:view(pr(block(V2)))}).settled,false);
+  // The text output, through a stand-in gh that answers pr view with the labelled PR.
+  const bin=fs.mkdtempSync(join(tmpdir(),'okf5-gh-'));t.after(()=>fs.rmSync(bin,{recursive:true,force:true}));
+  fs.writeFileSync(join(bin,'pr.json'),JSON.stringify(labelled));
+  fs.writeFileSync(join(bin,'gh'),`#!/bin/sh\ncat '${join(bin,'pr.json')}'\n`,{mode:0o755});
+  const out=execFileSync(process.execPath,[CLI,'review-context','--pr',URL_],{encoding:'utf8',env:{...process.env,PATH:`${bin}:${process.env.PATH}`}});
+  assert.match(out,/\[okf-harvest, okf-needs-human\]/);assert.doesNotMatch(out,/BLOCKED/i);
 });
 
 function git(cwd,...args) {return execFileSync('git',args,{cwd,encoding:'utf8',env:{...process.env,GIT_CONFIG_GLOBAL:'/dev/null',GIT_CONFIG_NOSYSTEM:'1',GIT_AUTHOR_NAME:'t',GIT_AUTHOR_EMAIL:'t@example.invalid',GIT_COMMITTER_NAME:'t',GIT_COMMITTER_EMAIL:'t@example.invalid'}});}

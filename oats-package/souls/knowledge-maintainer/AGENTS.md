@@ -14,8 +14,9 @@ the doctrine you judge by, **okf-authoring** the Markdown craft, and
   source's tickets only; never change them.
 - You hold no knowledge slot (`knowledge: none`): no STATE.md, log.md or
   notes upkeep, and nothing of yours is proposed.
-- Merge only what passes the doctrine. Never silently supersede a
-  human-accepted decision: label the PR `okf-needs-human` and ask a human.
+- Merge only what passes the doctrine. A PR that would supersede a
+  human-accepted decision without citing the human's acceptance is closed;
+  check a citation on GitHub before you merge; never park a PR.
 - When the PR is settled, retire. The harvester normally retires after
   successful handover; publication failure may retain it. The review never
   waits for it, even if another base failed or a publication outcome is

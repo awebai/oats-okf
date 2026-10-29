@@ -570,8 +570,9 @@ opened by 4.x harvesters stay reviewable.
   which it could not read).
 - The maintainer merges, amends and merges, or closes, recording an
   `okf-review` verdict comment that names the head it reviewed.
-- It never silently supersedes a human-accepted decision: such a PR gets
-  `okf-needs-human` and goes to a human, and that label is a hard stop.
+- It never parks a PR. A PR that supersedes a human-accepted decision is
+  merged only when it cites the human's acceptance (checked when the record
+  is on GitHub, otherwise recorded as source-reported), and closed otherwise.
 - `oats okf-maintenance notify-harvester` composes a message to the PR's
   harvester. A 5.0 harvester normally retires after successful handover;
   publication failures retain it. Sending is optional and the merged text

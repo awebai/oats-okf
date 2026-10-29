@@ -147,6 +147,57 @@ test('the harvester and the reviewer apply it to what is published, provenance n
     'Your review comes after the push: amending or closing keeps personal data out of the accepted base, not out of the pushed branch or the pull request.']) assert.ok(review.includes(s),s);
 });
 
+// oats.okf 5.7.0 (awebai/oats-okf#118): a supersession of a human-accepted
+// decision is settled at review, never parked for a human.
+test('every place that teaches a human-accepted supersession settles it at review and parks nothing',()=>{
+  const theory=prose(CAPDIR+'oats-okf/skills/knowledge-theory/SKILL.md'),review=prose(CAPDIR+'oats-okf-maintenance/skills/knowledge-review/SKILL.md');
+  for(const [name,text] of [['knowledge-theory',theory],['knowledge-review',review]]) {
+    for(const s of ['verified at <link>','source-reported (who, when, where)','source-reported (relay at <link>)','is trusted without a check','an agent alone does not overturn a human\'s decision','the new concept names the old one, the old concept says it is superseded and links the new one, and the node log names the supersession'])
+      assert.ok(text.toLowerCase().includes(s.toLowerCase()),`${name}: ${s}`);
+  }
+  // Verified shows the account and the record, never that a human typed it; a relay is the source's report.
+  const VERIFIED='Verified proves the record, not that a human typed it: agents may post under their human\'s account.';
+  for(const [name,text] of [['knowledge-theory',theory],['knowledge-review',review],['CHANGELOG',prose('CHANGELOG.md')]]) {
+    assert.ok(text.includes(VERIFIED),`${name}: what verified proves`);
+    assert.match(text,/under the account the citation names, and says? the cited thing/,`${name}: the account the citation names`);
+    // A relay on GitHub is opened and checked too (awebai/oats-okf#119): confirmed, it is source-reported (relay at <link>).
+    assert.match(text,/a relay on GitHub\)? \(a record that presents itself as an agent reporting the human's words\)/i,`${name}: a relay on GitHub`);
+    assert.ok(text.includes('say that the relaying agent reported the human\'s acceptance of this change'),`${name}: what a relay must say`);
+    assert.doesNotMatch(text,/a relay's link too|or (?:is )?a relay\)? \(/,`${name}: a relay is not trusted unchecked`);
+    assert.doesNotMatch(text,/the named human's own account/,`${name}: no claim about whose hands`);
+  }
+  assert.ok(theory.includes('one whose GitHub record or relay does not confirm it'),'knowledge-theory: an unconfirmed relay is closed');
+  assert.ok(review.includes('the record is a relay on GitHub (a record that presents itself as an agent reporting the human\'s words): it is the source\'s report, not the human\'s own record, but you check it as in step 2.'),'knowledge-review: a GitHub relay is opened');
+  assert.ok(review.includes('record the acceptance as source-reported (relay at <link>), never as verified. Not confirmed (missing, it cannot be opened, or it says something else): close with that reason.'),'knowledge-review: an unconfirmed relay is closed');
+  assert.ok(prose('CHANGELOG.md').includes('not confirmed or not openable, it closes the PR with the reason'),'CHANGELOG: an unconfirmed relay is closed');
+  assert.match(review,/The author login must be the account the citation names\./);
+  assert.ok(review.includes('right before merging: stop if settled gh pr merge'),'the merge pre-check stops only if settled');
+  assert.doesNotMatch(review,/"verdict": "needs-human"|--add-label okf-needs-human|stop if blocked/);
+  // The label survives only as the note that an old one stops nothing.
+  const mentions=[];
+  (function walk(dir){for(const e of fs.readdirSync(join(ROOT,dir),{withFileTypes:true})) {const p=`${dir}/${e.name}`;if(e.isDirectory()) walk(p);else if(fs.readFileSync(join(ROOT,p),'utf8').includes('okf-needs-human')) mentions.push(p);}})('oats-package');
+  assert.deepEqual(mentions.sort(),[CAPDIR+'oats-okf-maintenance/skills/knowledge-review/SKILL.md',CAPDIR+'oats-okf-maintenance/skills/okf-trigger-setup/SKILL.md']);
+  for(const p of [CAPDIR+'oats-okf-maintenance/injects/maintainer.md','oats-package/souls/knowledge-maintainer/AGENTS.md']) assert.match(prose(p),/without citing the human's acceptance is closed; check a citation on GitHub before you merge; never park a PR\./,p);
+  assert.doesNotMatch(prose('README.md'),/hard stop/);
+});
+
+// The harvest-review trigger polls, so a parked PR is re-reviewed only by a close a poll saw, then a reopen.
+test('the parked-PR re-review step closes, waits for a poll, then reopens, the same in the CHANGELOG and okf-trigger-setup',()=>{
+  for(const file of ['CHANGELOG.md',CAPDIR+'oats-okf-maintenance/skills/okf-trigger-setup/SKILL.md']) {
+    const text=prose(file);
+    for(const s of ['The trigger polls: a close it never saw is no reopen.','`oats trigger test` does not count: it records nothing.','Never clear the trigger\'s dedup state.',
+      'Retire the knowledge-maintainer instances left from older reviews, running or stopped','keeps the old behaviour',
+      // Only a good, complete poll records a close (a failed one advances lastPoll; 100 fetched may be truncated).
+      'shows a `lastPoll` after the closes with `ok: true` and `prs` under 100','Only such a poll records a close: a failed poll records none (keep waiting)',
+      'stop and report the poll cap; do not reopen',
+      // The text status shows counts only; the per-PR events are in its JSON.
+      '`oats trigger status <id> --json` lists a `pending` or `fired` entry with `event: "reopened"` for each PR\'s number']) assert.ok(text.includes(s),`${file}: ${s}`);
+    const wait=text.indexOf('shows a `lastPoll` after the closes');
+    assert.ok(text.indexOf('then close it')<wait&&wait<text.indexOf('Reopen each PR'),`${file}: close, wait for a complete poll, reopen, in that order`);
+    assert.doesNotMatch(text,/close and reopen each|closing and reopening the PR/,`${file}: no back-to-back close and reopen`);
+  }
+});
+
 test('the README says what is an instruction and what is enforced, with the opt-out\'s two limits',()=>{
   const readme=prose('README.md');
   for(const s of ['Personal data is excluded by instruction. Nothing guarantees it stays out.','It narrows their judgement and guarantees nothing.',

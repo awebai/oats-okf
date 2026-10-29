@@ -1,5 +1,80 @@
 # Changelog
 
+## 5.7.0 — unreleased
+
+Requires OATS >=0.69.2, unchanged. awebai/oats-okf#118.
+
+### Upgrade
+
+- **Re-review each parked PR.** A harvest PR an older maintainer labelled
+  `okf-needs-human` stays parked until the `harvest-review` trigger sees a new
+  event for it; the label left in place is inert, and its old `needs-human`
+  verdict does not count as a review. The trigger polls: a close it never saw
+  is no reopen. On the trigger's review host, once its lock has 5.7.0:
+  1. Retire the knowledge-maintainer instances left from older reviews,
+     running or stopped (`oats retire <instance>`). A retained home holds a
+     concurrency slot (`max` 2, `perKey` 1), and a home composed from an older
+     package keeps the old behaviour.
+  2. Remove the label from each parked PR, then close it
+     (`gh pr edit <number> --repo <repo> --remove-label okf-needs-human`,
+     `gh pr close <number> --repo <repo>`).
+  3. Wait until `oats trigger status <id> --json` shows a `lastPoll` after the
+     closes with `ok: true` and `prs` under 100 (the template polls every 2m).
+     Only such a poll records a close: a failed poll records none (keep
+     waiting), and one that fetched 100 open PRs may be truncated (stop and
+     report the poll cap; do not reopen). `oats trigger test` does not count:
+     it records nothing.
+  4. Reopen each PR (`gh pr reopen <number> --repo <repo>`), and check that
+     `oats trigger status <id> --json` lists a `pending` or `fired` entry with
+     `event: "reopened"` for each PR's number. At most two reviews run at
+     once; the rest wait as `held` until a maintainer retires.
+
+  Never clear the trigger's dedup state.
+
+### Changed
+
+- **The knowledge maintainer never parks a harvest PR.** A PR that would
+  supersede, contradict or rewrite a human-accepted decision is settled at
+  review:
+  - it cites no acceptance (who accepted the change, when and where):
+    closed. An agent alone does not overturn a human's decision.
+  - the cited record is on GitHub (an issue or PR comment, or a commit): the
+    maintainer confirms that it exists at the cited link, under the account
+    the citation names, and says the cited thing. Confirmed, it merges (or
+    amends and merges) as an explicit supersession and records the
+    acceptance as **verified at <link>**. Verified proves the record, not
+    that a human typed it: agents may post under their human's account. Not
+    confirmed (missing, a different account, or it says something else), it
+    closes the PR with the reason.
+  - the cited record is a relay on GitHub (a record that presents itself as
+    an agent reporting the human's words): it is the source's report, but the
+    maintainer checks it as above. It must exist at the cited link and say
+    that the relaying agent reported the human's acceptance of this change.
+    Confirmed, it merges (or amends and merges) as an explicit supersession
+    and records the acceptance as **source-reported (relay at <link>)**,
+    never as verified; not confirmed or not openable, it closes the PR with
+    the reason.
+  - the cited record is somewhere the maintainer cannot read (mail, a
+    session, a call): it is the source's report, trusted without a check.
+    The maintainer merges (or amends and merges) as an explicit supersession
+    and records the acceptance as **source-reported** (who, when, where),
+    never as verified.
+
+  An explicit supersession names the old concept in the new one, marks the
+  old one superseded with a link to the new, and names it in the node log;
+  the maintainer adds what is missing. knowledge-theory (all three copies),
+  knowledge-review, the maintainer inject and soul, okf-trigger-setup and the
+  README say the same. `checks.supersession` in the verdict reports
+  `verified`, `source-reported`, `fail` (closed for it) or, when no
+  human-accepted concept is touched, `pass` (or `amended`).
+
+### Removed
+
+- **`okf-needs-human` and the `needs-human` verdict.** The maintainer no
+  longer adds the label or messages a human, and okf-trigger-setup no longer
+  pre-creates it. `review-context` drops its `blocked` field and its
+  `BLOCKED:` text line; `settled` now means only that the PR is not open.
+
 ## 5.6.0 — 2026-10-28
 
 ### Upgrade
