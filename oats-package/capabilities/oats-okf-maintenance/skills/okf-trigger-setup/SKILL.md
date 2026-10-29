@@ -166,10 +166,14 @@ lock has 5.7.0:
 2. Remove the label from each parked PR, then close it
    (`gh pr edit <number> --repo <owner>/<repo> --remove-label okf-needs-human`,
    `gh pr close <number> --repo <owner>/<repo>`).
-3. Wait until `oats trigger status <id>` shows a poll that completed after the
-   closes. `oats trigger test` does not count: it records nothing.
+3. Wait until `oats trigger status <id> --json` shows a `lastPoll` after the
+   closes with `ok: true` and `prs` under 100. Only such a poll records a
+   close: a failed poll records none (keep waiting), and one that fetched 100
+   open PRs may be truncated (stop and report the poll cap; do not reopen).
+   `oats trigger test` does not count: it records nothing.
 4. Reopen each PR (`gh pr reopen <number> --repo <owner>/<repo>`), and check
-   that `oats trigger status <id>` lists a `reopened` event for each, pending
-   or fired. With `max` 2, the rest wait as `held` until a maintainer retires.
+   that `oats trigger status <id> --json` lists a `pending` or `fired` entry
+   with `event: "reopened"` for each PR's number. With `max` 2, the rest wait
+   as `held` until a maintainer retires.
 
 Never clear the trigger's dedup state.

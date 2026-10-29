@@ -179,9 +179,14 @@ test('the parked-PR re-review step closes, waits for a poll, then reopens, the s
   for(const file of ['CHANGELOG.md',CAPDIR+'oats-okf-maintenance/skills/okf-trigger-setup/SKILL.md']) {
     const text=prose(file);
     for(const s of ['The trigger polls: a close it never saw is no reopen.','`oats trigger test` does not count: it records nothing.','Never clear the trigger\'s dedup state.',
-      'Retire the knowledge-maintainer instances left from older reviews, running or stopped','shows a poll that completed after the closes',
-      'lists a `reopened` event for each, pending or fired','keeps the old behaviour']) assert.ok(text.includes(s),`${file}: ${s}`);
-    assert.ok(text.indexOf('then close it')<text.indexOf('shows a poll that completed after the closes')&&text.indexOf('shows a poll that completed after the closes')<text.indexOf('Reopen each PR'),`${file}: close, wait for a poll, reopen, in that order`);
+      'Retire the knowledge-maintainer instances left from older reviews, running or stopped','keeps the old behaviour',
+      // Only a good, complete poll records a close (a failed one advances lastPoll; 100 fetched may be truncated).
+      'shows a `lastPoll` after the closes with `ok: true` and `prs` under 100','Only such a poll records a close: a failed poll records none (keep waiting)',
+      'stop and report the poll cap; do not reopen',
+      // The text status shows counts only; the per-PR events are in its JSON.
+      '`oats trigger status <id> --json` lists a `pending` or `fired` entry with `event: "reopened"` for each PR\'s number']) assert.ok(text.includes(s),`${file}: ${s}`);
+    const wait=text.indexOf('shows a `lastPoll` after the closes');
+    assert.ok(text.indexOf('then close it')<wait&&wait<text.indexOf('Reopen each PR'),`${file}: close, wait for a complete poll, reopen, in that order`);
     assert.doesNotMatch(text,/close and reopen each|closing and reopening the PR/,`${file}: no back-to-back close and reopen`);
   }
 });
