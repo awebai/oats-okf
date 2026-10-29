@@ -169,12 +169,17 @@ cited.** A change that would supersede, contradict or rewrite one:
 - **The source cites the acceptance before it proposes the change:** who
   accepted it, when, and where the record is (an issue or PR comment, a
   commit, mail, a session, a call).
-- **The reviewer checks a citation it can read.** A record on GitHub must show
-  the named human's own account saying the cited thing; the acceptance is then
-  recorded as **verified at <link>**. A record the reviewer cannot read (mail,
-  a session, a call) is trusted without a check: the reviewer relies on the
-  source's report and records the acceptance as **source-reported** (who,
-  when, where), never as the human's own words.
+- **The reviewer checks a citation it can read.** A record on GitHub must
+  exist at the cited link, under the account the citation names, and say the
+  cited thing; the acceptance is then recorded as **verified at <link>**.
+  Verified proves the record, not that a human typed it: agents may post
+  under their human's account.
+- **A record the reviewer cannot read** (mail, a session, a call), **or a
+  relay** (a record that presents itself as an agent reporting the human's
+  words), is the source's report, not the human's own record. It is trusted
+  without a check: the reviewer relies on the source's report and records the
+  acceptance as **source-reported** (who, when, where; a relay's link too),
+  never as verified or as the human's own words.
 - **A change citing no acceptance is closed**, and so is one whose GitHub
   record does not confirm it: an agent alone does not overturn a human's
   decision. A change is never parked to wait for a human or for the

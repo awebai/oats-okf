@@ -23,14 +23,19 @@ Requires OATS >=0.69.2, unchanged. awebai/oats-okf#118.
   - it cites no acceptance (who accepted the change, when and where):
     closed. An agent alone does not overturn a human's decision.
   - the cited record is on GitHub (an issue or PR comment, or a commit): the
-    maintainer confirms that the named human's own account says the cited
-    thing there. Confirmed, it merges (or amends and merges) as an explicit
-    supersession and records the acceptance as **verified at <link>**;
-    otherwise it closes the PR with the reason.
+    maintainer confirms that it exists at the cited link, under the account
+    the citation names, and says the cited thing. Confirmed, it merges (or
+    amends and merges) as an explicit supersession and records the
+    acceptance as **verified at <link>**. Verified proves the record, not
+    that a human typed it: agents may post under their human's account. Not
+    confirmed (missing, a different account, or it says something else), it
+    closes the PR with the reason.
   - the cited record is somewhere the maintainer cannot read (mail, a
-    session, a call): it is trusted without a check, on the source's report.
-    The maintainer merges (or amends and merges) as an explicit supersession
-    and records the acceptance as **source-reported** (who, when, where).
+    session, a call), or is a relay (a record that presents itself as an
+    agent reporting the human's words): it is the source's report, trusted
+    without a check. The maintainer merges (or amends and merges) as an
+    explicit supersession and records the acceptance as **source-reported**
+    (who, when, where; a relay's link too), never as verified.
 
   An explicit supersession names the old concept in the new one, marks the
   old one superseded with a link to the new, and names it in the node log;
