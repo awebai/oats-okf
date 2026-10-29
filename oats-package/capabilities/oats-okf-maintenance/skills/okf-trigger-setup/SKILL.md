@@ -156,5 +156,20 @@ gh label create okf-harvest --repo <owner>/<repo> --force --color 0E8A16 --descr
 ```
 
 A label `okf-needs-human` left from an older release no longer stops
-anything, and a PR carrying it is re-reviewed by removing the label and
-closing and reopening the PR.
+anything, but a PR it parked is reviewed again only on a new trigger event.
+The trigger polls: a close it never saw is no reopen. On this host, once the
+lock has 5.7.0:
+
+1. Retire the knowledge-maintainer instances left from older reviews, running
+   or stopped (`oats retire <instance>`): a retained home holds a concurrency
+   slot, and one composed from an older package keeps the old behaviour.
+2. Remove the label from each parked PR, then close it
+   (`gh pr edit <number> --repo <owner>/<repo> --remove-label okf-needs-human`,
+   `gh pr close <number> --repo <owner>/<repo>`).
+3. Wait until `oats trigger status <id>` shows a poll that completed after the
+   closes. `oats trigger test` does not count: it records nothing.
+4. Reopen each PR (`gh pr reopen <number> --repo <owner>/<repo>`), and check
+   that `oats trigger status <id>` lists a `reopened` event for each, pending
+   or fired. With `max` 2, the rest wait as `held` until a maintainer retires.
+
+Never clear the trigger's dedup state.

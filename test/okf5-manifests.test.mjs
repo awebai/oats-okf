@@ -174,6 +174,18 @@ test('every place that teaches a human-accepted supersession settles it at revie
   assert.doesNotMatch(prose('README.md'),/hard stop/);
 });
 
+// The harvest-review trigger polls, so a parked PR is re-reviewed only by a close a poll saw, then a reopen.
+test('the parked-PR re-review step closes, waits for a poll, then reopens, the same in the CHANGELOG and okf-trigger-setup',()=>{
+  for(const file of ['CHANGELOG.md',CAPDIR+'oats-okf-maintenance/skills/okf-trigger-setup/SKILL.md']) {
+    const text=prose(file);
+    for(const s of ['The trigger polls: a close it never saw is no reopen.','`oats trigger test` does not count: it records nothing.','Never clear the trigger\'s dedup state.',
+      'Retire the knowledge-maintainer instances left from older reviews, running or stopped','shows a poll that completed after the closes',
+      'lists a `reopened` event for each, pending or fired','keeps the old behaviour']) assert.ok(text.includes(s),`${file}: ${s}`);
+    assert.ok(text.indexOf('then close it')<text.indexOf('shows a poll that completed after the closes')&&text.indexOf('shows a poll that completed after the closes')<text.indexOf('Reopen each PR'),`${file}: close, wait for a poll, reopen, in that order`);
+    assert.doesNotMatch(text,/close and reopen each|closing and reopening the PR/,`${file}: no back-to-back close and reopen`);
+  }
+});
+
 test('the README says what is an instruction and what is enforced, with the opt-out\'s two limits',()=>{
   const readme=prose('README.md');
   for(const s of ['Personal data is excluded by instruction. Nothing guarantees it stays out.','It narrows their judgement and guarantees nothing.',

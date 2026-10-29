@@ -7,13 +7,26 @@ Requires OATS >=0.69.2, unchanged. awebai/oats-okf#118.
 ### Upgrade
 
 - **Re-review each parked PR.** A harvest PR an older maintainer labelled
-  `okf-needs-human` stays parked until it gets a new event. After the lock
-  moves to 5.7.0, remove the label and close and reopen each such PR
-  (`gh pr edit <number> --repo <repo> --remove-label okf-needs-human`, then
-  `gh pr close` and `gh pr reopen`): the `harvest-review` trigger spawns a
-  maintainer that reviews it under the new rule. Its old `needs-human` verdict
-  does not count as a review. A label left in place is inert, but the PR is
-  not reviewed until it is reopened.
+  `okf-needs-human` stays parked until the `harvest-review` trigger sees a new
+  event for it; the label left in place is inert, and its old `needs-human`
+  verdict does not count as a review. The trigger polls: a close it never saw
+  is no reopen. On the trigger's review host, once its lock has 5.7.0:
+  1. Retire the knowledge-maintainer instances left from older reviews,
+     running or stopped (`oats retire <instance>`). A retained home holds a
+     concurrency slot (`max` 2, `perKey` 1), and a home composed from an older
+     package keeps the old behaviour.
+  2. Remove the label from each parked PR, then close it
+     (`gh pr edit <number> --repo <repo> --remove-label okf-needs-human`,
+     `gh pr close <number> --repo <repo>`).
+  3. Wait until `oats trigger status <id>` shows a poll that completed after
+     the closes (the template polls every 2m). `oats trigger test` does not
+     count: it records nothing.
+  4. Reopen each PR (`gh pr reopen <number> --repo <repo>`), and check that
+     `oats trigger status <id>` lists a `reopened` event for each, pending or
+     fired. At most two reviews run at once; the rest wait as `held` until a
+     maintainer retires.
+
+  Never clear the trigger's dedup state.
 
 ### Changed
 
