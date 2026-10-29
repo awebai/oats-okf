@@ -1,6 +1,6 @@
 # Changelog
 
-## 5.7.0 — unreleased
+## 5.7.0 — 2026-10-29
 
 Requires OATS >=0.69.2, unchanged. awebai/oats-okf#118.
 
