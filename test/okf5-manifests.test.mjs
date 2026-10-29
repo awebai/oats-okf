@@ -152,7 +152,7 @@ test('the harvester and the reviewer apply it to what is published, provenance n
 test('every place that teaches a human-accepted supersession settles it at review and parks nothing',()=>{
   const theory=prose(CAPDIR+'oats-okf/skills/knowledge-theory/SKILL.md'),review=prose(CAPDIR+'oats-okf-maintenance/skills/knowledge-review/SKILL.md');
   for(const [name,text] of [['knowledge-theory',theory],['knowledge-review',review]]) {
-    for(const s of ['verified at <link>','source-reported (who, when, where; a relay\'s link too)','is trusted without a check','an agent alone does not overturn a human\'s decision','the new concept names the old one, the old concept says it is superseded and links the new one, and the node log names the supersession'])
+    for(const s of ['verified at <link>','source-reported (who, when, where)','source-reported (relay at <link>)','is trusted without a check','an agent alone does not overturn a human\'s decision','the new concept names the old one, the old concept says it is superseded and links the new one, and the node log names the supersession'])
       assert.ok(text.toLowerCase().includes(s.toLowerCase()),`${name}: ${s}`);
   }
   // Verified shows the account and the record, never that a human typed it; a relay is the source's report.
@@ -160,9 +160,16 @@ test('every place that teaches a human-accepted supersession settles it at revie
   for(const [name,text] of [['knowledge-theory',theory],['knowledge-review',review],['CHANGELOG',prose('CHANGELOG.md')]]) {
     assert.ok(text.includes(VERIFIED),`${name}: what verified proves`);
     assert.match(text,/under the account the citation names, and says? the cited thing/,`${name}: the account the citation names`);
-    assert.match(text,/or (?:is )?a relay\)? \(a record that presents itself as an agent reporting the human's words\)/,`${name}: a relay`);
+    // A relay on GitHub is opened and checked too (awebai/oats-okf#119): confirmed, it is source-reported (relay at <link>).
+    assert.match(text,/a relay on GitHub\)? \(a record that presents itself as an agent reporting the human's words\)/i,`${name}: a relay on GitHub`);
+    assert.ok(text.includes('say that the relaying agent reported the human\'s acceptance of this change'),`${name}: what a relay must say`);
+    assert.doesNotMatch(text,/a relay's link too|or (?:is )?a relay\)? \(/,`${name}: a relay is not trusted unchecked`);
     assert.doesNotMatch(text,/the named human's own account/,`${name}: no claim about whose hands`);
   }
+  assert.ok(theory.includes('one whose GitHub record or relay does not confirm it'),'knowledge-theory: an unconfirmed relay is closed');
+  assert.ok(review.includes('the record is a relay on GitHub (a record that presents itself as an agent reporting the human\'s words): it is the source\'s report, not the human\'s own record, but you check it as in step 2.'),'knowledge-review: a GitHub relay is opened');
+  assert.ok(review.includes('record the acceptance as source-reported (relay at <link>), never as verified. Not confirmed (missing, it cannot be opened, or it says something else): close with that reason.'),'knowledge-review: an unconfirmed relay is closed');
+  assert.ok(prose('CHANGELOG.md').includes('not confirmed or not openable, it closes the PR with the reason'),'CHANGELOG: an unconfirmed relay is closed');
   assert.match(review,/The author login must be the account the citation names\./);
   assert.ok(review.includes('right before merging: stop if settled gh pr merge'),'the merge pre-check stops only if settled');
   assert.doesNotMatch(review,/"verdict": "needs-human"|--add-label okf-needs-human|stop if blocked/);
