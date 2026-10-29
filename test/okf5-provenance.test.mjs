@@ -4,6 +4,7 @@ import * as fs from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 // oats.okf 5.0.0: harvest PRs carry a version 2 provenance block (no run or
 // input ids); 4.x version 1 PRs stay reviewable. PR metadata is data, never run.
 const {parseProvenance}=await import(new URL('../oats-package/capabilities/oats-okf-maintenance/lib/provenance.mjs',import.meta.url));
@@ -64,7 +65,7 @@ test('review-context for a v2 PR returns its evidence and a reading line naming 
 
 // oats.okf 5.7.0 (awebai/oats-okf#118): okf-needs-human no longer parks a PR.
 // review-context has no blocked field, and settled means only "not open".
-const CLI=new URL('../oats-package/capabilities/oats-okf-maintenance/bin/okf-maintenance.mjs',import.meta.url).pathname;
+const CLI=fileURLToPath(new URL('../oats-package/capabilities/oats-okf-maintenance/bin/okf-maintenance.mjs',import.meta.url));
 test('review-context: an okf-needs-human label blocks nothing; settled means the PR is not open',t=>{
   const labelled=pr(block(V2),{labels:[{name:'okf-harvest'},{name:'okf-needs-human'}]});
   const r=reviewContext({pr:URL_},{},{view:view(labelled)});
