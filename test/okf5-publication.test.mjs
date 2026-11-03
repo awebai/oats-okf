@@ -922,3 +922,442 @@ for (const command of ['create', 'close', 'close-unsafe']) {
     });
   }
 }
+
+// A second, isolated writer advances accepted history without switching the
+// proposal checkout or disturbing its staged sanitization. All transports are
+// still the fixture's local bare repository, never a hosted Git service.
+function advanceAccepted(f, change) {
+  const repo = fs.mkdtempSync(join(f.root, 'accepted-writer-'));
+  f.git(f.root, 'clone', '-q', '--branch', 'main', f.remote, repo);
+  f.git(repo, 'config', 'protocol.allow', 'never');
+  f.git(repo, 'config', 'protocol.file.allow', 'always');
+  const put = (path, data) => {
+    const target = join(repo, path); fs.mkdirSync(dirname(target), { recursive: true }); fs.writeFileSync(target, data);
+  };
+  change({ repo, put });
+  f.git(repo, 'add', '-A');
+  f.git(repo, ...IDENTITY, 'commit', '-q', '-m', 'Independent synthetic accepted change');
+  const accepted = f.git(repo, 'rev-parse', 'HEAD');
+  f.git(repo, 'push', '-q', 'origin', 'HEAD:refs/heads/main');
+  f.git(f.repo, 'fetch', '-q', 'origin', 'refs/heads/main');
+  assert.equal(f.git(f.remote, 'rev-parse', 'main'), accepted);
+  return accepted;
+}
+
+function sourceSnapshot(f) {
+  const files = [];
+  function visit(path = '') {
+    for (const name of fs.readdirSync(join(f.repo, path)).sort()) {
+      if (!path && name === '.git') continue;
+      const relative = path ? `${path}/${name}` : name, absolute = join(f.repo, relative), st = fs.lstatSync(absolute);
+      files.push([relative, st.mode, st.isSymbolicLink() ? fs.readlinkSync(absolute)
+        : st.isDirectory() ? null : fs.readFileSync(absolute).toString('base64')]);
+      if (st.isDirectory()) visit(relative);
+    }
+  }
+  visit();
+  return {
+    head: f.git(f.repo, 'rev-parse', 'HEAD'), headRef: fs.readFileSync(join(f.repo, '.git/HEAD'), 'utf8'),
+    tree: f.git(f.repo, 'write-tree'), entries: f.git(f.repo, 'ls-files', '--stage', '-z'), files,
+  };
+}
+
+function exactMergeCall(f, head, since = 0) {
+  const writes = f.calls().slice(since).filter(c => c.write);
+  assert.deepEqual(writes.map(c => c.kind), ['comment', 'merge']);
+  assert.ok(writes.every(c => c.effect));
+  assert.equal(writes[0].input, verdict(head));
+  assert.deepEqual(writes[1].argv, ['pr', 'merge', PR, '--repo', GITHUB, '--squash', '--match-head-commit', head,
+    '--subject', 'OKF knowledge proposal', '--body-file', '-']);
+  assert.equal(writes[1].input, `Reviewed OKF head: ${head}\n`);
+}
+
+for (const openedBy of ['create', 'open']) {
+  test(`moved accepted tip: merge after ${openedBy} requires an exact replacement and fresh verdict`, t => {
+    const f = fixture(t), head = f.change();
+    if (openedBy === 'create') success(f.run('create', head));
+    else f.open(head);
+    const accepted = advanceAccepted(f, ({ put }) => put('expert/independent.md', 'Independently accepted knowledge\n'));
+    assert.equal(f.git(f.repo, 'merge-base', accepted, head), f.base);
+    assert.equal(f.rawGit(f.repo, ['merge-base', '--is-ancestor', accepted, head]).status, 1, 'accepted tip really diverged');
+    const before = f.snapshot(), source = sourceSnapshot(f), since = f.calls().length;
+    refusal(f.run('merge', head), 'E_REWRITE_REQUIRED'); unchanged(f, before, since);
+    refusal(f.run('merge', head, { base: accepted }), 'E_REWRITE_REQUIRED'); unchanged(f, before, since);
+    assert.deepEqual(sourceSnapshot(f), source);
+    const replacement = success(f.run('rewrite', head, { base: accepted }));
+    assert.equal(f.git(f.remote, 'show', '-s', '--format=%P', replacement.head), accepted);
+    const rewritten = f.snapshot(), afterRewrite = f.calls().length;
+    refusal(f.run('merge', replacement.head, { base: accepted, 'verdict-file': f.artifact('old-review.md', verdict(head)) }), 'E_VERDICT');
+    unchanged(f, rewritten, afterRewrite);
+    const out = success(f.run('merge', replacement.head, { base: accepted }));
+    assert.equal(out.status, 'merge-submitted'); assert.equal(out.head, replacement.head);
+    exactMergeCall(f, replacement.head, afterRewrite);
+    assert.deepEqual(sourceSnapshot(f), source);
+    assert.deepEqual(f.snapshot(), rewritten, 'fake gh verifies invocation only; it does NOT perform a hosted squash');
+  });
+}
+
+test('moved accepted tip: advancing again after rewrite refuses merge for both stale and refreshed base pins', t => {
+  const f = fixture(t), head = f.change(); f.open(head);
+  const accepted = advanceAccepted(f, ({ put }) => put('expert/independent.md', 'First independent accepted change\n'));
+  const replacement = success(f.run('rewrite', head, { base: accepted }));
+  const advanced = advanceAccepted(f, ({ put }) => put('expert/independent.md', 'Second independent accepted change\n'));
+  const before = f.snapshot(), since = f.calls().length, source = sourceSnapshot(f);
+  for (const base of [accepted, advanced]) {
+    refusal(f.run('merge', replacement.head, { base }), 'E_REWRITE_REQUIRED'); unchanged(f, before, since);
+  }
+  assert.deepEqual(sourceSnapshot(f), source);
+  assert.equal(f.git(f.remote, 'rev-parse', REF), replacement.head);
+  assert.equal(f.git(f.remote, 'rev-parse', 'main'), advanced);
+});
+
+test('moved accepted tip: merge after replacement retains the exact-head guard at the final gh boundary', t => {
+  const f = fixture(t), head = f.change(); f.open(head);
+  const accepted = advanceAccepted(f, ({ put }) => put('expert/independent.md', 'Independent accepted change\n'));
+  const replacement = success(f.run('rewrite', head, { base: accepted }));
+  const competitor = concurrentHead(f);
+  f.patchGh({ hook: { event: 'view', at: 3, action: 'remote-ref', ref: REF, oid: competitor } });
+  const r = f.run('merge', replacement.head, { base: accepted }); hookRan(f); refusal(r, 'E_GH');
+  assert.equal(f.git(f.remote, 'rev-parse', 'main'), accepted);
+  assert.equal(f.git(f.remote, 'rev-parse', REF), competitor);
+  const attempt = f.calls().at(-1);
+  assert.equal(attempt.kind, 'merge'); assert.equal(attempt.effect, false);
+  assert.equal(attempt.argv[attempt.argv.indexOf('--match-head-commit') + 1], replacement.head);
+  assert.deepEqual(f.calls().filter(c => c.kind === 'merge' && c.effect), []);
+});
+
+test('real Git squash evidence (not fake-hosted proof): a divergent PR preserves independent accepted changes', t => {
+  const f = fixture(t, { seed: ({ put }) => {
+    put('expert/accepted-modified.md', 'Before independent modification\n');
+    put('expert/accepted-deleted.md', 'Before independent deletion\n');
+  } });
+  f.put('expert/proposal.md', 'Proposed knowledge\n'); const head = f.commit(); f.publish(head);
+  const accepted = advanceAccepted(f, ({ repo, put }) => {
+    put('expert/accepted-added.md', 'Independent addition\n');
+    put('expert/accepted-modified.md', 'Independent modification\n');
+    fs.unlinkSync(join(repo, 'expert/accepted-deleted.md'));
+  });
+  const before = f.snapshot(), squashRepo = join(f.root, 'real-squash');
+  f.git(f.root, 'clone', '-q', '--branch', 'main', f.remote, squashRepo);
+  f.git(squashRepo, 'config', 'protocol.allow', 'never');
+  f.git(squashRepo, 'config', 'protocol.file.allow', 'always');
+  f.git(squashRepo, ...IDENTITY, 'merge', '--squash', '--no-commit', head);
+  f.git(squashRepo, ...IDENTITY, 'commit', '-q', '-m', 'Isolated synthetic squash evidence');
+  assert.equal(f.git(squashRepo, 'show', '-s', '--format=%P', 'HEAD'), accepted);
+  assert.equal(f.git(squashRepo, 'show', 'HEAD:expert/proposal.md'), 'Proposed knowledge');
+  for (const path of ['expert/accepted-added.md', 'expert/accepted-modified.md']) {
+    assert.equal(f.git(squashRepo, 'ls-tree', 'HEAD', path), f.git(squashRepo, 'ls-tree', accepted, path));
+  }
+  assert.equal(f.git(squashRepo, 'ls-tree', 'HEAD', 'expert/accepted-deleted.md'), '');
+  assert.equal(f.rawGit(squashRepo, ['merge-base', '--is-ancestor', head, 'HEAD']).status, 1, 'a real squash does not preserve PR ancestry');
+  unchanged(f, before); assert.deepEqual(f.calls(), [], 'this evidence did not involve even the fake gh');
+});
+
+test('moved accepted tip: rewrite preserves accepted additions, modifications, deletions and modes alongside sanitized PR changes', t => {
+  const f = fixture(t, { seed: ({ put }) => {
+    put('expert/accepted-modified.md', 'Before independent modification\n');
+    put('expert/accepted-deleted.md', 'Before independent deletion\n');
+    put('expert/accepted-executable.sh', '#!/bin/sh\nexit 0\n');
+    put('expert/pr-deleted.md', 'A decision removed by the sanitized proposal\n');
+  } });
+  f.put('expert/rejected.md', `${SECRET}\n`);
+  f.put('expert/proposed.md', 'Original PR content\n');
+  const old = f.commit(), rejectedBlob = f.git(f.repo, 'rev-parse', `${old}:expert/rejected.md`);
+  f.open(old, { body: body(provenance(), SECRET), title: SECRET });
+  const accepted = advanceAccepted(f, ({ repo, put }) => {
+    put('expert/accepted-added.md', 'Independently accepted addition\n');
+    put('expert/accepted-modified.md', 'Independently accepted modification\n');
+    fs.unlinkSync(join(repo, 'expert/accepted-deleted.md'));
+    fs.chmodSync(join(repo, 'expert/accepted-executable.sh'), 0o755);
+  });
+  assert.equal(f.git(f.repo, 'merge-base', accepted, old), f.base);
+  fs.unlinkSync(join(f.repo, 'expert/rejected.md')); fs.unlinkSync(join(f.repo, 'expert/pr-deleted.md'));
+  f.put('expert/proposed.md', 'Sanitized proposed knowledge\n');
+  f.put('expert/decision.md', '# Sanitized proposed decision\n'); f.git(f.repo, 'add', '-A');
+  // Neither unstaged content nor an untracked file belongs in the replacement.
+  fs.appendFileSync(join(f.repo, 'expert/decision.md'), 'Unstaged synthetic work in progress\n');
+  f.put('untracked-fixture.txt', 'Untracked synthetic work in progress\n');
+  const source = sourceSnapshot(f), before = f.snapshot(), since = f.calls().length;
+  refusal(f.run('rewrite', old), 'E_BASE_MOVED'); unchanged(f, before, since);
+  assert.deepEqual(sourceSnapshot(f), source);
+  const out = success(f.run('rewrite', old, { base: accepted }));
+  assert.equal(out.status, 'rewritten-review-required'); assert.notEqual(out.head, old);
+  assert.equal(f.git(f.remote, 'rev-parse', REF), out.head);
+  assert.equal(f.git(f.remote, 'rev-parse', 'main'), accepted);
+  assert.equal(f.git(f.remote, 'show', '-s', '--format=%P', out.head), accepted, 'only the current accepted tip is a parent');
+  assert.equal(f.git(f.remote, 'rev-list', '--count', out.head, `^${accepted}`), '1');
+  for (const path of ['expert/accepted-added.md', 'expert/accepted-modified.md', 'expert/accepted-executable.sh']) {
+    assert.equal(f.git(f.remote, 'ls-tree', out.head, path), f.git(f.remote, 'ls-tree', accepted, path), `preserve accepted ${path} exactly`);
+  }
+  assert.match(f.git(f.remote, 'ls-tree', out.head, 'expert/accepted-executable.sh'), /^100755 blob /);
+  for (const path of ['expert/accepted-deleted.md', 'expert/pr-deleted.md', 'expert/rejected.md', 'untracked-fixture.txt']) {
+    assert.equal(f.git(f.remote, 'ls-tree', out.head, path), '', `do not resurrect or introduce ${path}`);
+  }
+  assert.equal(f.git(f.remote, 'show', `${out.head}:expert/decision.md`), '# Sanitized proposed decision');
+  assert.equal(f.git(f.remote, 'show', `${out.head}:expert/proposed.md`), 'Sanitized proposed knowledge');
+  const reachable = f.git(f.remote, 'rev-list', '--objects', '--no-object-names', out.head).split('\n');
+  assert.ok(!reachable.includes(old)); assert.ok(!reachable.includes(rejectedBlob));
+  assert.deepEqual(sourceSnapshot(f), source, 'reconciliation must use a private index, not change source staging/HEAD/worktree');
+  assert.deepEqual(f.calls().filter(c => c.write).map(c => c.kind), ['edit'], 'the new head needs review, not an automatic merge');
+  assert.equal(f.calls().find(c => c.kind === 'edit').input, fs.readFileSync(f.bodyFile, 'utf8'));
+});
+
+test('moved accepted tip: rewrite merges disjoint edits to the same file without changing the source index', t => {
+  const original = Array.from({ length: 14 }, (_, i) => `Synthetic line ${i + 1}\n`).join('');
+  const f = fixture(t, { seed: ({ put }) => put('expert/shared.md', original) });
+  f.put('expert/shared.md', original.replace('Synthetic line 2\n', 'Proposed line two\n'));
+  f.put('expert/rejected.md', SECRET); const old = f.commit(); f.open(old);
+  const acceptedText = original.replace('Synthetic line 13\n', 'Accepted line thirteen\n');
+  const accepted = advanceAccepted(f, ({ put }) => put('expert/shared.md', acceptedText));
+  fs.unlinkSync(join(f.repo, 'expert/rejected.md'));
+  const stagedText = original.replace('Synthetic line 2\n', 'Sanitized proposed line two\n');
+  f.put('expert/shared.md', stagedText); f.git(f.repo, 'add', '-A');
+  const source = sourceSnapshot(f), out = success(f.run('rewrite', old, { base: accepted }));
+  const expected = acceptedText.replace('Synthetic line 2\n', 'Sanitized proposed line two\n');
+  assert.equal(f.git(f.remote, 'show', `${out.head}:expert/shared.md`), expected.trimEnd());
+  assert.equal(f.git(f.remote, 'show', '-s', '--format=%P', out.head), accepted);
+  assert.equal(f.git(f.repo, 'show', ':expert/shared.md'), stagedText.trimEnd());
+  assert.deepEqual(sourceSnapshot(f), source);
+});
+
+for (const conflict of ['overlapping-edit', 'add/add', 'accepted-delete/proposed-modify', 'accepted-modify/proposed-delete',
+  'accepted-directory/proposed-file', 'accepted-file/proposed-directory']) {
+  test(`moved accepted tip: rewrite refuses ${conflict} with E_REWRITE_CONFLICT and no publication or source changes`, t => {
+    const f = fixture(t, { seed: ({ put }) => put('expert/shared.md', 'Original synthetic line\n') });
+    const old = f.change(); f.open(old);
+    const accepted = advanceAccepted(f, ({ repo, put }) => {
+      if (conflict === 'overlapping-edit' || conflict === 'accepted-modify/proposed-delete') put('expert/shared.md', 'Independently accepted line\n');
+      if (conflict === 'add/add') put('expert/collision.md', 'Independent accepted addition\n');
+      if (conflict === 'accepted-delete/proposed-modify') fs.unlinkSync(join(repo, 'expert/shared.md'));
+      if (conflict === 'accepted-directory/proposed-file') put('expert/collision/accepted.md', 'Accepted data must never disappear\n');
+      if (conflict === 'accepted-file/proposed-directory') put('expert/collision', 'Accepted file must never disappear\n');
+    });
+    if (conflict === 'overlapping-edit' || conflict === 'accepted-delete/proposed-modify') f.put('expert/shared.md', 'Conflicting proposed line\n');
+    if (conflict === 'add/add') f.put('expert/collision.md', 'Conflicting proposed addition\n');
+    if (conflict === 'accepted-modify/proposed-delete') fs.unlinkSync(join(f.repo, 'expert/shared.md'));
+    if (conflict === 'accepted-directory/proposed-file') f.put('expert/collision', 'Conflicting proposed file\n');
+    if (conflict === 'accepted-file/proposed-directory') f.put('expert/collision/proposed.md', 'Conflicting proposed child\n');
+    f.git(f.repo, 'add', '-A');
+    fs.appendFileSync(join(f.repo, 'expert/decision.md'), 'Unstaged synthetic work\n');
+    f.put('untracked-fixture.txt', 'Untracked synthetic work\n');
+    const before = f.snapshot(), source = sourceSnapshot(f);
+    refusal(f.run('rewrite', old, { base: accepted }), 'E_REWRITE_CONFLICT');
+    unchanged(f, before); assert.deepEqual(sourceSnapshot(f), source, 'a failed private merge cannot leave conflict stages or alter files');
+    assert.equal(f.git(f.remote, 'rev-parse', REF), old);
+    assert.equal(f.git(f.remote, 'rev-parse', 'main'), accepted);
+  });
+}
+
+test('moved accepted tip: rewrite preserves newly accepted non-text and symlink entries only as unchanged inherited objects', t => {
+  const f = rewriteFixture(t);
+  const accepted = advanceAccepted(f, ({ repo, put }) => {
+    put('code/binary.bin', Buffer.from([0x41, 0, 0x42]));
+    put('code/source.txt', 'Independently accepted source\n');
+    fs.symlinkSync('source.txt', join(repo, 'code/link'));
+  });
+  const source = sourceSnapshot(f), out = success(f.run('rewrite', f.old, { base: accepted }));
+  assert.equal(f.git(f.remote, 'show', '-s', '--format=%P', out.head), accepted);
+  for (const path of ['code/binary.bin', 'code/source.txt', 'code/link']) {
+    assert.equal(f.git(f.remote, 'ls-tree', out.head, path), f.git(f.remote, 'ls-tree', accepted, path));
+    assert.equal(f.git(f.repo, 'ls-files', '--', path), '', 'accepted additions were not in the source staging area');
+  }
+  assert.deepEqual(sourceSnapshot(f), source);
+});
+
+for (const mode of ['binary', 'symlink']) {
+  test(`moved accepted tip: rewrite still refuses a newly proposed ${mode}, not an unchanged accepted entry`, t => {
+    const f = rewriteFixture(t);
+    const accepted = advanceAccepted(f, ({ put }) => put('expert/independent.md', 'Independent accepted change\n'));
+    if (mode === 'binary') f.put('code/new.bin', Buffer.from([0x41, 0, 0x42]));
+    else { f.put('code/source.txt', 'Synthetic proposed source\n'); fs.symlinkSync('source.txt', join(f.repo, 'code/link')); }
+    f.git(f.repo, 'add', '-A');
+    const before = f.snapshot(), source = sourceSnapshot(f);
+    refusal(f.run('rewrite', f.old, { base: accepted }), mode === 'binary' ? 'E_CONTENT_INPUT' : 'E_TREE');
+    unchanged(f, before); assert.deepEqual(sourceSnapshot(f), source);
+  });
+}
+
+test('moved accepted tip: behind legacy PR refuses amendment and merge, then closes without changing ancestry', t => {
+  const f = legacyFixture(t);
+  const accepted = advanceAccepted(f, ({ put }) => put('expert/independent.md', 'Independent accepted change\n'));
+  f.put('expert/legacy-addition.md', 'A synthetic legacy addition\n'); f.git(f.repo, 'add', '-A');
+  const source = sourceSnapshot(f), before = f.snapshot();
+  refusal(f.run('amend-legacy', f.old), 'E_BASE_MOVED'); unchanged(f, before);
+  refusal(f.run('amend-legacy', f.old, { base: accepted }), 'E_REWRITE_REQUIRED'); unchanged(f, before);
+  refusal(f.run('merge', f.old, { base: accepted }), 'E_REWRITE_REQUIRED'); unchanged(f, before);
+  assert.equal(f.git(f.remote, 'rev-parse', f.legacyRef), f.old);
+  assert.deepEqual(sourceSnapshot(f), source);
+  const out = success(f.run('close', f.old, { base: accepted }));
+  assert.equal(out.status, 'closed'); assert.equal(out.head, f.old);
+  assert.deepEqual(f.snapshot(), before, 'closing a safe legacy PR does not rewrite or delete its ancestry');
+  assert.deepEqual(f.calls().filter(c => c.write).map(c => c.kind), ['comment', 'close']);
+});
+
+for (const command of ['screen', 'create', 'merge', 'amend-legacy']) {
+  for (const acceptedCopy of [false, true]) {
+    test(`fork history: ${command} screens a deleted rejected intermediate blob even when current accepted history ${acceptedCopy ? 'also contains that blob' : 'has independently advanced'}`, t => {
+      const f = fixture(t); f.put('expert/rejected.md', `${SECRET}\n`);
+      const rejected = f.commit(), blob = f.git(f.repo, 'rev-parse', `${rejected}:expert/rejected.md`);
+      fs.unlinkSync(join(f.repo, 'expert/rejected.md')); const head = f.change();
+      const version = command === 'amend-legacy' ? 1 : 2;
+      if (command === 'merge' || command === 'amend-legacy') f.open(head, { body: body(provenance(version)) });
+      const accepted = advanceAccepted(f, ({ put }) => {
+        put('expert/independent.md', 'Independent accepted change\n');
+        if (acceptedCopy) put('expert/rejected.md', `${SECRET}\n`);
+      });
+      assert.equal(f.git(f.repo, 'merge-base', accepted, head), f.base);
+      assert.equal(f.git(f.repo, 'ls-tree', head, 'expert/rejected.md'), '', 'the final proposal tree is clean');
+      if (acceptedCopy) assert.equal(f.git(f.repo, 'rev-parse', `${accepted}:expert/rejected.md`), blob, 'current-tip subtraction would hide this rejected object');
+      if (command === 'amend-legacy') {
+        fs.writeFileSync(f.bodyFile, body(provenance(1)));
+        f.put('expert/legacy-addition.md', 'A safe append-only addition\n'); f.git(f.repo, 'add', '-A');
+      }
+      const before = f.snapshot(), source = sourceSnapshot(f), r = f.run(command, head, { base: accepted });
+      const behindRefusal = ['merge', 'amend-legacy'].includes(command);
+      refusal(r, behindRefusal ? 'E_REWRITE_REQUIRED' : 'E_CONTENT_REFUSED'); unchanged(f, before);
+      const screened = behindRefusal ? f.run('screen', head, { base: accepted }) : r;
+      refusal(screened);
+      assert.ok(screened.out.findings.some(x => x.location.includes(rejected) && x.location.includes(blob)), 'screen the full introduced PR history since the fork, not just its tip or current-tip object difference');
+      assert.deepEqual(sourceSnapshot(f), source);
+    });
+  }
+}
+
+for (const command of ['merge', 'amend-legacy']) {
+  test(`fork history: ${command} still screens rejected intermediate commit metadata after accepted history advances`, t => {
+    const f = fixture(t), rejected = f.commit(`Rejected synthetic message\n\n${SECRET}\n`), head = f.change();
+    f.open(head, { body: body(provenance(command === 'amend-legacy' ? 1 : 2)) });
+    const accepted = advanceAccepted(f, ({ put }) => put('expert/independent.md', 'Independent accepted change\n'));
+    if (command === 'amend-legacy') {
+      fs.writeFileSync(f.bodyFile, body(provenance(1)));
+      f.put('expert/legacy-addition.md', 'A safe append-only addition\n'); f.git(f.repo, 'add', '-A');
+    }
+    const before = f.snapshot(), source = sourceSnapshot(f), r = f.run(command, head, { base: accepted });
+    refusal(r, 'E_REWRITE_REQUIRED'); unchanged(f, before);
+    const screened = f.run('screen', head, { base: accepted }); refusal(screened);
+    assert.ok(screened.out.findings.some(x => x.location === `commit ${rejected}`));
+    assert.deepEqual(sourceSnapshot(f), source);
+  });
+}
+
+for (const unsafe of [false, true]) {
+  test(`moved accepted tip: merge refuses recombination (${unsafe ? 'refused accepted bytes' : 'safe disjoint edits'}) without reading source staging`, t => {
+    const original = Array.from({ length: 20 }, (_, i) => `Synthetic line ${i + 1}\n`).join('');
+    const f = fixture(t, { seed: ({ put }) => put('expert/shared.md', original) });
+    f.put('expert/shared.md', original.replace('Synthetic line 2\n', 'Safe proposed line\n'));
+    const head = f.commit(); f.open(head);
+    const accepted = advanceAccepted(f, ({ put }) => put('expert/shared.md', original.replace('Synthetic line 18\n', `${unsafe ? SECRET : 'Safe accepted line'}\n`)));
+    // Merge checks the reviewed head, never whatever happens to be staged.
+    f.put('expert/shared.md', 'Unrelated staged content\n'); f.git(f.repo, 'add', '-A');
+    const before = f.snapshot(), source = sourceSnapshot(f);
+    const result = f.run('merge', head, { base: accepted });
+    refusal(result, 'E_REWRITE_REQUIRED'); unchanged(f, before);
+    assert.deepEqual(sourceSnapshot(f), source);
+    // Independent real-Git control: the actual local squash has both edits.
+    const local = join(f.root, 'squash-control');
+    f.git(f.root, 'clone', '-q', '--branch', 'main', f.remote, local);
+    f.git(local, ...IDENTITY, 'merge', '--squash', '--no-commit', head);
+    f.git(local, ...IDENTITY, 'commit', '-q', '-m', 'Synthetic composed squash');
+    const squash = f.git(local, 'rev-parse', 'HEAD');
+    const screened = f.run('screen', squash, { repo: local, base: accepted });
+    if (unsafe) refusal(screened); else success(screened);
+  });
+}
+
+test('moved accepted tip: union-attribute squash mismatch refuses until an exact screened v2 replacement is reviewed', t => {
+  const content = rows => rows.map(x => x === 'X' ? SECRET : x).join('\n') + '\n';
+  const original = content(['', 'X', 'C', 'C', 'C', 'A', '', '', 'C', 'B', 'X', 'B', 'B', 'X', 'A', 'X']);
+  const acceptedText = content(['', 'X', 'C', 'C', 'C', 'A', '', 'B', 'X', 'B', 'B', 'X', 'A']);
+  const proposed = content(['', '', '', 'C', 'B', 'A']);
+  const f = fixture(t, { seed: ({ put }) => { put('.gitattributes', 'expert/shared.md merge=union\n'); put('expert/shared.md', original); } });
+  f.put('expert/shared.md', proposed); const old = f.commit(); f.open(old);
+  const accepted = advanceAccepted(f, ({ put }) => put('expert/shared.md', acceptedText));
+  const before = f.snapshot(), source = sourceSnapshot(f);
+  refusal(f.run('merge', old, { base: accepted }), 'E_REWRITE_REQUIRED'); unchanged(f, before);
+  assert.deepEqual(sourceSnapshot(f), source);
+  const local = join(f.root, 'union-control');
+  f.git(f.root, 'clone', '-q', '--branch', 'main', f.remote, local);
+  f.git(local, ...IDENTITY, 'merge', '--squash', '--no-commit', old);
+  f.git(local, ...IDENTITY, 'commit', '-q', '-m', 'Synthetic divergent union squash');
+  refusal(f.run('screen', f.git(local, 'rev-parse', 'HEAD'), { repo: local, base: accepted }));
+  const replacement = success(f.run('rewrite', old, { base: accepted }));
+  assert.equal(f.git(f.repo, 'show', '-s', '--format=%P', replacement.head), accepted);
+  success(f.run('screen', replacement.head, { base: accepted }));
+  const since = f.calls().length, rewritten = f.snapshot();
+  refusal(f.run('merge', replacement.head, { base: accepted, 'verdict-file': f.artifact('stale-union-review.md', verdict(old)) }), 'E_VERDICT');
+  unchanged(f, rewritten, since);
+  success(f.run('merge', replacement.head, { base: accepted })); exactMergeCall(f, replacement.head, since);
+  // Accepted is now an ancestor. Even with union attributes the real squash
+  // tree is exactly the screened replacement, not another reconciliation.
+  f.git(local, 'fetch', '-q', 'origin', REF);
+  f.git(local, 'reset', '--hard', accepted);
+  f.git(local, ...IDENTITY, 'merge', '--squash', '--no-commit', replacement.head);
+  assert.equal(f.git(local, 'write-tree'), f.git(f.repo, 'rev-parse', `${replacement.head}^{tree}`));
+  assert.deepEqual(sourceSnapshot(f), source);
+});
+
+for (const kind of ['addition', 'removal']) {
+  test(`moved accepted tip: rewrite refuses explicit empty-subtree ${kind} rather than silently dropping staged intent`, t => {
+    const f = fixture(t);
+    const inputGit = (args, input) => {
+      const r = f.rawGit(f.repo, args, { input }); assert.equal(r.status, 0, r.stderr); return r.stdout.trim();
+    };
+    const empty = inputGit(['mktree'], '');
+    const withEmpty = tree => inputGit(['mktree'], `${f.git(f.repo, 'ls-tree', tree)}\n040000 tree ${empty}\tempty-proposed\n`);
+    if (kind === 'removal') {
+      const tree = withEmpty(f.base);
+      f.base = inputGit([...IDENTITY, 'commit-tree', tree, '-p', f.base], 'Synthetic accepted empty tree\n');
+      f.publish(f.base, 'main'); f.git(f.repo, 'read-tree', f.base); f.git(f.repo, 'update-ref', 'HEAD', f.base);
+    }
+    const old = inputGit([...IDENTITY, 'commit-tree', f.git(f.repo, 'write-tree'), '-p', f.base], 'Synthetic proposal\n');
+    f.git(f.repo, 'update-ref', 'HEAD', old); f.open(old);
+    const accepted = advanceAccepted(f, ({ put }) => put('expert/independent.md', 'Independent accepted change\n'));
+    const staged = kind === 'addition' ? withEmpty(old)
+      : inputGit(['mktree'], f.git(f.repo, 'ls-tree', old).split('\n').filter(row => !row.endsWith('\tempty-proposed')).join('\n') + '\n');
+    f.git(f.repo, 'read-tree', staged); assert.equal(f.git(f.repo, 'write-tree'), staged);
+    const before = f.snapshot(), source = sourceSnapshot(f);
+    refusal(f.run('rewrite', old, { base: accepted }), 'E_REWRITE_CONFLICT');
+    unchanged(f, before); assert.deepEqual(sourceSnapshot(f), source);
+  });
+}
+
+function nonUniqueFork(f, history) {
+  let accepted, head;
+  if (history === 'unrelated') {
+    f.put('expert/unrelated.md', 'Unrelated synthetic proposal\n'); f.git(f.repo, 'add', '-A');
+    head = f.git(f.repo, ...IDENTITY, 'commit-tree', f.git(f.repo, 'write-tree'), '-m', 'Independent root with no common ancestor');
+    accepted = advanceAccepted(f, ({ put }) => put('expert/independent.md', 'Independent accepted change\n'));
+    const result = f.rawGit(f.repo, ['merge-base', '--all', accepted, head]);
+    assert.equal(result.status, 1); assert.equal(result.stdout, '');
+  } else {
+    f.git(f.repo, 'checkout', '-q', '--detach', f.base);
+    f.put('expert/left.md', 'Synthetic left history\n'); const left = f.commit('Left history');
+    f.git(f.repo, 'checkout', '-q', '--detach', f.base);
+    f.put('expert/right.md', 'Synthetic right history\n'); const right = f.commit('Right history');
+    f.put('expert/left.md', 'Synthetic left history\n'); f.git(f.repo, 'add', '-A');
+    const tree = f.git(f.repo, 'write-tree');
+    accepted = f.git(f.repo, ...IDENTITY, 'commit-tree', tree, '-p', left, '-p', right, '-m', 'Accepted criss-cross merge');
+    head = f.git(f.repo, ...IDENTITY, 'commit-tree', tree, '-p', right, '-p', left, '-m', 'Proposed criss-cross merge');
+    f.publish(accepted, 'main');
+    assert.deepEqual(f.git(f.repo, 'merge-base', '--all', accepted, head).split('\n').sort(), [left, right].sort(), 'the real Git graph must have two best common ancestors');
+  }
+  f.git(f.repo, 'reset', '--hard', head);
+  return { accepted, head };
+}
+
+for (const history of ['unrelated', 'ambiguous-criss-cross']) {
+  for (const command of ['screen', 'create', 'merge', 'rewrite', 'amend-legacy']) {
+    test(`fork history: ${command} fails closed with typed E_HISTORY for ${history} ancestry`, t => {
+      const f = fixture(t), { accepted, head } = nonUniqueFork(f, history);
+      const version = command === 'amend-legacy' ? 1 : 2;
+      if (!['screen', 'create'].includes(command)) f.open(head, { body: body(provenance(version)) });
+      if (command === 'rewrite' || command === 'amend-legacy') {
+        fs.writeFileSync(f.bodyFile, body(provenance(version)));
+        f.put('expert/staged-addition.md', 'Safe staged addition cannot cure ambiguous ancestry\n'); f.git(f.repo, 'add', '-A');
+      }
+      const before = f.snapshot(), source = sourceSnapshot(f);
+      refusal(f.run(command, head, { base: accepted }), 'E_HISTORY');
+      unchanged(f, before); assert.deepEqual(sourceSnapshot(f), source);
+    });
+  }
+}

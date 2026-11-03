@@ -520,7 +520,10 @@ brief, harvester and maintainer are all given the same sentence:
   domains/documentation IPs and noreply commit-trailer addresses are excluded.
   Before release, accepted-tree scans measure false positives per rule as counts
   only; timestamps, versions, ports, PR/issue IDs and run IDs are not phones.
-- A **v2 amendment** produces one sanitized commit from the accepted base,
+- A **v2 amendment** reconciles the sanitized PR delta from its unique fork
+  with the current accepted tree, preserving intervening accepted additions,
+  edits and deletions rather than reparenting a stale full checkout. Conflicts
+  refuse before publication. It produces one sanitized commit from that tip,
   replaces only the exact old PR head with a lease, and requires a fresh verdict
   bound to the new head. This removes branch-only rejected history from that
   branch, not the initial exposure or GitHub's retained pull refs/caches/clones.
@@ -593,7 +596,12 @@ opened by 4.x harvesters stay reviewable.
 - The maintainer merges, amends and merges, or closes through the executable
   publication gate, recording an `okf-review` verdict bound to the exact head.
   Rewrites invalidate earlier verdicts; an open PR with a posted verdict is not
-  settled. An uncertain write is inspected before any authorized recovery.
+  settled. A behind PR refuses direct merge with `E_REWRITE_REQUIRED`: v2 must
+  publish an exact screened replacement on the current accepted tip and receive
+  a fresh verdict; a behind legacy v1 PR closes for re-proposal. A locally
+  computed three-way merge is not a screen for potentially different hosted
+  squash bytes. Hosted merge semantics remain uncertified. An uncertain write
+  is inspected before any authorized recovery.
 - It never parks a PR. A PR that supersedes a human-accepted decision is
   merged only when it cites the human's acceptance (checked when the record
   is on GitHub, otherwise recorded as source-reported), and closed otherwise.

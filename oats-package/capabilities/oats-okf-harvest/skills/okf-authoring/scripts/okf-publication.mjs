@@ -4,6 +4,7 @@
 import fs from 'node:fs';
 import { resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { screenBytes, screenText } from './okf-content-screen.mjs';
 
@@ -24,8 +25,12 @@ function env() {
   return { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^GIT_/.test(k))),
     GIT_NO_REPLACE_OBJECTS: '1', GIT_TERMINAL_PROMPT: '0' };
 }
-function run(command, args, { cwd, input, optional = false } = {}) {
-  const r = spawnSync(command, args, { cwd, input, env: env(), timeout: 60000, maxBuffer: MAX });
+function run(command, args, { cwd, input, optional = false, indexFile } = {}) {
+  const childEnv = env();
+  // Only an internally-created private reconciliation index supplies this.
+  // Inherited GIT_INDEX_FILE was already removed by env().
+  if (indexFile) childEnv.GIT_INDEX_FILE = indexFile;
+  const r = spawnSync(command, args, { cwd, input, env: childEnv, timeout: 60000, maxBuffer: MAX });
   if (r.error || r.signal || r.status !== 0) {
     if (optional && !r.error && !r.signal && r.status === 1) return null;
     fail(command === 'git' ? 'E_GIT' : 'E_GH');
@@ -74,15 +79,26 @@ function inspectEntries(repo, head, entries, introduced, scanned) {
   }
   return findings;
 }
+function forkPoint(repo, base, head) {
+  const result = git(repo, ['merge-base', '--all', oid(base), oid(head)], { optional: true });
+  if (result === null) fail('E_HISTORY');
+  const forks = lines(result);
+  if (forks.length !== 1) fail('E_HISTORY');
+  const fork = oid(forks[0]);
+  git(repo, ['merge-base', '--is-ancestor', fork, base]);
+  return fork;
+}
 export function screenRange(repo, base, head) {
   guardRepo(repo); oid(base); oid(head);
   object(repo, base, 'commit'); object(repo, head, 'commit');
-  git(repo, ['merge-base', '--is-ancestor', base, head]);
-  const commits = lines(git(repo, ['rev-list', '--reverse', head, `^${base}`, '--']));
+  // The accepted tip may advance independently after the PR was opened. Scan
+  // the PR's whole introduced history from its unique fork, not from that tip.
+  const fork = forkPoint(repo, base, head);
+  const commits = lines(git(repo, ['rev-list', '--reverse', head, `^${fork}`, '--']));
   if (commits.length > 4096) fail('E_LIMIT');
-  const introduced = new Set(lines(git(repo, ['rev-list', '--objects', '--no-object-names', head, `^${base}`, '--'])));
+  const introduced = new Set(lines(git(repo, ['rev-list', '--objects', '--no-object-names', head, `^${fork}`, '--'])));
   if (introduced.size > 50000) fail('E_LIMIT');
-  const baseline = new Set(tree(repo, base).map(e => `${e.mode}\0${e.id}\0${e.path}`));
+  const baseline = new Set(tree(repo, fork).map(e => `${e.mode}\0${e.id}\0${e.path}`));
   const findings = [], scanned = new Set();
   for (const id of commits) {
     const raw = object(repo, id, 'commit');
@@ -146,9 +162,9 @@ function tip(o, reference) {
   if (name !== reference) fail('E_REMOTE');
   return oid(id);
 }
-function verifyBase(o) {
+function verifyBase(o, movedCode = 'E_BASE_MOVED') {
   remoteGuard(o);
-  if (tip(o, baseRef(o['base-branch'])) !== oid(o.base)) fail('E_BASE_MOVED');
+  if (tip(o, baseRef(o['base-branch'])) !== oid(o.base)) fail(movedCode);
 }
 export function screenedPush(o, head, expected, branch) {
   oid(head); if (expected !== '') oid(expected);
@@ -197,10 +213,101 @@ function provenance(body) {
 function prText(p) {
   checked([...screenText(p.title, 'PR title'), ...screenText(p.body, 'PR body')]);
 }
-function commitFromIndex(o, message, parent = o.base) {
+const sameEntry = (a, b) => a === b || !!a && !!b && a.type === b.type && a.mode === b.mode && a.id === b.id;
+const fileMap = entries => new Map(entries.filter(e => e.type !== 'tree').map(e => [e.path, e]));
+function reconcileTree(o, staged) {
+  const fork = forkPoint(o.repo, o.base, o.head);
+  if (fork === o.base) return staged;
+  const acceptedEntries = tree(o.repo, o.base), accepted = fileMap(acceptedEntries);
+  const beforeEntries = tree(o.repo, fork), proposedEntries = tree(o.repo, staged);
+  const before = fileMap(beforeEntries), proposed = fileMap(proposedEntries);
+  // Git's index cannot faithfully apply an explicit empty-subtree delta once
+  // other entries change. Refuse rather than silently omit that staged intent.
+  const emptyDirectories = entries => {
+    const parents = new Set(entries.filter(e => e.path.includes('/')).map(e => e.path.slice(0, e.path.lastIndexOf('/'))));
+    return new Set(entries.filter(e => e.type === 'tree' && !parents.has(e.path)).map(e => e.path));
+  };
+  const oldEmpty = emptyDirectories(beforeEntries), proposedEmpty = emptyDirectories(proposedEntries);
+  if (oldEmpty.size !== proposedEmpty.size || [...oldEmpty].some(path => !proposedEmpty.has(path))) fail('E_REWRITE_CONFLICT');
+  const expected = new Map(accepted), updates = [];
+  const scratch = fs.mkdtempSync(join(fs.realpathSync(tmpdir()), 'okf-reconcile-'));
+  const indexFile = join(scratch, 'index');
+  try {
+    // Never touch the maintainer's index or working files. The private index
+    // starts from the CURRENT accepted tree, not the old PR checkout.
+    git(o.repo, ['read-tree', o.base], { indexFile });
+    const acceptedTree = text(git(o.repo, ['rev-parse', `${o.base}^{tree}`])).trim();
+    if (text(git(o.repo, ['write-tree'], { indexFile })).trim() !== acceptedTree) fail('E_REWRITE_CONFLICT');
+    for (const path of new Set([...before.keys(), ...proposed.keys()])) {
+      const old = before.get(path), ours = accepted.get(path), theirs = proposed.get(path);
+      if (sameEntry(old, theirs)) continue; // no PR delta: retain accepted state
+      let merged;
+      if (sameEntry(old, ours)) merged = theirs;
+      else if (sameEntry(ours, theirs)) merged = ours;
+      else {
+        if (!old || !ours || !theirs) fail('E_REWRITE_CONFLICT');
+        if ([old, ours, theirs].some(e => e.type !== 'blob' || !['100644', '100755'].includes(e.mode))) fail('E_REWRITE_CONFLICT');
+        const mode = theirs.mode === old.mode ? ours.mode : ours.mode === old.mode || ours.mode === theirs.mode ? theirs.mode : null;
+        if (!mode) fail('E_REWRITE_CONFLICT');
+        let id;
+        if (theirs.id === old.id) id = ours.id;
+        else if (ours.id === old.id || ours.id === theirs.id) id = theirs.id;
+        else {
+          // merge-file is longstanding Git plumbing: no worktree checkout,
+          // hooks, custom merge drivers, or newer merge-tree/apply flags.
+          const files = [ours, old, theirs].map((e, i) => {
+            const bytes = object(o.repo, e.id, 'blob');
+            if (bytes.includes(0)) fail('E_REWRITE_CONFLICT');
+            text(bytes); // strict UTF-8, but do not screen the old rejected data
+            const file = join(scratch, `input-${i}`);
+            fs.writeFileSync(file, bytes, { mode: 0o600 });
+            return file;
+          });
+          let bytes;
+          try { bytes = git(o.repo, ['merge-file', '-p', ...files]); }
+          catch { fail('E_REWRITE_CONFLICT'); }
+          id = oid(text(git(o.repo, ['hash-object', '-w', '--stdin'], { input: bytes })).trim());
+        }
+        merged = { ...theirs, mode, id };
+      }
+      if (merged) expected.set(path, merged); else expected.delete(path);
+      if (!sameEntry(ours, merged)) updates.push(`${merged ? `${merged.mode} ${merged.id}` : `0 ${'0'.repeat(o.base.length)}`}\t${path}\0`);
+    }
+    // update-index can resolve a file/directory collision by dropping an entry.
+    // Refuse the conflict first, and verify the resulting map afterwards.
+    const root = { children: new Map(), file: false };
+    for (const path of expected.keys()) {
+      let node = root;
+      for (const part of path.split('/')) {
+        if (node.file) fail('E_REWRITE_CONFLICT');
+        if (!node.children.has(part)) node.children.set(part, { children: new Map(), file: false });
+        node = node.children.get(part);
+      }
+      if (node.children.size) fail('E_REWRITE_CONFLICT');
+      node.file = true;
+    }
+    if (updates.length) git(o.repo, ['update-index', '-z', '--index-info'], { indexFile, input: updates.join('') });
+    const result = oid(text(git(o.repo, ['write-tree'], { indexFile })).trim());
+    const resultEntries = tree(o.repo, result), actual = fileMap(resultEntries);
+    if (actual.size !== expected.size || [...expected].some(([path, e]) => !sameEntry(e, actual.get(path)))) fail('E_REWRITE_CONFLICT');
+    const resultDirectories = new Set(resultEntries.filter(e => e.type === 'tree').map(e => e.path));
+    const nonemptyDirectories = new Set(acceptedEntries.filter(e => e.path.includes('/')).map(e => e.path.slice(0, e.path.lastIndexOf('/'))));
+    for (const e of acceptedEntries) {
+      if (e.type === 'tree' && !nonemptyDirectories.has(e.path) && !resultDirectories.has(e.path)) fail('E_REWRITE_CONFLICT');
+    }
+    return result;
+  } finally {
+    fs.rmSync(scratch, { recursive: true, force: true });
+  }
+}
+function commitFromIndex(o, message, parent = o.base, reconcile = false) {
   guardRepo(o.repo);
   if (text(git(o.repo, ['rev-parse', 'HEAD'])).trim() !== o.head) fail('E_HEAD_MOVED');
-  const treeId = oid(text(git(o.repo, ['write-tree'])).trim());
+  const staged = oid(text(git(o.repo, ['write-tree'])).trim());
+  const treeId = reconcile ? reconcileTree(o, staged) : staged;
+  return commitFromTree(o, treeId, message, parent);
+}
+function commitFromTree(o, treeId, message, parent = o.base) {
   // Reparent, never append to the contaminated PR head. Disable inherited
   // author/committer selectors and signing; identity is fixed package text.
   if (!text(message).trim()) fail('E_COMMIT_MESSAGE');
@@ -272,8 +379,12 @@ export function execute(command, o) {
     if (provenance(text(body)).version !== version) fail('E_PROVENANCE');
     const message = readText(o['commit-file'], 'replacement commit text', { commit: true });
     verifyBase(o);
+    guardRepo(o.repo);
+    // A legacy amendment cannot reparent the delivered head, and appending
+    // accepted changes is not an authorized substitute for v2 replacement.
+    if (version === 1 && forkPoint(o.repo, o.base, o.head) !== o.base) fail('E_REWRITE_REQUIRED');
     if (version === 2 && git(o.repo, ['merge-base', '--is-ancestor', o.head, o.base], { optional: true }) !== null) fail('E_HISTORY');
-    const head = commitFromIndex(o, message, version === 1 ? o.head : o.base);
+    const head = commitFromIndex(o, message, version === 1 ? o.head : o.base, version === 2);
     if (version === 1) {
       // Preserve 4.x completion ancestry, but never offer an append-only
       // removal: even a one-line deletion requires close-and-route instead.
@@ -295,8 +406,19 @@ export function execute(command, o) {
   const body = readText(o['verdict-file'], 'maintainer verdict');
   if (command === 'merge') {
     verdict(body, o.head, ['merge', 'amend+merge']); prText(p);
-    verifyBase(o); checked(screenRange(o.repo, o.base, o.head));
-    view(o); comment(o, body); view(o);
+    verifyBase(o, 'E_REWRITE_REQUIRED'); guardRepo(o.repo);
+    // Never submit a divergent hosted squash using an approximate local merge
+    // as its screen. Attributes, rename handling and algorithms may differ.
+    // V2 must publish an exact screened replacement and receive a fresh
+    // verdict; a behind legacy PR closes for re-proposal without reparenting.
+    if (forkPoint(o.repo, o.base, o.head) !== o.base) fail('E_REWRITE_REQUIRED');
+    const screenedTree = oid(text(git(o.repo, ['rev-parse', `${o.head}^{tree}`])).trim());
+    checked(screenRange(o.repo, o.base, o.head));
+    const confirmScreenedTree = () => {
+      verifyBase(o, 'E_REWRITE_REQUIRED');
+      if (oid(text(git(o.repo, ['rev-parse', `${o.head}^{tree}`])).trim()) !== screenedTree) fail('E_HEAD_MOVED');
+    };
+    confirmScreenedTree(); view(o); comment(o, body); view(o); confirmScreenedTree();
     const mergeBody = Buffer.from(`Reviewed OKF head: ${o.head}\n`);
     gh(o, ['pr', 'merge', o.pr, '--repo', o.github, '--squash', '--match-head-commit', o.head,
       '--subject', 'OKF knowledge proposal', '--body-file', '-'], mergeBody);

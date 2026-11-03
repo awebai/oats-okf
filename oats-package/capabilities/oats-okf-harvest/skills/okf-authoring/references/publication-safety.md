@@ -11,7 +11,12 @@ Every supported create, amendment and merge screens the exact outgoing Git
 objects before publication. It checks every introduced commit (including its
 headers), changed paths (including empty directory names) and blob versions, not just the final diff. Content
 added in an intermediate commit and subsequently deleted still refuses.
-Unchanged files in the accepted base are not resubmitted for publication.
+The range starts at the **unique merge-base** of the head and the pinned current
+accepted tip. The accepted branch may have advanced since the PR opened. Range
+screening still checks the full introduced history; it is not permission to
+submit a behind head for hosted merge. The fork must belong to accepted history;
+unrelated or ambiguous histories refuse with `E_HISTORY`.
+Files unchanged from that fork are not resubmitted for publication.
 
 The helper pushes the screened **OID**, never a moving `HEAD`. PR bodies,
 commit text and verdict files are read once as bounded regular files; `gh`
@@ -112,14 +117,34 @@ outcomes instead of replaying them.
 
 ## Amend, then review the new head
 
-For provenance **v2**, stage the complete sanitized final tree in your own
-checkout (including any safe edits you keep), run whole-base structural
-validation, and use `rewrite` with `--head` equal to the exact old PR head.
-The helper creates **one new commit parented on the pinned accepted base**,
-not on the old PR head, and screens before replacing the branch with an exact
-old-head lease. It never merges as part of rewriting. It returns the new OID;
-fetch/check out that OID, verify the remote ref and parent, repeat the review,
-and write a new `okf-review` verdict bound to it. An earlier verdict never
+For provenance **v2**, stage your sanitized PR changes in the old PR checkout,
+run whole-base structural validation, and use `rewrite` with `--head` equal to
+the exact old PR head and `--base` equal to the fetched current accepted tip.
+The helper derives the PR's delta from its unique fork and reconciles that delta
+with the **current accepted tree** in a private index. Independent accepted
+additions, edits and deletions survive; an old full checkout is never simply
+reparented on a newer accepted commit. Three-way text merging uses Git's
+longstanding `merge-file` plumbing, not new Git version-dependent flags. This
+constructs an explicit replacement for review, not a prediction of hosted merge
+semantics (attributes, rename handling and algorithms can differ). The
+maintainer's working tree/index entries stay unchanged.
+
+The reconciled tree becomes **one new commit parented on the current accepted
+tip**, not the old PR head. The gate screens its actual bytes before replacing
+the branch with an exact old-head lease. Conflicting edits, add/add or
+modify/delete cases and file/directory collisions refuse with
+`E_REWRITE_CONFLICT`, before publication; explicit empty-subtree deltas also
+refuse instead of being silently dropped by the private index. There is no
+force-resolution flag.
+Review/drop the conflicting change, or close for re-proposal against the
+current base when the original delta cannot be reconciled safely. It never
+merges as part of rewriting. It returns the new OID; fetch/check out that OID,
+verify the remote ref and parent, validate the
+reconciled whole base, repeat the review against current accepted knowledge,
+and compare the sanitized delta with the previously reviewed head using
+`git range-diff <old-fork>..<old-head> <current-accepted-tip>..<new-head>`.
+Keep that comparison local; never republish its rejected lines in a verdict.
+Write a new `okf-review` verdict naming the returned new head SHA. An earlier verdict never
 carries to a rewrite. A new clone of that branch must not reach removed
 branch-only objects. Do not create backup refs for rejected content.
 
@@ -132,16 +157,34 @@ For **v1/4.x**, the ancestry promise remains. `amend-legacy` takes the same
 flags but permits only additions; it parents the new commit on the delivered
 head. If content must be removed, **close and delete the PR branch** using
 `close-unsafe`, never an append-only sanitization or rewrite. Even a safe
-textual deletion refuses in `amend-legacy`; close/re-propose instead.
+textual deletion refuses in `amend-legacy`; close/re-propose instead. If the
+current accepted tip is not an ancestor of a legacy PR head, both `merge` and
+`amend-legacy` refuse with `E_REWRITE_REQUIRED`. Close it for a new v2 proposal;
+never reparent or append a catch-up commit to bypass the legacy ancestry rule.
 
 ## Verdict and settlement
 
 `merge`, `close`, and `close-unsafe` take the common write flags plus
 `--verdict-file <file>`. The file must contain one `okf-review` block naming
 that exact head and the appropriate verdict (`merge`/`amend+merge`, or
-`close`). `merge` screens the live PR title/body and the outgoing history,
-posts the screened verdict, and submits a squash merge with
-`--match-head-commit`. It supplies its own safe merge text. Read back the PR's
+`close`). `merge` verifies the pinned current accepted tip and requires it to
+be an ancestor of the reviewed head. A behind/divergent PR refuses with
+`E_REWRITE_REQUIRED` (operational exit 2) before comment or merge. For v2, use
+`rewrite` against the current tip, review the actual returned replacement tree,
+and bind a fresh verdict to that head; legacy closes for re-proposal. Never
+reuse a stale base OID or an earlier verdict to bypass the refusal.
+
+Only then does `merge` screen the live PR title/body and introduced history,
+recheck the accepted tip and the exact screened head tree, post the screened
+verdict, and submit a squash merge with `--match-head-commit`. An accepted tip
+that advances after rewrite refuses again with `E_REWRITE_REQUIRED`; there is
+no automatic recompose/retry. The ancestor condition means the squash result
+tree equals the screened head tree, rather than a new divergent composition. The checked ancestry avoids relying on an approximate
+local three-way tree as the screen for a different hosted squash. The helper
+is not certifying hosted merge semantics, and the accepted-tip check is not
+atomic with the hosted merge. A base that moves during an operation requires
+a fresh read/review, not an automatic retry. The helper supplies its own safe
+merge text. Read back the PR's
 merged state before reporting acceptance; a queue/submission is not a merge.
 
 `close` publishes only the screened close verdict and closes without merging.

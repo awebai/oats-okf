@@ -10,8 +10,15 @@
   blobs and outward text before push/comment/merge, sends checked text on stdin,
   and reports only location/line/rule. No flag/environment bypass exists. Native
   credentials and contextual privacy judgment remain outside this bounded check.
-- Rebuild v2 amendments as a single sanitized commit from the accepted base,
-  with an exact old-head lease and a fresh verdict bound to the returned head.
+- Screen behind PRs from their unique fork with the pinned current accepted
+  tip, but refuse direct merge with `E_REWRITE_REQUIRED`: a local approximation
+  cannot certify hosted squash bytes. Reconcile v2 sanitized deltas with that
+  tip's tree (three-way text merge; conflicts refuse) instead of reparenting a
+  stale whole checkout and reverting intervening work. Publish the exact
+  screened replacement for a fresh verdict; behind legacy v1 PRs close for
+  re-proposal without changing delivered ancestry.
+  The replacement is a single commit from the accepted tip, with an exact
+  old-head lease and a fresh verdict bound to the returned head.
   Legacy v1 removals close/delete the branch rather than invalidate completion
   ancestry. Retained pull refs, caches and clones require private incident
   handling; cleanup is not retroactive erasure.
