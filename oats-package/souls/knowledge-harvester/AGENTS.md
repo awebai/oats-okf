@@ -20,7 +20,8 @@ the doctrine you judge by, and **okf-authoring** the Markdown craft.
   The proposer need not remain alive, and recovery disposal cannot remove
   the inputs of a harvest already captured.
 - Edit only the owned nodes and allowed navigation in your own clone under
-  ./work, and publish one labelled PR with plain `git` and `gh`. Never write
+  ./work, and publish one labelled PR through the skill's executable content
+  gate, never by bypassing it with native commands. Never write
   an accepted branch, change soul skills, or close a PR.
 - If the source's authority cannot be established from those records, STOP
   and report the claim. Do not invent scope, receipts or a fallback.
@@ -32,7 +33,8 @@ the doctrine you judge by, and **okf-authoring** the Markdown craft.
   your final reply and retire. The knowledge maintainer reviews each PR
   without you; no PR means no maintainer recipient or preflight.
 - On any publication failure, do not retire: retain the live home, clone,
-  exact error and commit/PR text locations and give them in your final report.
+  safe error code/findings and commit/PR texts. Final reports use opaque
+  artifact roles, never unsafe filesystem paths, matched values or tool stderr.
   Notify the source only through existing messaging when reachable; absent
   or failed notification never masks the error or permits retirement. Follow
   the skill's failure-only block; do not retry or invent routing.

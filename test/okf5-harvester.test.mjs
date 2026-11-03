@@ -85,13 +85,13 @@ const jsonLines=p=>fs.existsSync(p)?fs.readFileSync(p,'utf8').trim().split('\n')
 // exact destination deterministically. gh and messaging prove adapter invocation,
 // not GitHub publication or delivery. No copied publication/notifier logic here:
 // execute the shipped block, including the failure transition, as one script.
-function publication(t,{source='src',harvester='harvester',fixedUUID,collision,notification='available',ghFailure='',hostilePaths=false}={}) {
+function publication(t,{source='src',harvester='harvester',fixedUUID,collision,notification='available',ghFailure='',hostilePaths=false,unsafeHome=false,notificationError='source unreachable',blockResult=false}={}) {
   const root=fs.realpathSync(fs.mkdtempSync(join(tmpdir(),'okf5-publish-')));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
-  const home=join(root,hostilePaths?`home 'q' $(touch ${MARK})`: 'home'),clone=join(home,'work','kb'),origin=join(root,'origin.git'),bin=join(root,'bin');
+  const home=join(root,unsafeHome?`home-ghp_${'A'.repeat(36)}`:hostilePaths?`home 'q' $(touch ${MARK})`: 'home'),clone=join(home,'work','kb'),origin=join(root,'origin.git'),bin=join(root,'bin');
   const ghLog=join(root,'gh.log'),sendLog=join(root,'send.log'),retireLog=join(root,'retire.log');
   const env={PATH:`${bin}:${process.env.PATH}`,HOME:root,GIT_CONFIG_GLOBAL:'/dev/null',GIT_CONFIG_NOSYSTEM:'1',
     GIT_AUTHOR_DATE:'2026-10-10T00:00:00Z',GIT_COMMITTER_DATE:'2026-10-10T00:00:00Z',
-    GH_LOG:ghLog,GH_FAILURE:ghFailure,SEND_LOG:sendLog,NOTIFICATION:notification,RETIRE_LOG:retireLog,
+    GH_LOG:ghLog,GH_FAILURE:ghFailure,GH_CLONE:clone,SEND_LOG:sendLog,NOTIFICATION:notification,NOTIFICATION_ERROR:notificationError,RETIRE_LOG:retireLog,
     OATS_INSTANCE:harvester,SOURCE_INSTANCE:source};
   const git=(cwd,...a)=>{const r=spawnSync('git',a,{cwd,env,encoding:'utf8',timeout:30000});assert.equal(r.status,0,`git ${a.join(' ')}: ${r.stderr}`);return r.stdout;};
   git(root,'init','-q','--bare','-b','main',origin);git(root,'clone','-q',origin,clone);
@@ -101,6 +101,7 @@ function publication(t,{source='src',harvester='harvester',fixedUUID,collision,n
   fs.writeFileSync(join(clone,'expert','a.md'),'promoted\n');
   const msg=join(home,'publish','kb-commit.txt'),body=join(home,'publish','kb-pr.md'),report=join(home,'publish','kb-publish.txt');
   fs.mkdirSync(join(home,'publish'));
+  if(blockResult) env.GH_BLOCK_RESULT=`${report}.push`;
   const message=`okf-harvest: ${claim}\n\nSource: instance ${source}\nClaim: ${claim}\n`;
   const example=/^```okf-harvest\n([\s\S]*?)\n```$/m.exec(read(PUBLISH_SKILL))[1];
   const provenance=JSON.parse(example.replace('<64-hex of what you read>','ab'.repeat(32)).replace(/<alias>\/<node>/g,'kb/expert').replace(/<[^<>"]*>/g,'x'));
@@ -112,11 +113,18 @@ function publication(t,{source='src',harvester='harvester',fixedUUID,collision,n
   if(fixedUUID!==undefined) fs.writeFileSync(join(bin,'node'),`#!/bin/sh\nif [ "$1" = "-e" ]; then printf '%s' ${quote(fixedUUID)}; else exec ${quote(process.execPath)} "$@"; fi\n`,{mode:0o755});
   fs.writeFileSync(join(bin,'gh'),`#!${process.execPath}
 const fs=require('node:fs'),a=process.argv.slice(2);
-if(!((a[0]==='label'||a[0]==='pr')&&a[1]==='create'))process.exit(92);
-const body=a.includes('--body-file')?fs.readFileSync(a[a.indexOf('--body-file')+1],'utf8'):null;
+if(!((a[0]==='label'||a[0]==='pr')&&a[1]==='create')&&!(a[0]==='pr'&&a[1]==='view'))process.exit(92);
+const bodyFile=a.includes('--body-file')?a[a.indexOf('--body-file')+1]:null;
+const body=bodyFile?fs.readFileSync(bodyFile==='-'?0:bodyFile,'utf8'):null;
 fs.appendFileSync(process.env.GH_LOG,JSON.stringify({argv:a,body})+'\\n');
 if(process.env.GH_FAILURE===a[0]){console.error('gh '+a[0]+' publication refused: not authenticated');process.exit(7);}
-if(a[0]==='pr')console.log('https://github.com/acme/kb/pull/123');
+if(a[0]==='label'&&process.env.GH_BLOCK_RESULT) fs.mkdirSync(process.env.GH_BLOCK_RESULT);
+if(a[0]==='pr'&&a[1]==='create')console.log('https://github.com/acme/kb/pull/123');
+if(a[1]==='view') {
+ const cp=require('node:child_process');
+ const git=(...args)=>cp.execFileSync('git',['-C',process.env.GH_CLONE,...args],{encoding:'utf8'}).trim();
+ console.log(JSON.stringify({state:'OPEN',headRefOid:git('rev-parse','HEAD'),headRefName:git('branch','--show-current'),baseRefName:'main',isCrossRepository:false,title:'OKF knowledge proposal',body:''}));
+}
 `,{mode:0o755});
   // An available test messaging capability supplies this argv/body-file command.
   const adapter=join(bin,'notify');
@@ -124,7 +132,7 @@ if(a[0]==='pr')console.log('https://github.com/acme/kb/pull/123');
 const fs=require('node:fs'),a=process.argv.slice(2);
 if(a.length!==4||a[0]!=='--to'||a[2]!=='--body-file')process.exit(93);
 fs.appendFileSync(process.env.SEND_LOG,JSON.stringify({argv:a,body:fs.readFileSync(a[3],'utf8')})+'\\n');
-if(process.env.NOTIFICATION==='failed'){console.error('notification refused: source unreachable');process.exit(9);}
+if(process.env.NOTIFICATION==='failed'){console.error(process.env.NOTIFICATION_ERROR);process.exit(9);}
 console.log('test adapter accepted the report; delivery unproven');
 `,{mode:0o755});
   fs.writeFileSync(join(bin,'oats'),'#!/bin/sh\nprintf "%s\\n" "$*" >> "$RETIRE_LOG"\nexit 94\n',{mode:0o755});
@@ -147,6 +155,9 @@ console.log('test adapter accepted the report; delivery unproven');
   const filled=publishBlock().replaceAll('<alias>','kb').replace('<owned paths>',"'expert'")
     .replace('<absolute commit message file>',()=>shellData(msg)).replace('<absolute PR body file>',()=>shellData(body))
     .replace('<absolute publication report file>',()=>shellData(report))
+    .replaceAll('<okf-authoring skill dir>',()=>shellData(join(HARVEST,'skills','okf-authoring')))
+    .replace('<notification-mode>',()=>['absent','unreachable'].includes(notification)?'unavailable':'available')
+    .replace('<recorded clone locator>',()=>shellData(origin))
     .replaceAll('<owner>/<repo>','acme/kb').replaceAll('<acceptedBranch>','main')
     .replace('<source notification command or skipped notice>',()=>notify);
   const run=()=>spawnSync('bash',['-e','-c',filled],{cwd:home,env,encoding:'utf8',timeout:30000});
@@ -157,7 +168,8 @@ function retained(f,r,expected) {
   const report=fs.readFileSync(f.report,'utf8');
   assert.match(report,expected);assert.match(report,/Publication failed \(exit [1-9][0-9]*\); DO NOT RETIRE/);
   assert.equal(r.stderr,report,'final terminal report is the retained diagnostic, not a masked notification result');
-  for(const path of [f.clone,f.msg,f.body,f.report,`${f.report}.push`]) assert.ok(report.includes(path),`retained path: ${path}`);
+  for(const path of [f.clone,f.msg,f.body,f.report,`${f.report}.push`]) assert.ok(!report.includes(path),'private filesystem paths stay out of the outward report');
+  assert.ok(report.includes('Artifacts retained locally: clone, commit text, PR text, commit result, publication report, push result.'));
   assert.equal(fs.readFileSync(f.msg,'utf8'),f.message);assert.equal(fs.readFileSync(f.body,'utf8'),f.prBody);
   assert.ok(fs.existsSync(f.home));assert.ok(fs.existsSync(f.clone));
   assert.equal(fs.existsSync(f.retireLog),false,'published failure logic never invokes retirement');
@@ -168,12 +180,13 @@ function retained(f,r,expected) {
 
 test('published template is name-free and keeps explicit identity, destination, title and body-file',()=>{
   const block=publishBlock();
-  assert.deepEqual([...new Set(block.match(/<[^<>]+>/g))].sort(),['<absolute PR body file>','<absolute commit message file>','<absolute publication report file>','<acceptedBranch>','<alias>','<owned paths>','<owner>','<repo>','<source notification command or skipped notice>']);
-  assert.ok(block.includes(`git -c user.name='OKF harvest' -c user.email='okf@localhost' -C './work/<alias>' commit -F "$commit_file"`));
+  assert.deepEqual([...new Set(block.match(/<[^<>]+>/g))].sort(),['<absolute PR body file>','<absolute commit message file>','<absolute publication report file>','<acceptedBranch>','<alias>','<notification-mode>','<okf-authoring skill dir>','<owned paths>','<owner>','<recorded clone locator>','<repo>','<source notification command or skipped notice>']);
+  assert.ok(block.includes("scripts/okf-publication.mjs' commit"));
+  assert.ok(block.includes('--commit-file "$commit_file"'));
   assert.ok(block.includes('git check-ref-format "$ref"'));
-  assert.ok(block.includes('--force-with-lease="$ref:" origin "HEAD:$ref"'));
-  const create=block.split('\n').find(l=>l.trimStart().startsWith('gh pr create '));
-  for(const arg of ["--repo '<owner>/<repo>'","--base '<acceptedBranch>'",'--head "$branch"','--label okf-harvest',`--title 'OKF knowledge proposal'`,'--body-file "$pr_file"']) assert.ok(create.includes(arg),arg);
+  assert.ok(block.includes("scripts/okf-publication.mjs' create"));
+  assert.doesNotMatch(block,/\bgit[^\n]* push\b|\bgh pr create\b/,'no ungated publication remains');
+  for(const arg of ["--github '<owner>/<repo>'","--base-branch '<acceptedBranch>'",'--head "$head"','--branch "$branch"','--body-file "$pr_file"']) assert.ok(block.includes(arg),arg);
 });
 
 test('real Git publishes valid complete refs with hostile source/harvester identities and claims as data',t=>{
@@ -189,9 +202,9 @@ test('real Git publishes valid complete refs with hostile source/harvester ident
     assert.ok(!refs.has(ref),'fresh generated UUID');refs.add(ref);
     assert.equal(f.git(f.origin,'log','-1','--format=%B',ref),`${f.message}\n`,'source and claims remain literal commit data');
     assert.equal(f.git(f.origin,'log','-1','--format=%an <%ae>',ref),'OKF harvest <okf@localhost>\n');
-    const calls=jsonLines(f.ghLog);assert.equal(calls.length,2);
+    const calls=jsonLines(f.ghLog);assert.equal(calls.length,3);assert.equal(calls[2].argv[1],'view');
     const pr=calls[1];assert.equal(pr.body,f.prBody);assert.equal(pr.argv[pr.argv.indexOf('--head')+1],branch);
-    assert.equal(pr.argv[pr.argv.indexOf('--body-file')+1],f.body);assert.equal(pr.argv[pr.argv.indexOf('--title')+1],'OKF knowledge proposal');
+    assert.equal(pr.argv[pr.argv.indexOf('--body-file')+1],'-');assert.equal(pr.argv[pr.argv.indexOf('--title')+1],'OKF knowledge proposal');
     const parsed=parseProvenance(pr.body);assert.equal(parsed.valid,true,parsed.problems.join('; '));
     assert.equal(parsed.value.source.instance,name);assert.equal(parsed.value.harvester.instance,`harvester-${name}`);
     assert.ok(pr.argv.every(a=>!a.includes('touch')),'claims never in gh argv');
@@ -203,7 +216,7 @@ test('real Git publishes valid complete refs with hostile source/harvester ident
 
 test('quoted publication artifact paths stay data on the successful gh body-file path',t=>{
   const f=publication(t,{hostilePaths:true}),r=f.run();assert.equal(r.status,0,r.stdout+r.stderr);
-  const pr=jsonLines(f.ghLog)[1];assert.equal(pr.body,f.prBody);assert.equal(pr.argv[pr.argv.indexOf('--body-file')+1],f.body);
+  const pr=jsonLines(f.ghLog)[1];assert.equal(pr.body,f.prBody);assert.equal(pr.argv[pr.argv.indexOf('--body-file')+1],'-');
   for(const where of [f.home,f.clone,f.root,process.cwd()]) assert.equal(fs.existsSync(join(where,MARK)),false);
 });
 
@@ -215,45 +228,76 @@ test('reused source/harvester names with the same date still generate distinct p
 
 test('full-ref validation actually refuses Git-invalid generated input before any push/gh call',t=>{
   const f=publication(t,{fixedUUID:'a..b'}),r=f.run();
-  retained(f,r,/git check-ref-format rejected refs\/heads\/okf-harvest\/20261010-a\.\.b/);
+  retained(f,r,/E_REF: publication ref refused/);
   assert.equal(f.git(f.clone,'branch','--show-current').trim(),'main');
   assert.equal(fs.existsSync(`${f.report}.push`),false);assert.deepEqual(jsonLines(f.ghLog),[]);
 });
 
 for(const collision of ['ancestor','identical']) test(`real Git pre-existing ${collision} target is retained unchanged; failure reports to available source, no gh/retire`,t=>{
   const f=publication(t,{fixedUUID:UUID,collision,source:`src-${claim}`,hostilePaths:true}),r=f.run();
-  const report=retained(f,r,collision==='identical'?/up-to-date ref is a collision/:/\[rejected\] \(stale info\)/);
+  const report=retained(f,r,/E_HEAD_MOVED/);
   assert.equal(f.git(f.origin,'rev-parse',f.ref).trim(),f.existing);
   if(collision==='identical') {
-    assert.equal(f.git(f.clone,'rev-parse','HEAD').trim(),f.existing);
-    assert.match(report,/=\tHEAD:refs\/heads\/okf-harvest\/[^\t]+\t\[up to date\]/,'Git zero/up-to-date is still refused');
+    assert.equal(f.git(f.clone,'rev-parse','HEAD^{tree}').trim(),f.git(f.clone,'rev-parse',`${f.existing}^{tree}`).trim());
+    assert.match(report,/E_HEAD_MOVED/,'an existing same-tree ref is refused before push, regardless of commit dates');
   } else assert.notEqual(f.git(f.clone,'rev-parse','HEAD').trim(),f.existing,'even a prospective fast-forward cannot update');
   assert.deepEqual(jsonLines(f.ghLog),[],'no gh call after collision');
   const sent=jsonLines(f.sendLog);assert.equal(sent.length,1);assert.equal(sent[0].argv[3],f.report);
-  assert.ok(sent[0].body.includes(f.msg));assert.ok(sent[0].body.includes(f.body));
+  assert.ok(sent[0].body.includes('commit text, PR text'));assert.ok(!sent[0].body.includes(f.home));
   assert.ok(report.startsWith(sent[0].body),'original diagnostics sent unchanged before notification outcome is appended');
 });
 
 for(const notification of ['absent','unreachable','failed']) test(`refused publication with ${notification} messaging retains original error and live home`,t=>{
   const f=publication(t,{fixedUUID:UUID,collision:'ancestor',notification}),r=f.run();
-  const report=retained(f,r,/\[rejected\] \(stale info\)/);
+  const report=retained(f,r,/E_HEAD_MOVED/);
   assert.equal(f.git(f.origin,'rev-parse',f.ref).trim(),f.existing);assert.deepEqual(jsonLines(f.ghLog),[]);
   if(notification==='failed') {
-    assert.equal(jsonLines(f.sendLog).length,1);assert.match(report,/Source notification failed/);assert.match(report,/source unreachable/);
+    assert.equal(jsonLines(f.sendLog).length,1);assert.match(report,/Source notification failed/);assert.doesNotMatch(report,/source unreachable/);
   } else {assert.deepEqual(jsonLines(f.sendLog),[]);assert.match(report,/Source notification unavailable\/skipped; not sent/);}
 });
 
-test('a pre-push commit error also reports and retains without any gh call',t=>{
-  const f=publication(t),hooks=join(f.root,'hooks');fs.mkdirSync(hooks);
-  fs.writeFileSync(join(hooks,'pre-commit'),'#!/bin/sh\nprintf "%s\\n" "commit refused by test hook" >&2\nexit 1\n',{mode:0o755});
-  f.git(f.clone,'config','core.hooksPath',hooks);
-  retained(f,f.run(),/commit refused by test hook/);
+test('failed publication never sends unsafe home paths or notifier stderr',t=>{
+  const marker=`ghp_${'A'.repeat(36)}`;
+  for(const unsafeHome of [false,true]) {
+    const f=publication(t,{fixedUUID:UUID,collision:'ancestor',unsafeHome,notification:'failed',notificationError:marker});
+    const r=f.run(),report=retained(f,r,/E_HEAD_MOVED/);
+    for(const text of [r.stdout,r.stderr,report,...jsonLines(f.sendLog).map(x=>x.body)]) assert.ok(!text.includes(marker));
+    assert.match(report,/E_SOURCE_NOTIFICATION/);
+  }
+});
+
+for(const suffix of ['', '.commit', '.push']) for(const kind of ['directory','stale-file']) test(`reporting ${suffix || 'report'} ${kind} I/O failure never publishes private paths`,t=>{
+  const f=publication(t,{unsafeHome:true});
+  if(kind==='directory') fs.mkdirSync(f.report+suffix);
+  else fs.writeFileSync(f.report+suffix,`Private stale artifact: ${f.home}\n`);
+  const r=f.run();assert.equal(r.status,1);
+  for(const text of [r.stdout,r.stderr,...jsonLines(f.sendLog).map(x=>x.body)]) {
+    assert.ok(!text.includes(f.home));assert.doesNotMatch(text,/Is a directory|cannot overwrite|bash: line/);
+  }
+  assert.match(r.stderr,/E_ARTIFACT_EXISTS/);assert.deepEqual(jsonLines(f.sendLog),[]);assert.deepEqual(jsonLines(f.ghLog),[]);
+});
+
+test('late result-file I/O failure preserves safe receipt but hides private paths',t=>{
+  const f=publication(t,{unsafeHome:true,blockResult:true}),r=f.run();
+  const report=retained(f,r,/E_PUSH_RESULT_WRITE/);
+  assert.ok(report.includes('https://github.com/acme/kb/pull/123'),'the partial remote result stays recorded');
+  for(const text of [r.stdout,r.stderr,...jsonLines(f.sendLog).map(x=>x.body)]) {
+    assert.ok(!text.includes(f.home));assert.doesNotMatch(text,/Is a directory|bash: line/);
+  }
+});
+
+test('a pre-push commit error reports only a safe code and retains without any gh call',t=>{
+  const f=publication(t);
+  fs.writeFileSync(f.msg,''); // Real Git refuses an empty message; no arbitrary hook output is relayed.
+  f.message='';
+  retained(f,f.run(),/E_LOCAL_COMMIT/);
   assert.equal(fs.existsSync(`${f.report}.push`),false);assert.deepEqual(jsonLines(f.ghLog),[]);assert.equal(jsonLines(f.sendLog).length,1);
 });
 
 for(const ghFailure of ['label','pr']) test(`gh ${ghFailure} error takes the same published retained-failure transition`,t=>{
   const f=publication(t,{ghFailure}),r=f.run();
-  retained(f,r,new RegExp(`gh ${ghFailure} publication refused: not authenticated`));
+  retained(f,r,/E_GH/);
+  assert.doesNotMatch(r.stderr,/not authenticated/,'untrusted tool stderr is not published');
   assert.equal(jsonLines(f.ghLog).length,ghFailure==='label'?1:2);assert.equal(jsonLines(f.sendLog).length,1);
   const branch=f.git(f.clone,'branch','--show-current').trim();
   assert.equal(f.git(f.origin,'rev-parse',branch),f.git(f.clone,'rev-parse','HEAD'),'created remote ref is retained after gh failure');
@@ -261,7 +305,7 @@ for(const ghFailure of ['label','pr']) test(`gh ${ghFailure} error takes the sam
 
 test('soul, inject, skill and README align conditional retirement and retained publication failures',()=>{
   for(const path of ['souls/knowledge-harvester/AGENTS.md','capabilities/oats-okf-harvest/injects/harvester.md',PUBLISH_SKILL]) {
-    const text=prose(path);assert.match(text,/do not retire/i);assert.match(text,/live home/);assert.match(text,/exact error/);
+    const text=prose(path);assert.match(text,/do not retire/i);assert.match(text,/live home/);assert.match(text,/safe error code\/findings/);
     assert.match(text,/no (?:PR means no maintainer|maintainer role)/i);
   }
   for(const path of ['souls/knowledge-harvester/soul.yaml','capabilities/oats-okf-harvest/oats.json','capabilities/oats-okf-harvest/bin/okf-harvest.mjs']) {

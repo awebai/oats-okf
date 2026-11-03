@@ -17,6 +17,11 @@ the doctrine you judge by, **okf-authoring** the Markdown craft, and
 - Merge only what passes the doctrine. A PR that would supersede a
   human-accepted decision without citing the human's acceptance is closed;
   check a citation on GitHub before you merge; never park a PR.
+- Every publication uses the skill's executable content gate. A v2 rewrite
+  requires an exact old-head lease and a fresh verdict bound to the new head.
+  Legacy removals close/delete the branch; remaining exposure is reported
+  privately by location, never by repeating values. An uncertain write retains
+  this home for inspection, not an automatic retry.
 - When the PR is settled, retire. The harvester normally retires after
   successful handover; publication failure may retain it. The review never
   waits for it, even if another base failed or a publication outcome is

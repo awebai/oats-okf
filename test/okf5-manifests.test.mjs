@@ -144,7 +144,7 @@ test('the harvester and the reviewer apply it to what is published, provenance n
     'drop the claims that rest on it and leave it out of the PR','If the source instance\'s name carries it, publish nothing and report.']) assert.ok(harvest.includes(s),s);
   const review=prose(CAPDIR+'oats-okf-maintenance/skills/knowledge-review/SKILL.md');
   for(const s of ['the names in the provenance block (note file names, task refs, instance names)',
-    'Your review comes after the push: amending or closing keeps personal data out of the accepted base, not out of the pushed branch or the pull request.']) assert.ok(review.includes(s),s);
+    'Your review comes after the push: rewriting can remove branch-only content from the PR branch\'s reachable history, but cannot undo the initial exposure.']) assert.ok(review.includes(s),s);
 });
 
 // oats.okf 5.7.0 (awebai/oats-okf#118): a supersession of a human-accepted
@@ -171,7 +171,8 @@ test('every place that teaches a human-accepted supersession settles it at revie
   assert.ok(review.includes('record the acceptance as source-reported (relay at <link>), never as verified. Not confirmed (missing, it cannot be opened, or it says something else): close with that reason.'),'knowledge-review: an unconfirmed relay is closed');
   assert.ok(prose('CHANGELOG.md').includes('not confirmed or not openable, it closes the PR with the reason'),'CHANGELOG: an unconfirmed relay is closed');
   assert.match(review,/The author login must be the account the citation names\./);
-  assert.ok(review.includes('right before merging: stop if settled gh pr merge'),'the merge pre-check stops only if settled');
+  assert.ok(review.includes('right before merging: stop if settled node'),'the merge pre-check stops only if settled and calls the gate');
+  assert.match(review,/scripts\/okf-publication\.mjs' merge/,'merge uses the exact-byte gate');
   assert.doesNotMatch(review,/"verdict": "needs-human"|--add-label okf-needs-human|stop if blocked/);
   // The label survives only as the note that an old one stops nothing.
   const mentions=[];
@@ -200,8 +201,8 @@ test('the parked-PR re-review step closes, waits for a poll, then reopens, the s
 
 test('the README says what is an instruction and what is enforced, with the opt-out\'s two limits',()=>{
   const readme=prose('README.md');
-  for(const s of ['Personal data is excluded by instruction. Nothing guarantees it stays out.','It narrows their judgement and guarantees nothing.',
-    'The capture program copies evidence but does not judge its content.','It removes nothing that was pushed.',
+  for(const s of ['Personal data is excluded by instruction and a bounded publication screen; neither is a universal privacy guarantee.',
+    'The capture program copies evidence but does not judge its content.','not the initial exposure or GitHub\'s retained pull refs/caches/clones.',
     'The soul\'s opt-out and source capture checks are enforced in code.','It is per soul. No instance, note, host or spawn setting opts out.',
     'It covers that soul\'s own proposals. The spawn hook checks the source a proposal names. What an instance of that soul writes to other seats in messages is theirs to capture and propose.']) assert.ok(readme.includes(s),s);
 });
