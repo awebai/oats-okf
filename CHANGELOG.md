@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 5.8.0 — 2026-11-03
+
+Requires OATS >=0.69.2, unchanged. awebai/oats-okf#121: a content-safety gate on every harvest publication, and behind harvest PRs rewritten onto the accepted tip for a fresh exact-head verdict, never merged on an approximate squash. Merges to a knowledge base stay serialized through one maintainer. Existing service homes keep their composed version until they are respawned or upgraded.
+
 ### Security
 
 - Add a separate, bounded content screen and exact-byte publication gate shared
