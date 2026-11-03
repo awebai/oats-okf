@@ -1,5 +1,35 @@
 # Changelog
 
+## Unreleased
+
+### Security
+
+- Add a separate, bounded content screen and exact-byte publication gate shared
+  by harvest and maintenance. Structural OKF validation is unchanged. The gate
+  checks outgoing commit history (including intermediate/deleted content), paths,
+  blobs and outward text before push/comment/merge, sends checked text on stdin,
+  and reports only location/line/rule. No flag/environment bypass exists. Native
+  credentials and contextual privacy judgment remain outside this bounded check.
+- Rebuild v2 amendments as a single sanitized commit from the accepted base,
+  with an exact old-head lease and a fresh verdict bound to the returned head.
+  Legacy v1 removals close/delete the branch rather than invalidate completion
+  ancestry. Retained pull refs, caches and clones require private incident
+  handling; cleanup is not retroactive erasure.
+- Keep failure reports free of matched values and arbitrary Git/gh stderr.
+  A posted verdict or queued merge is not a settled PR. Uncertain writes retain
+  the home and require inspection, never automatic retry.
+
+### Release gates and upgrade
+
+- Measure rule hits read-only on the affected accepted bases before tagging;
+  fix false positives in rules or permitted code-only placeholder exclusions.
+  Do not allow real prohibited content as a false-positive exception.
+- The release owner moves pins/mirrors and composes new service homes (or uses
+  the authorized stopped-home upgrade). Existing homes retain old code and
+  recipes. KB CI may repeat the screen but cannot prevent first-push exposure.
+  Local Git tests prove branch semantics; hosted acceptance is a separate live
+  post-release harvest, not a claim from fake-gh tests.
+
 ## 5.7.0 — 2026-10-29
 
 Requires OATS >=0.69.2, unchanged. awebai/oats-okf#118.

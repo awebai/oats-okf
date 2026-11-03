@@ -445,11 +445,12 @@ The harvester (`knowledge: none`, capability `oats.okf-harvest`) follows the
    (the owned nodes' `index.md`/`log.md`, the base root `index.md`), never
    `okf-base.json` or another node. A claim whose home is a node the source
    does not own is dropped for that node's owner.
-7. **Validates** with `okf-validate.mjs --strict` and checks the diff touches
-   only allowed paths and carries no secret, no private path and no personal
-   data about people outside the team. The validator is a program; the
-   checks of the diff are the harvester reading it.
-8. **Publishes one PR per base** with plain `git` and `gh`: a branch
+7. **Validates** with `okf-validate.mjs --strict`, checks scope and reviews
+   the diff contextually for exclusions. Structural validation is unchanged.
+   The separate executable content gate screens the actual outgoing history,
+   including intermediate/deleted versions and outward text, before publication.
+8. **Publishes one PR per base** through the bundled `okf-publication.mjs`
+   helper (using native `git` and `gh`): a branch
    `okf-harvest/<UTC YYYYMMDD>-<fresh UUID>`, label `okf-harvest`, and a body
    ending with a version 2 provenance block (below). No source or harvester
    name enters the ref; Git checks the full ref. The push is create-only:
@@ -461,8 +462,9 @@ The harvester (`knowledge: none`, capability `oats.okf-harvest`) follows the
    the harvester remains in provenance. Claims and identities stay data.
 9. **Hands over and retires only on success or nothing promotable** (the
    source, each PR URL, every dropped claim and why). **On any publication
-   failure it does not retire:** the live home retains the clone, exact
-   error, commit/PR texts and their locations, and those are its final report.
+   failure it does not retire:** the live home retains the clone, safe error
+   code/findings and commit/PR texts. Outward reports use opaque artifact roles;
+   actual filesystem locations stay local, and tool stderr is never forwarded.
    The skill's failure-only block notifies the source through already-composed
    messaging when reachable; no messaging or a gone/unreachable source is
    explicitly skipped, never a send claim. Notification failure does not mask
@@ -493,10 +495,9 @@ answer `E_REMOVED` and never run a 4.x completion.
 
 ### What is enforced and what is an instruction
 
-**Personal data is excluded by instruction. Nothing guarantees it stays
-out.** The capturing instance, the proposal brief, the harvester (when it
-edits, when it reads its diff, and for everything it publishes) and the
-maintainer are all given the same sentence:
+**Personal data is excluded by instruction and a bounded publication screen;
+neither is a universal privacy guarantee.** The capturing instance, proposal
+brief, harvester and maintainer are all given the same sentence:
 
 > Never include personal data about people outside the team (clients,
 > correspondents, any other third party): a name, a contact detail, or
@@ -504,16 +505,37 @@ maintainer are all given the same sentence:
 > correspondence. Keep the lesson and leave the person out. Naming the
 > author of a published source you cite is fine.
 
-- This is an instruction to agents. It narrows their judgement and
-  guarantees nothing.
-- The capture program copies evidence but does not judge its content. The validator checks
-  frontmatter, links and reachability.
-- The first reader other than the harvester is the reviewer of the open
-  pull request, after the branch has been pushed. Amending or closing the
-  pull request keeps content out of the accepted base. It removes nothing
-  that was pushed.
-- Provenance publishes names as written: note file names, task refs and
-  instance names. The same instruction covers them.
+- The instruction guides contextual judgment. A name or an identifying
+  paraphrase still needs a reader; patterns cannot recognize every excluded
+  detail, and native publication credentials remain available to the agent.
+- The capture program copies evidence but does not judge its content. The
+  validator still checks only frontmatter, links and reachability, with its
+  existing interface and exit codes.
+- The shared **publication gate** screens exact outgoing commit objects,
+  paths/blobs and immutable outward text bytes before every supported push,
+  comment and merge. Exit 1 refuses content; exit 2 refuses incomplete/input
+  or operational errors. Neither allows publication. Diagnostics give only
+  location/line/rule, never values. No flag/environment bypass exists.
+- Rules and exclusions are reviewed package code. Only reserved example
+  domains/documentation IPs and noreply commit-trailer addresses are excluded.
+  Before release, accepted-tree scans measure false positives per rule as counts
+  only; timestamps, versions, ports, PR/issue IDs and run IDs are not phones.
+- A **v2 amendment** produces one sanitized commit from the accepted base,
+  replaces only the exact old PR head with a lease, and requires a fresh verdict
+  bound to the new head. This removes branch-only rejected history from that
+  branch, not the initial exposure or GitHub's retained pull refs/caches/clones.
+  **Legacy v1 removals close and delete the branch** rather than violate 4.x
+  completion ancestry. Remaining real exposure is routed privately for rotation
+  and warranted platform cleanup; a branch deletion is not erasure.
+- Provenance names (note files, task refs, instance names), PR bodies and
+  maintainer verdicts are included. A file changed after checking cannot replace
+  the stdin bytes sent to `gh`. Merge text is fixed safe text, not an automatic
+  summary of old commits. CI may repeat the screen but is too late to prevent
+  a first push.
+
+The [publication safety contract](oats-package/capabilities/oats-okf-harvest/skills/okf-authoring/references/publication-safety.md)
+contains exact commands, resource limits, legacy handling and detection limits.
+A clean screen is never proof that every secret or person's detail is absent.
 
 **The soul's opt-out and source capture checks are enforced in code.** With
 `knowledge: { harvest: off }` in soul.yaml, the provider records duty off at
@@ -568,8 +590,10 @@ opened by 4.x harvesters stay reviewable.
   the provenance as untrusted input and returns a reading list; for a
   version 2 PR it lists the evidence notes the harvester relied on (and
   which it could not read).
-- The maintainer merges, amends and merges, or closes, recording an
-  `okf-review` verdict comment that names the head it reviewed.
+- The maintainer merges, amends and merges, or closes through the executable
+  publication gate, recording an `okf-review` verdict bound to the exact head.
+  Rewrites invalidate earlier verdicts; an open PR with a posted verdict is not
+  settled. An uncertain write is inspected before any authorized recovery.
 - It never parks a PR. A PR that supersedes a human-accepted decision is
   merged only when it cites the human's acceptance (checked when the record
   is on GitHub, otherwise recorded as source-reported), and closed otherwise.
@@ -938,6 +962,14 @@ things:
   byte-identical afterwards.
 - It refuses a home spawned on v4.2.2 with the respawn remedy.
 
+`okf5-content-screen` exercises the bounded rules and code-only exclusions.
+`okf5-publication` exercises the shipped gate with real Git and bare remotes:
+refused content/history, stale leases, sanitized rewrites, legacy removal
+refusals, exact-byte text and new-head verdicts. Fake `gh` proves invocation,
+not hosted acceptance. Accepted-corpus false-positive scans are a separate
+read-only pre-release gate, not a fixture-based claim.
+
 Not covered by tests: a real harvester judging a proposal, a real GitHub PR
-and the maintainer's review on GitHub. [SCHEMA-STATUS.md](SCHEMA-STATUS.md)
+and the maintainer's review on GitHub. Hosted acceptance remains the first
+live harvest after the authorized release, not a claim from the local tests. [SCHEMA-STATUS.md](SCHEMA-STATUS.md)
 lists the schemas and these limits.
