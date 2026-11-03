@@ -179,13 +179,17 @@ recheck the accepted tip and the exact screened head tree, post the screened
 verdict, and submit a squash merge with `--match-head-commit`. An accepted tip
 that advances after rewrite refuses again with `E_REWRITE_REQUIRED`; there is
 no automatic recompose/retry. The ancestor condition means the squash result
-tree equals the screened head tree, rather than a new divergent composition. The checked ancestry avoids relying on an approximate
-local three-way tree as the screen for a different hosted squash. The helper
+tree equals the screened head tree, rather than a new divergent composition.
+The checked ancestry avoids relying on an approximate local three-way tree as
+the screen for a different hosted squash. The helper
 is not certifying hosted merge semantics, and the accepted-tip check is not
-atomic with the hosted merge. A base that moves during an operation requires
-a fresh read/review, not an automatic retry. The helper supplies its own safe
-merge text. Read back the PR's
-merged state before reporting acceptance; a queue/submission is not a merge.
+atomic with the hosted merge. Serialize accepted-branch merges for each base
+through one maintainer; do not run concurrent merge writers. This is an
+operational requirement, not a lock enforced by the helper: an out-of-band
+writer can still enter the residual window after the final check. A base that
+moves during an operation requires a fresh read/review, not an automatic retry.
+The helper supplies its own safe merge text. Read back the PR's merged state
+before reporting acceptance; a queue/submission is not a merge.
 
 `close` publishes only the screened close verdict and closes without merging.
 `close-unsafe` also deletes only the reviewed branch, with an explicit old-head
