@@ -362,6 +362,11 @@ oats spawn oats.okf/knowledge-harvester --name <harvester-name> --task-file prop
   distinguishes proposals even when source prefixes match; a timestamp alone
   is insufficient. Names must contain no sensitive data.
 - Deployment uniqueness is checked by the kernel, not reserved by preview.
+  `oats spawn --preview` runs no provider hook: it shows the harvester's
+  composition, not the source check. The source is checked at apply, in
+  the required spawn hook; a refusal there rolls the spawn back and leaves
+  no harvester home, but the chosen name may stay occupied as a messaging
+  alias.
   `E_INSTANCE_NAME_TAKEN` means stop, record and report: no implicit suffix,
   dropping `--name`, or automatic rename/retry. Only after resolving the
   refusal and confirming no harvester already started may a later explicit
@@ -419,7 +424,13 @@ The harvester (`knowledge: none`, capability `oats.okf-harvest`) follows the
    recorded `afterHooks.home` selects the final home snapshot. Guessed
    copies, incomplete/unknown history, ambiguous incarnations and missing
    sources refuse. The record supplies the soul (`soul.yaml`, `okf.json`)
-   and bindings; an opted-out soul still refuses.
+   and bindings; an opted-out soul still refuses, read from the recorded
+   soul snapshot's text, which no host setting masks, and so does a soul
+   `harvest:` value other than `off`. On a **retired** source, a removed
+   4.x key the host, the spawn or the workspace set is ignored and named in
+   the snapshot's `source.json` (`legacyKeysIgnored`); on a live one it
+   refuses with the remedy to retire the home first
+   ([Upgrading to 5.0](#upgrading-to-50)).
 3. **Snapshots at spawn, before the model starts.** The required hook
    atomically copies the submitted proposal, verified source identity,
    soul declaration, bindings and only the listed backing notes into
@@ -821,7 +832,36 @@ what an existing home already holds. Four separate things:
   spawn command; a soul key is changed in the soul's reviewed source. A key
   an old home recorded with a host (or other explicit) origin stays in its
   instance.json after the host cleanup, so the harvester refuses that home
-  as a proposal's source (`E_SOURCE`) until it is respawned under 5.0.
+  as a proposal's source (`E_SOURCE`) while it is alive: retire it, then
+  propose from its retirement recovery (next bullet).
+- **A retired 4.x seat's notes: propose from its retirement recovery
+  (#125).** A home spawned on 4.x recorded the deployment's `harvest`
+  switch (and `harvest-runtime`, `harvest-model`) in its instance.json, a
+  record that is never rewritten, so it can never become a 5.x source by
+  respawning: respawn retires it, and its notes survive only in the
+  retirement recovery copy, whose record carries the same keys. Write a
+  proposal in the shape above naming the retired instance, its home and
+  soul, and `incarnation` copied from the recovery copy's `instance.json`
+  `createdAt`; list its notes under `## Backing notes`; spawn the
+  harvester. From 5.9.0 the harvester ignores, on a **retired** source
+  only, a removed key whose recorded origin is the host, the spawn or the
+  workspace, and lists it in the snapshot's `source.json`
+  (`legacyKeysIgnored`). The soul's own `knowledge: { harvest: off }`,
+  read from the recorded soul snapshot's text, still refuses; so does a
+  soul `harvest:` value other than `off`, and a key with no recorded
+  origin. **A 4.x host `harvest: off` is not an opt-out**, even an explicit
+  one: it declined 4.x's own machinery (source registration, transcript
+  capture, scheduled runs), which is gone. Under 5.x nothing runs unless
+  someone in the deployment writes a proposal and spawns a harvester, and
+  that act is the deployment's consent; only the soul's declaration is the
+  soul's. The route needs: the recovery at `phase: complete`, kept until
+  the harvester has captured it; the soul snapshot
+  (`agents/<soul>/souls/<commit>`) still present; complete event history
+  with a single retired incarnation (OATS >=0.49.0). A live 4.x home is
+  still refused: retire it first. `--preview` does not run this check. The
+  4.x custody under `<stateDir>/sources/` is not read by this route;
+  [4.x source records after the pin](#4x-source-records-after-the-pin)
+  governs it.
 - **Old instructions and modules: respawn when the 5.0 brief is wanted.** A
   running home keeps the modules, skills, AGENTS.md and TASK.md brief it was
   spawned with; pinning 5.0 does not replace them. A 4.x home is told about
@@ -836,7 +876,8 @@ what an existing home already holds. Four separate things:
   [4.x source records after the pin](#4x-source-records-after-the-pin) says
   what a home spawned on 4.x does when it retires, what a record can hold,
   and when it may be removed by hand. 4.x harvest PRs (provenance version 1)
-  stay reviewable.
+  stay reviewable. A retired 4.x home's notes are harvested from its
+  retirement recovery (bullet above), never from its 4.x record.
 
 ### 4.x source records after the pin
 

@@ -187,7 +187,12 @@ same proposal or between preview and apply.
 Replace `<harvester-name>` with that exact name and `<proposal>` with the
 proposal path. From instance home, first append `--preview` to this complete
 command and read the resolved harvester composition, then run the same
-command without `--preview`:
+command without `--preview`. The preview runs no provider hook: it shows
+the harvester's composition, not the source check. The source (its record
+or retirement recovery, the soul's opt-out) is checked at apply, in the
+harvester's required spawn hook; a refusal there rolls the spawn back and
+leaves no harvester home, but the chosen name may stay occupied as a
+messaging alias. The command:
 
 ```sh
 oats spawn oats.okf/knowledge-harvester --name <harvester-name> --task-file <proposal> --relation unrelated

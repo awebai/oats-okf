@@ -2,6 +2,50 @@
 
 ## Unreleased
 
+Requires OATS >=0.69.2, unchanged. Toward awebai/oats-okf#125: a retired seat
+spawned on oats.okf 4.x can be a 5.x proposal's source. Unit tests prove the
+hook against a fixture of the 4.x record and the kernel's retirement event;
+the issue is closed only after a rehearsal on a real retired 4.x seat in the
+reporting deployment, on the released version. This is a minor release: the
+harvester admits a source it refused before.
+
+### Changed
+
+- **The harvester's spawn hook admits a retired 4.x source whose removed
+  keys the deployment set.** On a source resolved through the retirement
+  recovery named by the kernel's `retired` event, a `harvest`,
+  `harvest-runtime` or `harvest-model` key whose recorded origin is any
+  layer other than the soul (host, spawn, workspace) is ignored as a
+  manifest default already was, and named in the snapshot's `source.json`
+  as `legacyKeysIgnored`. The 4.x host switch declined 4.x's own machinery,
+  which is gone; under 5.x the proposal and the harvester spawn are the
+  deployment's consent, and only the soul's own `knowledge: { harvest: off }`
+  opts out. That opt-out is unchanged and decided first, from the recorded
+  soul snapshot's text, which no host setting masks. A soul-origin value
+  other than `off`, and a key with no recorded origin, still refuse
+  `E_SOURCE`. A **live** home spawned on 4.x still refuses, now with the
+  remedy: retire the home, then propose from its retirement recovery.
+- **A soul `harvest:` key with a value other than `off` refuses the source**
+  (`E_SOURCE`), live or retired: 4.x read it as off and 5.x refuses such a
+  soul at spawn; neither harvests it. Matched as a key (a line start or a
+  flow-mapping position), so a capability id such as `oats.okf-harvest:` or
+  the word in prose is not one; a stray `harvest:` key fails closed, as the
+  existing `harvest: off` text match does.
+- **`--preview` is documented as not running the source check.** The kernel
+  runs no spawn hook in a preview, so `oats spawn --preview` shows the
+  harvester's composition only; the source is checked at apply, where a
+  refusal rolls the spawn back and may leave the chosen name occupied as a
+  messaging alias. Said in the README, `okf-propose` and
+  `knowledge-harvest`. A spawn-preview hook phase is asked of the kernel in
+  oats-project/oats#1756; nothing here depends on it.
+- README, "Upgrading to 5.0": what a retired 4.x seat's notes need
+  (proposal with the recovery copy's `createdAt` as incarnation, recovery
+  at `phase: complete` kept until capture, the soul snapshot present, a
+  single retired incarnation), and that a 4.x host `harvest: off` is not an
+  opt-out. Covers awebai/oats-okf#99's retired seats and the homes
+  awebai/oats-okf#100 retires with `oats retire --force`; 4.x live-home
+  machinery stays removed.
+
 ### Diagnostics
 
 - Add a bounded `diagnostic` field to `E_PUSH_UNCERTAIN` and

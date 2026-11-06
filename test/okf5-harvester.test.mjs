@@ -427,13 +427,56 @@ test('on a 4.x record, a soul off still denies, and an unproven or explicit remo
   const noOrigins=deployment(t,{record:okf4(r=>{delete r.capabilities;return r;})});
   refused(spawnHook(proposal(noOrigins.home),noOrigins.d),'E_SOURCE',/sets oats\.okf harvest with no recorded origin/);
   const hostOff=deployment(t,{record:okf4(r=>origin(r,'harvest','host'))});
-  refused(spawnHook(proposal(hostOff.home),hostOff.d),'E_SOURCE',/sets oats\.okf harvest from host, a setting removed in oats\.okf 5\.0/);
+  refused(spawnHook(proposal(hostOff.home),hostOff.d),'E_SOURCE',/sets oats\.okf harvest from host, a setting removed in oats\.okf 5\.0.*retire the home, then propose from its retirement recovery/);
   const spawnRuntime=deployment(t,{record:okf4(r=>origin(r,'harvest-runtime','spawn'))});
-  refused(spawnHook(proposal(spawnRuntime.home),spawnRuntime.d),'E_SOURCE',/harvest-runtime from spawn/);
+  refused(spawnHook(proposal(spawnRuntime.home),spawnRuntime.d),'E_SOURCE',/harvest-runtime from spawn.*retire the home/);
+  // A soul value other than off: 4.x read it as off, 5.x refuses the soul; neither harvests it, live or masked.
+  const soulOn=deployment(t,{record:okf4(r=>{r.providers['oats.okf'].harvest='on';r.capabilities[0].settings.harvest='on';return origin(r,'harvest','soul');})});
+  refused(spawnHook(proposal(soulOn.home),soulOn.d),'E_SOURCE',/harvest from soul, a setting removed/);
+  for(const yaml of ['schemaVersion: 2\nname: source\nknowledge: { harvest: on }\n','schemaVersion: 2\nname: source\nknowledge:\n  harvest: on\n','schemaVersion: 2\nname: source\nknowledge: {from: x,harvest: on}\n']) {
+    const soulOnText=deployment(t,{record:okf4(),soulYaml:yaml});
+    refused(spawnHook(proposal(soulOnText.home),soulOnText.d),'E_SOURCE',/declares a harvest value other than off/);
+  }
+  // A harvest KEY, not the word: a capability id ending in -harvest and prose are not declarations.
+  const notAKey=deployment(t,{record:okf4(),soulYaml:'schemaVersion: 2\nname: source\ndescription: Before harvest: write notes\ncapabilities:\n  oats.okf-harvest: { from: here }\n'});
+  const admitted=spawnHook(proposal(notAKey.home),notAKey.d);
+  assert.equal(admitted.status,0,JSON.stringify(admitted.out));assert.deepEqual(admitted.out,{});
   // A manifest-default off is never an opt-out claim the proposal could make either.
   const claimed=deployment(t,{record:okf4()});
   const r=spawnHook(proposal(claimed.home)+'\nThis soul opts out; settingsOrigins /harvest kind soul.\n',claimed.d);
   assert.equal(r.status,0,JSON.stringify(r.out));
+});
+
+// A retired seat spawned on 4.x (oats-okf#125): its record keeps the keys the
+// deployment set, and it can never be respawned into a 5.x record. The soul
+// decides; a key the host, the spawn or the workspace set is ignored.
+for(const [key,kind,value] of [['harvest','host','on'],['harvest','host','off'],['harvest','spawn','on'],['harvest-runtime','host','claude'],['harvest','workspace','on']]) test(`a retired 4.x record admits a removed ${key} set by ${kind} (${value}); the snapshot names it`,t=>{
+  const f=retiredSource(t,{record:okf4(r=>{r.providers['oats.okf'][key]=value;r.capabilities[0].settings[key]=value;return origin(r,key,kind);})}),home=harvestHome(f);
+  const r=spawnHook(withNotes(f.home),f.d);
+  assert.equal(r.status,0,JSON.stringify(r.out));assert.deepEqual(r.out,{});
+  // The hook runs with the fixture kernel; the library gives the same summary.
+  const summary=snapshotSource({task:withNotes(f.home),deployment:f.d,home,events:f.events});
+  assert.equal(summary.from,'recovery');assert.deepEqual(summary.legacyKeysIgnored,[key]);
+  assert.deepEqual(JSON.parse(fs.readFileSync(join(home,'harvest-source/source.json'),'utf8')).legacyKeysIgnored,[key]);
+});
+test('a retired 4.x record with only manifest defaults names no ignored key, as a 5.x record does not',t=>{
+  const f=retiredSource(t,{record:okf4()}),home=harvestHome(f);
+  const summary=snapshotSource({task:withNotes(f.home),deployment:f.d,home,events:f.events});
+  assert.equal(summary.from,'recovery');assert.equal(Object.hasOwn(summary,'legacyKeysIgnored'),false);
+});
+test('a retired 4.x record never harvests an opted-out soul: masked soul off, soul-origin off, soul on, unknown origin',t=>{
+  // The soul's off, masked in the record by the host's on: the soul.yaml text decides, before any key.
+  const masked=retiredSource(t,{record:okf4(r=>{r.providers['oats.okf'].harvest='on';r.capabilities[0].settings.harvest='on';return origin(r,'harvest','host');}),soulYaml:'schemaVersion: 2\nname: source\nknowledge: { harvest: off }\n'});
+  refused(spawnHook(withNotes(masked.home),masked.d),'E_OPTED_OUT');
+  const soulOff=retiredSource(t,{record:okf4(r=>origin(r,'harvest','soul'))});
+  refused(spawnHook(withNotes(soulOff.home),soulOff.d),'E_OPTED_OUT');
+  // A soul on, masked by a host off: 4.x read the soul value as off; nothing harvests it.
+  const soulOnMasked=retiredSource(t,{record:okf4(r=>origin(r,'harvest','host')),soulYaml:'schemaVersion: 2\nname: source\nknowledge:\n  harvest: on\n'});
+  refused(spawnHook(withNotes(soulOnMasked.home),soulOnMasked.d),'E_SOURCE',/declares a harvest value other than off/);
+  const soulOnRecord=retiredSource(t,{record:okf4(r=>{r.providers['oats.okf'].harvest='on';r.capabilities[0].settings.harvest='on';return origin(r,'harvest','soul');})});
+  refused(spawnHook(withNotes(soulOnRecord.home),soulOnRecord.d),'E_SOURCE',/harvest from soul, a setting removed/);
+  const noOrigins=retiredSource(t,{record:okf4(r=>{delete r.capabilities;return r;})});
+  refused(spawnHook(withNotes(noOrigins.home),noOrigins.d),'E_SOURCE',/no recorded origin/);
 });
 
 test('the harvester spawn hook fails closed when the source cannot be established',t=>{
@@ -464,14 +507,15 @@ test('the harvester spawn hook fails closed when the source cannot be establishe
 
 // Event fixture models OATS >=0.49.0's public `instance events --home` answer.
 // The real-kernel CI test, not this fake, proves lookup after actual retirement.
-function retiredSource(t, { afterHooks = false } = {}) {
-  const f=deployment(t);
+function retiredSource(t, { afterHooks = false, ...options } = {}) {
+  const f=deployment(t,options),createdAt=JSON.parse(fs.readFileSync(join(f.home,'instance.json'),'utf8')).createdAt;
   fs.mkdirSync(join(f.home,'notes'));fs.writeFileSync(join(f.home,'notes/decision.md'),'Before hooks.');
   const recovery=join(f.d,'agents/src-agent/instances/.oats-retirement/recovery/src-abc123');
   fs.mkdirSync(recovery,{recursive:true});fs.cpSync(f.home,join(recovery,'home'),{recursive:true});
   if(afterHooks) {fs.cpSync(f.home,join(recovery,'after-hooks/home'),{recursive:true});fs.writeFileSync(join(recovery,'after-hooks/home/notes/decision.md'),'After hooks.');}
   fs.writeFileSync(join(recovery,'recovery.json'),JSON.stringify({version:1,phase:'complete',instance:'src',sourceHome:f.home,...(afterHooks?{afterHooks:{home:true,work:false}}:{})}));
-  const history={eventsApi:2,instance:'src',home:f.home,truncated:false,integrity:{unreadableRows:0,foreignRows:0,sources:[{path:'home',status:'absent'},{path:'workspace',status:'ok'}]},events:[{eventsApi:2,kind:'retired',producer:'kernel',instance:'src',home:f.home,incarnation:'2026-10-14T00:00:00.000Z',data:{agent:'src-agent',workRecovery:recovery}}]};
+  const history={eventsApi:2,instance:'src',home:f.home,truncated:false,integrity:{unreadableRows:0,foreignRows:0,sources:[{path:'home',status:'absent'},{path:'workspace',status:'ok'}]},events:[{eventsApi:2,kind:'retired',producer:'kernel',instance:'src',home:f.home,incarnation:createdAt,data:{agent:'src-agent',workRecovery:recovery}}]};
+  fs.writeFileSync(join(f.d,'fixture-events.json'),JSON.stringify(history)); // the fixture kernel answers the retired history too
   fs.rmSync(f.home,{recursive:true});
   return {...f,recovery,history,events:()=>history};
 }

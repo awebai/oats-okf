@@ -55,7 +55,9 @@ never try to deliver a 4.x run by other means.
 ## 2. Read the verified source snapshot
 
 Before this model starts, the required spawn hook checks provenance and
-atomically writes `harvest-source/` in **your own home**. It creates no
+atomically writes `harvest-source/` in **your own home**. (The source's
+`oats spawn --preview` ran no hook: the check happens only at apply, so a
+passed preview says nothing about the source.) It creates no
 external custody or lifecycle relation. Read `harvest-source/source.json`,
 `proposal.md`, `soul.yaml`, `okf.json` and `bindings.json` there. Never rebuild
 or overwrite a snapshot, or go back to the source to recheck it: retirement
@@ -86,8 +88,13 @@ The code has already established these facts:
    incarnation-mismatched live record never falls back to older authority.
 2. **The soul**: the record's `soulDir` supplied `soul.yaml` and `okf.json`.
    Its name matches Source; its soul opt-out (`knowledge: { harvest: off }`)
-   and recorded soul-origin opt-out both refuse. Legacy manifest defaults
-   are ignored; other removed settings or unknown origins refuse. The
+   and recorded soul-origin opt-out both refuse, and so does a soul
+   `harvest:` value other than `off`. Legacy manifest defaults are ignored.
+   On a **retired** source, a removed 4.x key the host, the spawn or the
+   workspace set is ignored too, and `source.json` lists it in
+   `legacyKeysIgnored`: the deployment's 4.x switch was never the soul's
+   opt-out. Other removed settings (a live 4.x record, a soul value, an
+   unknown origin) refuse. The
    captured `okf.json` gives `owner`, `owns` and `reads` (`alias/node`).
 3. **The bindings**: the record's `providers["oats.okf"]["bindings-file"]`
    supplied the captured JSON. `bases.<alias>` gives `kind`, `repository`,
