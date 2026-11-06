@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Diagnostics
+
+- Add a bounded `diagnostic` field to `E_PUSH_UNCERTAIN` and
+  `E_DELETE_UNCERTAIN`: fixed publication/readback phase, child exit status,
+  allowlisted signal, timeout and elapsed milliseconds. An optional cause is
+  one fixed class from Git client-side error phrases; remote-origin lines and
+  stdout never supply it. Push children use `LC_ALL=C`. No raw tool output,
+  URLs, paths, identities, configuration or credentials are reported. Exit 2,
+  artifact retention, content gates and the ban on automatic retries are
+  unchanged. The field is identical in harvest and maintenance helpers.
+
 ## 5.8.0 — 2026-11-03
 
 Requires OATS >=0.69.2, unchanged. awebai/oats-okf#121: a content-safety gate on every harvest publication, and behind harvest PRs rewritten onto the accepted tip for a fresh exact-head verdict, never merged on an approximate squash. Merges to a knowledge base stay serialized through one maintainer. Existing service homes keep their composed version until they are respawned or upgraded.

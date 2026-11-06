@@ -6,6 +6,7 @@ import { resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
+import { performance } from 'node:perf_hooks';
 import { screenBytes, screenText } from './okf-content-screen.mjs';
 
 const OID = /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/;
@@ -25,17 +26,58 @@ function env() {
   return { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^GIT_/.test(k))),
     GIT_NO_REPLACE_OBJECTS: '1', GIT_TERMINAL_PROMPT: '0' };
 }
-function run(command, args, { cwd, input, optional = false, indexFile } = {}) {
+// Nullable fields mean the OS supplied no usable exit/signal, not invented
+// process outcomes. Never serialize an Error, raw tool bytes, or a free string.
+const SIGNALS = new Set(['SIGABRT', 'SIGALRM', 'SIGBREAK', 'SIGBUS', 'SIGFPE', 'SIGHUP', 'SIGILL', 'SIGINT', 'SIGKILL', 'SIGPIPE', 'SIGQUIT', 'SIGSEGV', 'SIGSYS', 'SIGTERM', 'SIGTRAP', 'SIGUSR1', 'SIGUSR2', 'SIGXCPU', 'SIGXFSZ']);
+const CAUSES = [
+  [/terminal prompts disabled|could not read Username/i, 'auth-required'],
+  [/Authentication failed|Permission denied \(publickey\)/i, 'auth-denied'],
+  [/Could not resolve host/i, 'host-unresolved'],
+  [/connection (?:refused|timed out)/i, 'connection-failed'],
+];
+export function uncertaintyDiagnostic(result = {}, elapsedMs = 0) {
+  const diagnostic = {
+    phase: 'push',
+    exitCode: Number.isSafeInteger(result.status) ? result.status : null,
+    signal: SIGNALS.has(result.signal) ? result.signal : null,
+    timedOut: result.error?.code === 'ETIMEDOUT',
+    elapsedMs: Number.isFinite(elapsedMs) ? Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, Math.round(elapsedMs))) : 0,
+  };
+  if (result.error || result.signal || result.status !== 0) {
+    const stderr = Buffer.isBuffer(result.stderr) ? result.stderr.toString('utf8') : typeof result.stderr === 'string' ? result.stderr : '';
+    // Remote-controlled lines never supply a cause, even if they copy a client
+    // phrase. Stdout is deliberately not an input to this classification.
+    const lines = stderr.split('\n').map(line => line.trimStart());
+    // Protocol ERR/report-status diagnostics can quote remote payloads with
+    // unprefixed continuation lines. Exclude the whole tail, including unpack
+    // failures, malformed remote status and other protocol-error renderers.
+    const remoteError = lines.findIndex(line => /^(?:fatal|error|warning):\s+(?:remote\b|unable to parse remote unpack status:|protocol error:)/i.test(line));
+    const clientLines = (remoteError < 0 ? lines : lines.slice(0, remoteError))
+      .filter(line => !/^remote:/i.test(line));
+    const cause = CAUSES.find(([pattern]) => clientLines.some(line => pattern.test(line)))?.[1];
+    if (cause) diagnostic.cause = cause;
+  }
+  return diagnostic;
+}
+function uncertain(code, diagnostic) {
+  throw Object.assign(new Error(code), { code, diagnostic: diagnostic ?? uncertaintyDiagnostic() });
+}
+function run(command, args, { cwd, input, optional = false, indexFile, publication = false } = {}) {
   const childEnv = env();
   // Only an internally-created private reconciliation index supplies this.
   // Inherited GIT_INDEX_FILE was already removed by env().
   if (indexFile) childEnv.GIT_INDEX_FILE = indexFile;
+  if (publication) childEnv.LC_ALL = 'C';
+  const started = performance.now();
   const r = spawnSync(command, args, { cwd, input, env: childEnv, timeout: 60000, maxBuffer: MAX });
+  const diagnostic = publication ? uncertaintyDiagnostic(r, performance.now() - started) : undefined;
   if (r.error || r.signal || r.status !== 0) {
     if (optional && !r.error && !r.signal && r.status === 1) return null;
-    fail(command === 'git' ? 'E_GIT' : 'E_GH');
+    const code = command === 'git' ? 'E_GIT' : 'E_GH';
+    if (publication) uncertain(code, diagnostic);
+    fail(code);
   }
-  return r.stdout;
+  return publication ? { stdout: r.stdout, diagnostic } : r.stdout;
 }
 export function git(repo, args, options = {}) {
   return run('git', ['--no-replace-objects', '-c', 'core.hooksPath=/dev/null', '-c', 'push.pushOption=', ...args], { cwd: repo, ...options });
@@ -178,11 +220,12 @@ export function screenedPush(o, head, expected, branch) {
   let output;
   try {
     output = git(o.repo, ['push', '--porcelain', '--no-signed', '--no-follow-tags', '--recurse-submodules=no',
-      `--force-with-lease=${reference}:${expected}`, 'origin', `${head}:${reference}`]);
-  } catch { fail('E_PUSH_UNCERTAIN'); }
-  const status = text(output).split('\n').find(row => row.split('\t')[1] === `${head}:${reference}`)?.split('\t')[0];
+      `--force-with-lease=${reference}:${expected}`, 'origin', `${head}:${reference}`], { publication: true });
+  } catch (error) { uncertain('E_PUSH_UNCERTAIN', error?.diagnostic); }
+  const status = text(output.stdout).split('\n').find(row => row.split('\t')[1] === `${head}:${reference}`)?.split('\t')[0];
   if (expected === '' && status !== '*') fail('E_CREATE_NOT_CONFIRMED');
-  if (tip(o, reference) !== head) fail('E_PUSH_UNCERTAIN');
+  const actual = tip(o, reference);
+  if (actual !== head) uncertain('E_PUSH_UNCERTAIN', { ...output.diagnostic, phase: actual === null ? 'readback-absent' : 'readback-other' });
   return head;
 }
 function github(o) {
@@ -437,10 +480,11 @@ export function execute(command, o) {
     if (command === 'close-unsafe') {
       remoteGuard(o); const reference = ref(p.headRefName, false);
       if (reference === baseRef(o['base-branch']) || tip(o, reference) !== o.head) fail('E_HEAD_MOVED');
-      try { git(o.repo, ['push', '--porcelain', '--no-signed', '--no-follow-tags', '--recurse-submodules=no',
-        `--force-with-lease=${reference}:${o.head}`, 'origin', `:${reference}`]); }
-      catch { fail('E_DELETE_UNCERTAIN'); }
-      if (tip(o, reference) !== null) fail('E_DELETE_UNCERTAIN');
+      let output;
+      try { output = git(o.repo, ['push', '--porcelain', '--no-signed', '--no-follow-tags', '--recurse-submodules=no',
+        `--force-with-lease=${reference}:${o.head}`, 'origin', `:${reference}`], { publication: true }); }
+      catch (error) { uncertain('E_DELETE_UNCERTAIN', error?.diagnostic); }
+      if (tip(o, reference) !== null) uncertain('E_DELETE_UNCERTAIN', { ...output.diagnostic, phase: 'readback-other' });
     }
     return { head: o.head, status: command === 'close-unsafe' ? 'closed-branch-deleted-pull-ref-remains' : 'closed' };
   }
@@ -479,7 +523,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       console.log(JSON.stringify({ ok: true, ...execute(command, o) }));
     } catch (e) {
       const code = /^E_[A-Z_]+$/.test(e.code || '') ? e.code : 'E_PUBLICATION';
-      console.log(JSON.stringify({ ok: false, code, ...(e.findings ? { findings: e.findings } : {}) }));
+      console.log(JSON.stringify({ ok: false, code, ...(e.findings ? { findings: e.findings } : {}), ...(e.diagnostic ? { diagnostic: e.diagnostic } : {}) }));
       process.exitCode = code === 'E_CONTENT_REFUSED' ? 1 : 2;
     }
   }

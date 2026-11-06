@@ -51,6 +51,63 @@ Git push options are cleared, not transmitted outside the screened graph. The re
 must match, with no pushurl or clone-local URL rewrite. Host-wide Git routing
 continues to apply to the recorded locator. No credentials are copied.
 
+## Uncertain push diagnostics
+
+`E_PUSH_UNCERTAIN` and `E_DELETE_UNCERTAIN` (the branch deletion in
+`close-unsafe`) include a `diagnostic` object. The error code, exit **2**,
+retained artifacts and no-automatic-retry rule are unchanged. A deletion error
+can occur after the PR has already closed; it is not permission to repeat the
+close or delete.
+
+```json
+{"ok":false,"code":"E_PUSH_UNCERTAIN","diagnostic":{"phase":"push","exitCode":128,"signal":null,"timedOut":false,"elapsedMs":37,"cause":"auth-required"}}
+```
+
+The field set is the same in both helper copies:
+
+- `phase`: `push` means the Git push child failed, including a delete push;
+  `readback-absent` means a pushed ref was not found afterwards;
+  `readback-other` means a pushed ref names an unexpected OID, or a deleted ref
+  still exists. That OID is never included in the diagnostic.
+- `exitCode`: the push child's integer exit status, or `null` if unavailable.
+  A readback mismatch after a successful push reports `0`.
+- `signal`: a fixed allowlisted signal name, or `null` when absent/unrecognized.
+  The list is `SIGABRT`, `SIGALRM`, `SIGBREAK`, `SIGBUS`, `SIGFPE`, `SIGHUP`,
+  `SIGILL`, `SIGINT`, `SIGKILL`, `SIGPIPE`, `SIGQUIT`, `SIGSEGV`, `SIGSYS`,
+  `SIGTERM`, `SIGTRAP`, `SIGUSR1`, `SIGUSR2`, `SIGXCPU`, `SIGXFSZ`.
+- `timedOut`: whether the push child reported `ETIMEDOUT`.
+- `elapsedMs`: nonnegative integer milliseconds spent in the push child, not
+  the whole operation or subsequent readback. No process outcome is invented
+  when the OS supplied none.
+- `cause` (optional): only one constant from the table below, matched
+  case-insensitively on failed Git client-side stderr lines. No match means
+  the field is absent. Successful-push readback mismatches have no cause.
+
+| Fixed client phrase | `cause` |
+| --- | --- |
+| `terminal prompts disabled` or `could not read Username` | `auth-required` |
+| `Authentication failed` or `Permission denied (publickey)` | `auth-denied` |
+| `Could not resolve host` | `host-unresolved` |
+| `connection refused` or `connection timed out` | `connection-failed` |
+
+The first matching table row wins. Lines starting with `remote:` or
+`fatal: remote error:` are excluded (including leading whitespace and case
+variants). Git can also quote remote text in `error: remote unpack failed:`,
+remote-status warnings, `unable to parse remote unpack status:` and
+`protocol error:` diagnostics. The entire stderr tail starting with these
+remote/protocol diagnostics is excluded: their payloads can contain unprefixed
+continuation lines or control characters. Stdout is never an input to `cause`.
+Push children run under
+`LC_ALL=C`; the caller's locale is not changed. Raw stderr/stdout, snippets,
+URLs, paths, configuration, identities, tokens and arbitrary error/signal
+strings never enter this field. There is no debug or bypass flag.
+
+A cause identifies only a recognized client phrase, not a guaranteed root
+cause, successful authentication, absence of transferred objects, or permission
+for recovery. Retain and inspect the exact state before a separately authorized
+attempt. A public repository can be read anonymously; successful reads do not
+establish how credentials reach a push or whether its receive phase will pass.
+
 ## Rules, exclusions and limits of detection
 
 Rules live in `scripts/okf-content-screen.mjs`; `RULE_IDS` is the authoritative
