@@ -268,5 +268,6 @@ Acceptance: one rehearsal on a real retired 4.x seat in the reporting
 deployment on the released 5.9.0, before the batch; the release notes call
 #125 fixed after that rehearsal.
 
-**Pepe's side (setup-maintainer-pepe):** pending. Building starts when it
-confirms.
+**Pepe's side (setup-maintainer-pepe), 2026-11-06, via setup-overflow-pepe:**
+confirmed, same six answers; E and C are out. Built in the PR that carries
+this document.

@@ -134,16 +134,28 @@ export function checkSource({ task = '', deployment, events = kernelEvents } = {
   if (!object(okf)) fail('E_SOURCE', `source instance ${source.instance} has no oats.okf knowledge slot`);
   const optedOut = `the soul of source instance ${source.instance} opts out of harvest (knowledge: { harvest: off }, or a "harvest: off" anywhere in its soul.yaml): its knowledge is not harvested`;
   if (/\bharvest\s*:\s*['"]?off\b/.test(soulYaml)) fail('E_OPTED_OUT', optedOut);
+  // The soul's only harvest word is `off`. 4.x read any other value as off
+  // (and reported it); 5.x refuses such a soul at spawn. Neither harvests it.
+  if (/\bharvest\s*:/.test(soulYaml)) fail('E_SOURCE', `the recorded soul of source instance ${source.instance} declares a harvest value other than off, which no version of oats.okf accepts as a decision; fix the soul's reviewed source (only knowledge: { harvest: off } is valid) and respawn before proposing`);
+  // The record's removed 4.x keys, judged by RECORDED origin. A manifest default
+  // is nobody's decision. A soul `off` is the opt-out (the soul.yaml text above
+  // already caught it, even masked). Any other soul value, or no recorded
+  // origin, fails closed. A host, spawn or workspace key was the deployment's
+  // consent to 4.x's own machinery, which is gone: on a RETIRED source it is
+  // ignored (oats-okf#125; the soul decides), because the home can never be
+  // respawned into a 5.x record. A live 4.x home still has that route.
   const origins = [record.capabilities, record.capabilityRuntime].flatMap(l => Array.isArray(l) ? l : []).find(c => c?.id === 'oats.okf')?.settingsOrigins;
+  const legacyKeysIgnored = [];
   for (const key of ['harvest', 'harvest-runtime', 'harvest-model'].filter(k => Object.hasOwn(okf, k))) {
     const kind = origins?.[`/${key}`]?.kind;
     if (kind === 'manifest-default') continue;
     if (key === 'harvest' && okf.harvest === 'off' && kind === 'soul') fail('E_OPTED_OUT', optedOut);
-    fail('E_SOURCE', typeof kind === 'string'
-      ? `the record of source instance ${source.instance} sets oats.okf ${key} from ${kind}, a setting removed in oats.okf 5.0 that the source itself refuses; its authority cannot be established`
-      : `the record of source instance ${source.instance} sets oats.okf ${key} with no recorded origin, so whether its soul opts out cannot be established`);
+    if (typeof kind !== 'string') fail('E_SOURCE', `the record of source instance ${source.instance} sets oats.okf ${key} with no recorded origin, so whether its soul opts out cannot be established`);
+    if (kind === 'soul') fail('E_SOURCE', `the record of source instance ${source.instance} sets oats.okf ${key} from soul, a setting removed in oats.okf 5.0 that no version accepts as a decision; fix the soul's reviewed source and respawn before proposing`);
+    if (live.length) fail('E_SOURCE', `the record of source instance ${source.instance} sets oats.okf ${key} from ${kind}, a setting removed in oats.okf 5.0 that the source itself refuses; a live home spawned on 4.x is not a 5.x source: retire the home, then propose from its retirement recovery`);
+    legacyKeysIgnored.push(key);
   }
-  return { ...source, agent, deployment, ...location, record, recordBytes, soulBytes };
+  return { ...source, agent, deployment, ...location, record, recordBytes, soulBytes, legacyKeysIgnored };
 }
 
 // 5.0 proposals did not prescribe a heading level or list grammar. Normalize
@@ -235,6 +247,7 @@ export function snapshotSource({ task = '', deployment, home, events = kernelEve
     version: 1, source: { instance: source.instance, soul: source.soul, agent: source.agent, home: source.home, incarnation: source.record.createdAt ?? null },
     from: source.recovery ? 'recovery' : 'live', ...(source.recovery ? { recovery: source.recovery } : {}),
     bindingsFile, proposalSha256: sha256(task), evidence,
+    ...(source.legacyKeysIgnored.length ? { legacyKeysIgnored: source.legacyKeysIgnored } : {}),
     tasksProvider: (source.record.capabilities ?? []).find(c => c.layer === 'tasks')?.id ?? null,
   };
   const staging = fs.mkdtempSync(join(home, '.harvest-source-'));
