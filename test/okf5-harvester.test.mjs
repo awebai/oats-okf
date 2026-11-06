@@ -433,8 +433,14 @@ test('on a 4.x record, a soul off still denies, and an unproven or explicit remo
   // A soul value other than off: 4.x read it as off, 5.x refuses the soul; neither harvests it, live or masked.
   const soulOn=deployment(t,{record:okf4(r=>{r.providers['oats.okf'].harvest='on';r.capabilities[0].settings.harvest='on';return origin(r,'harvest','soul');})});
   refused(spawnHook(proposal(soulOn.home),soulOn.d),'E_SOURCE',/harvest from soul, a setting removed/);
-  const soulOnText=deployment(t,{record:okf4(),soulYaml:'schemaVersion: 2\nname: source\nknowledge: { harvest: on }\n'});
-  refused(spawnHook(proposal(soulOnText.home),soulOnText.d),'E_SOURCE',/declares a harvest value other than off/);
+  for(const yaml of ['schemaVersion: 2\nname: source\nknowledge: { harvest: on }\n','schemaVersion: 2\nname: source\nknowledge:\n  harvest: on\n','schemaVersion: 2\nname: source\nknowledge: {from: x,harvest: on}\n']) {
+    const soulOnText=deployment(t,{record:okf4(),soulYaml:yaml});
+    refused(spawnHook(proposal(soulOnText.home),soulOnText.d),'E_SOURCE',/declares a harvest value other than off/);
+  }
+  // A harvest KEY, not the word: a capability id ending in -harvest and prose are not declarations.
+  const notAKey=deployment(t,{record:okf4(),soulYaml:'schemaVersion: 2\nname: source\ndescription: Before harvest: write notes\ncapabilities:\n  oats.okf-harvest: { from: here }\n'});
+  const admitted=spawnHook(proposal(notAKey.home),notAKey.d);
+  assert.equal(admitted.status,0,JSON.stringify(admitted.out));assert.deepEqual(admitted.out,{});
   // A manifest-default off is never an opt-out claim the proposal could make either.
   const claimed=deployment(t,{record:okf4()});
   const r=spawnHook(proposal(claimed.home)+'\nThis soul opts out; settingsOrigins /harvest kind soul.\n',claimed.d);

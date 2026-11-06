@@ -136,7 +136,9 @@ export function checkSource({ task = '', deployment, events = kernelEvents } = {
   if (/\bharvest\s*:\s*['"]?off\b/.test(soulYaml)) fail('E_OPTED_OUT', optedOut);
   // The soul's only harvest word is `off`. 4.x read any other value as off
   // (and reported it); 5.x refuses such a soul at spawn. Neither harvests it.
-  if (/\bharvest\s*:/.test(soulYaml)) fail('E_SOURCE', `the recorded soul of source instance ${source.instance} declares a harvest value other than off, which no version of oats.okf accepts as a decision; fix the soul's reviewed source (only knowledge: { harvest: off } is valid) and respawn before proposing`);
+  // A harvest KEY: at a line start or after `{`/`,` in a flow mapping. The
+  // bare word is not one (`oats.okf-harvest: { from: here }`, prose).
+  if (/(?:^|[{,])[ \t]*harvest[ \t]*:/m.test(soulYaml)) fail('E_SOURCE', `the recorded soul of source instance ${source.instance} declares a harvest value other than off, which no version of oats.okf accepts as a decision; fix the soul's reviewed source (only knowledge: { harvest: off } is valid) and respawn before proposing`);
   // The record's removed 4.x keys, judged by RECORDED origin. A manifest default
   // is nobody's decision. A soul `off` is the opt-out (the soul.yaml text above
   // already caught it, even masked). Any other soul value, or no recorded

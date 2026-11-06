@@ -25,9 +25,11 @@ harvester admits a source it refused before.
   other than `off`, and a key with no recorded origin, still refuse
   `E_SOURCE`. A **live** home spawned on 4.x still refuses, now with the
   remedy: retire the home, then propose from its retirement recovery.
-- **A soul `harvest:` value other than `off` refuses the source**
+- **A soul `harvest:` key with a value other than `off` refuses the source**
   (`E_SOURCE`), live or retired: 4.x read it as off and 5.x refuses such a
-  soul at spawn; neither harvests it. A false positive fails closed, as the
+  soul at spawn; neither harvests it. Matched as a key (a line start or a
+  flow-mapping position), so a capability id such as `oats.okf-harvest:` or
+  the word in prose is not one; a stray `harvest:` key fails closed, as the
   existing `harvest: off` text match does.
 - **`--preview` is documented as not running the source check.** The kernel
   runs no spawn hook in a preview, so `oats spawn --preview` shows the
