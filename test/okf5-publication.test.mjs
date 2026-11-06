@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { uncertaintyDiagnostic } from '../oats-package/capabilities/oats-okf-harvest/skills/okf-authoring/scripts/okf-publication.mjs';
 
 // Real Git owns objects, reachability, pushes and leases. gh is deliberately
 // only an argv-checked local adapter: these tests do NOT prove GitHub delivery,
@@ -229,6 +230,267 @@ function refusal(r, code = 'E_CONTENT_REFUSED') {
 function unchanged(f, before, since = 0) {
   assert.deepEqual(f.snapshot(), before, 'refusal/error changed remote refs or uploaded objects');
   assert.deepEqual(f.calls().slice(since).filter(c => c.write), [], 'refusal/error attempted a gh write');
+}
+
+// Diagnostic fixtures never contain real credentials or contact details. Keep
+// stdout and stderr sentinels distinct so suppressing just one cannot pass.
+const DIAGNOSTIC_STDERR = [SECRET, CONTACT, 'https://stderr-user:stderr-password@example.invalid/private.git', '/synthetic-private/stderr/credential-file'];
+const DIAGNOSTIC_STDOUT = [`ghp_${'B'.repeat(36)}`, 'https://stdout-user:stdout-password@example.invalid/private.git', '/synthetic-private/stdout/credential-file'];
+const DIAGNOSTIC_SIGNALS = ['SIGABRT', 'SIGALRM', 'SIGBREAK', 'SIGBUS', 'SIGFPE', 'SIGHUP', 'SIGILL', 'SIGINT', 'SIGKILL', 'SIGPIPE', 'SIGQUIT', 'SIGSEGV', 'SIGSYS', 'SIGTERM', 'SIGTRAP', 'SIGUSR1', 'SIGUSR2', 'SIGXCPU', 'SIGXFSZ'];
+const CLIENT_CAUSES = [
+  ['terminal prompts disabled', 'auth-required'],
+  ['could not read Username', 'auth-required'],
+  ['Authentication failed', 'auth-denied'],
+  ['Permission denied (publickey)', 'auth-denied'],
+  ['Could not resolve host', 'host-unresolved'],
+  ['connection refused', 'connection-failed'],
+  ['connection timed out', 'connection-failed'],
+];
+const sensitiveLine = phrase => `${phrase}: ${DIAGNOSTIC_STDERR.join(' ')}\n`;
+const sensitiveStdout = CLIENT_CAUSES.map(([phrase]) => `${phrase}: ${DIAGNOSTIC_STDOUT.join(' ')}`).join('\n');
+function diagnosticShape(d, { phase = 'push', exitCode = null, signal = null, timedOut = false, cause } = {}) {
+  assert.deepEqual(Object.keys(d).sort(), ['phase', 'exitCode', 'signal', 'timedOut', 'elapsedMs', ...(cause ? ['cause'] : [])].sort());
+  assert.equal(d.phase, phase); assert.equal(d.exitCode, exitCode); assert.equal(d.signal, signal);
+  assert.equal(d.timedOut, timedOut); assert.equal(d.cause, cause);
+  assert.ok(Number.isSafeInteger(d.elapsedMs) && d.elapsedMs >= 0, 'elapsedMs must be a bounded nonnegative integer');
+  const serialized = JSON.stringify(d);
+  for (const value of [...DIAGNOSTIC_STDERR, ...DIAGNOSTIC_STDOUT]) assert.ok(!serialized.includes(value), 'diagnostic leaked synthetic child bytes');
+}
+
+test('uncertainty diagnostic defaults are fixed, nullable and contain no raw result fields', () => {
+  assert.deepEqual(uncertaintyDiagnostic(), { phase: 'push', exitCode: null, signal: null, timedOut: false, elapsedMs: 0 });
+  const d = uncertaintyDiagnostic({ status: 128, signal: 'SIG_PRIVATE_FIXTURE', phase: SECRET, cause: SECRET,
+    stdout: sensitiveStdout, stderr: sensitiveLine('unclassified synthetic failure'), args: DIAGNOSTIC_STDERR,
+    error: { code: SECRET, message: SECRET, path: DIAGNOSTIC_STDERR[3], stack: SECRET } }, 12.6);
+  diagnosticShape(d, { exitCode: 128 });
+});
+
+for (const [phrase, cause] of CLIENT_CAUSES) test(`uncertainty diagnostic classifies only the fixed client cause: ${phrase}`, () => {
+  for (const stderr of [sensitiveLine(`fatal: ${phrase}`), Buffer.from(sensitiveLine(`fatal: ${phrase.toUpperCase()}`))]) {
+    diagnosticShape(uncertaintyDiagnostic({ status: 128, signal: null, stderr, stdout: sensitiveStdout }, 25), { exitCode: 128, cause });
+  }
+});
+
+for (const prefix of ['remote:', '  ReMoTe:', '\tREMOTE:', 'fatal: remote error:', '  FaTaL: ReMoTe ErRoR:', '\tFATAL:\tREMOTE ERROR:',
+  'error: remote unpack failed:', '\tErRoR: ReMoTe UnPaCk FaIlEd:', 'error: unable to parse remote unpack status:',
+  'warning: remote reported status on unknown ref:', 'fatal: protocol error:']) {
+  test(`uncertainty diagnostic ignores forged remote causes with prefix ${JSON.stringify(prefix)}`, () => {
+    const stderr = CLIENT_CAUSES.map(([phrase]) => sensitiveLine(`${prefix} ${phrase}`)).join('');
+    diagnosticShape(uncertaintyDiagnostic({ status: 128, stderr: Buffer.from(stderr), stdout: sensitiveStdout }), { exitCode: 128 });
+    // Ordinary remote: lines are excluded independently. A fatal remote ERR
+    // instead owns its entire tail, including unprefixed matching phrases.
+    diagnosticShape(uncertaintyDiagnostic({ status: 128, stderr: stderr + sensitiveLine('Authentication failed') }),
+      { exitCode: 128, ...(/^\s*remote:/i.test(prefix) ? { cause: 'auth-denied' } : {}) });
+  });
+}
+
+test('uncertainty diagnostic ignores multiline fatal remote ERR tails but preserves earlier client causes', () => {
+  for (const prefix of ['fatal: remote error:', '  FaTaL: ReMoTe ErRoR:', '\tFATAL:\tREMOTE ERROR:']) {
+    const tail = sensitiveLine(`${prefix} synthetic ERR packet`) + sensitiveLine('Authentication failed') + sensitiveLine('terminal prompts disabled');
+    for (const stderr of [tail, Buffer.from(tail)]) {
+      diagnosticShape(uncertaintyDiagnostic({ status: 128, stderr, stdout: sensitiveStdout }), { exitCode: 128 });
+    }
+    for (const stderr of [sensitiveLine('fatal: Could not resolve host') + tail,
+      Buffer.from(sensitiveLine('fatal: Could not resolve host') + tail)]) {
+      diagnosticShape(uncertaintyDiagnostic({ status: 128, stderr, stdout: sensitiveStdout }), { exitCode: 128, cause: 'host-unresolved' });
+    }
+  }
+});
+
+test('uncertainty diagnostic never derives a cause from stdout or successful-child stderr', () => {
+  for (const stderr of ['', sensitiveLine('unclassified synthetic failure'), null, 17, { toString: () => 'Authentication failed' }]) {
+    diagnosticShape(uncertaintyDiagnostic({ status: 128, stderr, stdout: Buffer.from(sensitiveStdout) }), { exitCode: 128 });
+  }
+  diagnosticShape(uncertaintyDiagnostic({ status: 0, signal: null,
+    stderr: Buffer.from(CLIENT_CAUSES.map(([phrase]) => sensitiveLine(phrase)).join('')), stdout: sensitiveStdout }), { exitCode: 0 });
+});
+
+test('uncertainty diagnostic normalizes invalid metadata and admits only the fixed signal list', () => {
+  for (const status of [undefined, null, '128', 1.5, NaN, Infinity, -Infinity, Number.MAX_VALUE]) {
+    diagnosticShape(uncertaintyDiagnostic({ status }));
+  }
+  for (const status of [0, 1, 128, -1]) diagnosticShape(uncertaintyDiagnostic({ status }), { exitCode: status });
+  for (const signal of DIAGNOSTIC_SIGNALS) diagnosticShape(uncertaintyDiagnostic({ status: null, signal }), { signal });
+  for (const signal of [undefined, null, '', 'sigterm', 'SIG_PRIVATE_FIXTURE', SECRET, 15, {}, ['SIGTERM']]) {
+    diagnosticShape(uncertaintyDiagnostic({ status: null, signal }));
+  }
+  for (const elapsedMs of [-1, -100.5, NaN, Infinity, -Infinity, '12', null, undefined]) {
+    const d = uncertaintyDiagnostic({}, elapsedMs); diagnosticShape(d); assert.equal(d.elapsedMs, 0);
+  }
+  for (const elapsedMs of [0, 0.6, 12.5, 60001, Number.MAX_VALUE]) diagnosticShape(uncertaintyDiagnostic({}, elapsedMs));
+});
+
+test('uncertainty diagnostic records timeout metadata without waiting for the 60-second child timeout', () => {
+  const d = uncertaintyDiagnostic({ status: null, signal: 'SIGTERM',
+    error: { code: 'ETIMEDOUT', message: SECRET, path: DIAGNOSTIC_STDERR[3], stack: SECRET },
+    stdout: sensitiveStdout, stderr: sensitiveLine('unclassified synthetic failure') }, 60003);
+  diagnosticShape(d, { signal: 'SIGTERM', timedOut: true }); assert.equal(d.elapsedMs, 60003);
+  for (const error of [undefined, null, { code: 'ENOENT' }, { code: 'etimedout' }, { message: 'ETIMEDOUT' }]) {
+    diagnosticShape(uncertaintyDiagnostic({ error, timedOut: true }));
+  }
+});
+
+// Only publication pushes are intercepted. Every object/preflight/readback and
+// the successful push in readback-race cases still uses real, local Git. This
+// is result/failure injection, not a replacement Git/lease implementation.
+function diagnosticPushShim(f, injection) {
+  const located = spawnSync('sh', ['-c', 'command -v git'], { cwd: f.root, env: f.env, encoding: 'utf8' });
+  assert.equal(located.status, 0); const realGit = located.stdout.trim(); assert.match(realGit, /^\//);
+  const log = join(f.root, 'diagnostic-push.jsonl'), child = join(f.root, 'diagnostic-push.cjs');
+  fs.writeFileSync(child, `const fs = require('node:fs');
+const assert = require('node:assert/strict');
+const { spawnSync } = require('node:child_process');
+const a = process.argv.slice(2), injection = ${JSON.stringify(injection)}, realGit = ${JSON.stringify(realGit)};
+assert.deepEqual(a.slice(0, 6), ['--no-replace-objects', '-c', 'core.hooksPath=/dev/null', '-c', 'push.pushOption=', 'push']);
+fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify({ argv: a, locale: process.env.LC_ALL }) + '\\n');
+let stdout = '', stderr = '';
+if (injection.mode === 'readback') {
+  const pushed = spawnSync(realGit, a, { env: process.env, encoding: 'utf8' });
+  assert.equal(pushed.status, 0, pushed.stderr);
+  stdout = pushed.stdout; stderr = pushed.stderr;
+  const reference = a.at(-1).split(':')[1];
+  const args = ['-C', ${JSON.stringify(f.remote)}, 'update-ref', ...(injection.other ? [reference, injection.other] : ['-d', reference])];
+  const changed = spawnSync(realGit, args, { env: process.env, encoding: 'utf8' });
+  assert.equal(changed.status, 0, changed.stderr);
+}
+fs.writeSync(1, stdout + (injection.stdout || ''));
+fs.writeSync(2, stderr + (injection.stderr || ''));
+if (injection.mode === 'signal') process.kill(process.pid, 'SIGTERM');
+else process.exit(injection.mode === 'readback' ? 0 : 128);
+`);
+  const quote = value => "'" + value.replaceAll("'", "'\\''") + "'";
+  fs.writeFileSync(join(f.bin, 'git'), `#!/bin/sh
+for arg in "$@"; do
+  if [ "$arg" = push ]; then exec ${quote(process.execPath)} ${quote(child)} "$@"; fi
+done
+exec ${quote(realGit)} "$@"
+`, { mode: 0o755 });
+  // A distinct, valid parent locale proves C was set for this child rather
+  // than merely inherited from fixture()'s normal LC_ALL=C environment.
+  f.env.LC_ALL = 'POSIX';
+  return () => {
+    const calls = jsonLines(log);
+    assert.equal(calls.length, 1, 'uncertain publication must not retry its push');
+    assert.equal(calls[0].locale, 'C', 'the actual publication child must receive LC_ALL=C');
+    assert.equal(f.env.LC_ALL, 'POSIX', 'the caller locale remains untouched');
+    return calls[0].argv;
+  };
+}
+function diagnosticFixture(t, command) {
+  if (command !== 'create') return rewriteFixture(t);
+  const f = fixture(t); return { ...f, old: f.change() };
+}
+function retainedInputs(f) {
+  return { head: f.git(f.repo, 'rev-parse', 'HEAD'), index: f.git(f.repo, 'write-tree'),
+    status: f.git(f.repo, 'status', '--porcelain'), diff: f.git(f.repo, 'diff', '--binary'),
+    body: fs.readFileSync(f.bodyFile), commit: fs.readFileSync(f.commitFile) };
+}
+function diagnosticRefusal(f, command, r, expected, observed, retained) {
+  refusal(r, command === 'close-unsafe' ? 'E_DELETE_UNCERTAIN' : 'E_PUSH_UNCERTAIN');
+  assert.deepEqual(Object.keys(r.out).sort(), ['code', 'diagnostic', 'ok']);
+  diagnosticShape(r.out.diagnostic, expected);
+  for (const value of [...DIAGNOSTIC_STDERR, ...DIAGNOSTIC_STDOUT, f.root, f.remote, f.old, f.base, REF]) {
+    assert.ok(!`${r.stdout}${r.stderr}`.includes(value), 'CLI uncertainty must not echo child values, paths or OIDs');
+  }
+  const argv = observed();
+  assert.ok(argv.includes(`--force-with-lease=${REF}:${command === 'create' ? '' : f.old}`));
+  if (command === 'close-unsafe') assert.equal(argv.at(-1), `:${REF}`);
+  else assert.match(argv.at(-1), new RegExp(`^[a-f0-9]{40}(?:[a-f0-9]{24})?:${REF}$`));
+  assert.deepEqual(retainedInputs(f), retained, 'uncertainty must retain the source HEAD, index, worktree and input artifacts');
+  assert.deepEqual(f.calls().filter(c => c.write).map(c => c.kind), command === 'close-unsafe' ? ['comment', 'close'] : [],
+    'no post-uncertainty gh write or retry is permitted');
+}
+
+const DIAGNOSTIC_FAILURES = [
+  ...CLIENT_CAUSES.filter(([, cause], i, all) => all.findIndex(([, c]) => c === cause) === i)
+    .map(([phrase, cause]) => ({ name: cause, stderr: sensitiveLine(`fatal: ${phrase}`), cause })),
+  { name: 'unclassified stderr', stderr: sensitiveLine('unclassified synthetic failure') },
+  { name: 'stdout-only forged causes', stderr: '' },
+  { name: 'fatal remote multiline continuation', stderr: sensitiveLine('fatal: remote error: synthetic ERR packet') + sensitiveLine('Authentication failed') },
+  { name: 'remote unpack direct payload', stderr: sensitiveLine('error: remote unpack failed: Authentication failed') },
+  { name: 'remote unpack newline continuation', stderr: 'error: remote unpack failed: rejected\n' + sensitiveLine('Could not resolve host') },
+  { name: 'remote unpack control continuation', stderr: sensitiveLine('error: remote unpack failed: rejected\rterminal prompts disabled') },
+  { name: 'client cause before fatal remote tail', cause: 'host-unresolved',
+    stderr: sensitiveLine('fatal: Could not resolve host') + sensitiveLine('  FaTaL: ReMoTe ErRoR: synthetic ERR packet') + sensitiveLine('Authentication failed') },
+  ...[' \tReMoTe:', '\tFaTaL: ReMoTe ErRoR:'].map(prefix => ({ name: `forged ${prefix.trim()} causes`,
+    stderr: CLIENT_CAUSES.map(([phrase]) => sensitiveLine(`${prefix} ${phrase}`)).join('') })),
+];
+for (const command of ['create', 'rewrite', 'close-unsafe']) {
+  for (const failure of DIAGNOSTIC_FAILURES) test(`uncertainty diagnostic CLI ${command}: ${failure.name} never leaks child bytes`, t => {
+    const f = diagnosticFixture(t, command), retained = retainedInputs(f), before = f.snapshot();
+    const observed = diagnosticPushShim(f, { mode: 'failure', stderr: failure.stderr, stdout: sensitiveStdout });
+    const r = f.run(command, f.old);
+    diagnosticRefusal(f, command, r, { exitCode: 128, cause: failure.cause }, observed, retained);
+    assert.deepEqual(f.snapshot(), before, 'injected failed push must not change remote refs or objects');
+  });
+  test(`uncertainty diagnostic CLI ${command}: a real signalled child has null exitCode`, t => {
+    const f = diagnosticFixture(t, command), retained = retainedInputs(f), before = f.snapshot();
+    const observed = diagnosticPushShim(f, { mode: 'signal', stderr: sensitiveLine('unclassified synthetic failure'), stdout: sensitiveStdout });
+    const r = f.run(command, f.old);
+    diagnosticRefusal(f, command, r, { signal: 'SIGTERM' }, observed, retained);
+    assert.deepEqual(f.snapshot(), before);
+  });
+}
+
+for (const command of ['create', 'rewrite', 'close-unsafe']) {
+  const outcomes = command === 'close-unsafe' ? ['same', 'other'] : ['absent', 'other'];
+  for (const outcome of outcomes) test(`uncertainty diagnostic CLI ${command}: successful push with ${outcome} readback retains child metadata`, t => {
+    const f = diagnosticFixture(t, command), retained = retainedInputs(f);
+    const other = outcome === 'same' ? f.old : outcome === 'other' ? f.base : null;
+    const observed = diagnosticPushShim(f, { mode: 'readback', other,
+      stderr: CLIENT_CAUSES.map(([phrase]) => sensitiveLine(`fatal: ${phrase}`)).join(''), stdout: sensitiveStdout });
+    const r = f.run(command, f.old);
+    diagnosticRefusal(f, command, r, { phase: outcome === 'absent' ? 'readback-absent' : 'readback-other', exitCode: 0 }, observed, retained);
+    if (other) assert.equal(f.git(f.remote, 'rev-parse', REF), other);
+    else assert.equal(f.rawGit(f.remote, ['show-ref', '--verify', '--quiet', REF]).status, 1);
+    assert.equal(f.git(f.remote, 'rev-parse', 'refs/heads/main'), f.base);
+  });
+}
+
+for (const payload of ['Authentication failed', 'rejected\nCould not resolve host', 'rejected\rterminal prompts disabled']) {
+  test(`uncertainty diagnostic rejects actual Git remote unpack payload ${JSON.stringify(payload)}`, t => {
+    const f = fixture(t), head = f.change(), before = f.snapshot(), retained = retainedInputs({ ...f, old: head });
+    const locator = 'fixture.invalid:synthetic', ssh = join(f.root, 'report-status-ssh.cjs'), calls = join(f.root, 'report-status-calls.jsonl');
+    // Real Git parses this local fake SSH report-status protocol. An extra
+    // advertised ref says the server already has the candidate, so no useful
+    // object upload is needed. The transport consumes input without storing it.
+    fs.writeFileSync(ssh, `const fs = require('node:fs');
+const a = process.argv.slice(2), receive = a.some(x => x.includes('git-receive-pack'));
+const pkt = s => (Buffer.byteLength(s) + 4).toString(16).padStart(4, '0') + s;
+fs.appendFileSync(${JSON.stringify(calls)}, JSON.stringify({ receive }) + '\\n');
+process.stdout.write(pkt(${JSON.stringify(f.base)} + ' refs/heads/main\\0report-status delete-refs\\n') + pkt(${JSON.stringify(head)} + ' refs/heads/have-candidate\\n') + '0000');
+if (!receive) process.exit(0);
+let pending = Buffer.alloc(0), sent = false;
+process.stdin.on('data', chunk => {
+  if (sent) return;
+  pending = Buffer.concat([pending, chunk]);
+  while (pending.length >= 4) {
+    const size = parseInt(pending.subarray(0, 4).toString(), 16);
+    if (size === 0) {
+      sent = true;
+      process.stdout.write(pkt('unpack ' + ${JSON.stringify(payload + ' ' + DIAGNOSTIC_STDERR.join(' '))} + '\\n') + pkt('ng ' + ${JSON.stringify(REF)} + ' rejected\\n') + '0000');
+      return;
+    }
+    if (!Number.isInteger(size) || size < 4) process.exit(96);
+    if (pending.length < size) return;
+    pending = pending.subarray(size);
+  }
+});
+process.stdin.on('end', () => process.exit(sent ? 0 : 97));
+`);
+    const quote = value => "'" + value.replaceAll("'", "'\\''") + "'";
+    f.git(f.repo, 'config', 'core.sshCommand', `${quote(process.execPath)} ${quote(ssh)}`);
+    f.git(f.repo, 'config', 'ssh.variant', 'ssh'); f.git(f.repo, 'config', 'protocol.ssh.allow', 'always');
+    f.git(f.repo, 'remote', 'set-url', 'origin', locator);
+    const r = f.run('create', head, { remote: locator });
+    refusal(r, 'E_PUSH_UNCERTAIN'); diagnosticShape(r.out.diagnostic, { exitCode: 1 });
+    assert.deepEqual(Object.keys(r.out).sort(), ['code', 'diagnostic', 'ok']);
+    for (const value of [...DIAGNOSTIC_STDERR, locator, f.root, head]) assert.ok(!r.stdout.includes(value));
+    assert.equal(jsonLines(calls).filter(x => x.receive).length, 1, 'one actual Git push, never a retry');
+    assert.deepEqual(f.calls(), [], 'no gh publication after rejected push');
+    assert.deepEqual(retainedInputs({ ...f, old: head }), retained);
+    assert.deepEqual(f.snapshot(), before, 'local transport stores no objects or refs');
+  });
 }
 
 test('rewrite refuses when accepted history already contains the old PR head', t => {
