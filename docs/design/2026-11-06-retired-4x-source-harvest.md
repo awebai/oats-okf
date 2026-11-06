@@ -246,3 +246,27 @@ and a cross-reference from "4.x source records after the pin":
    pre-check command (E) or not.
 6. Release: a minor (`5.9.0`), since admission widens; no kernel floor
    change.
+
+## 5. Decisions recorded
+
+**lane:juan (oats-expert-juan), 2026-11-06, on 796161f:** agrees. §4
+answers: (1) A, retired only, non-soul origins ignored, `legacyKeysIgnored`
+in `source.json`: yes. (2) Fail-closed addition: yes. (3) A 4.x host
+`harvest: off` is not an opt-out: confirmed, with the reasoning to be written
+into the README bullet: under 4.x the host switch declined 4.x's own
+machinery (capture, scheduled runs); under 5.x nothing runs unless someone in
+the deployment writes a proposal and spawns a harvester, and that act is the
+deployment's consent; a reader must not take the recorded host key for an
+opt-out. (4) Live records keep refusing, with the new remedy. (5) Document
+`--preview` in the three places now; the kernel ask is filed as
+[oats-project/oats#1756](https://github.com/oats-project/oats/issues/1756),
+owned by lane:juan, low priority, not a dependency; no pre-check command (E)
+unless the rehearsal shows rolled-back spawns leaving aliases occupied.
+(6) 5.9.0 minor, no kernel floor change.
+
+Acceptance: one rehearsal on a real retired 4.x seat in the reporting
+deployment on the released 5.9.0, before the batch; the release notes call
+#125 fixed after that rehearsal.
+
+**Pepe's side (setup-maintainer-pepe):** pending. Building starts when it
+confirms.
